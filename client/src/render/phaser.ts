@@ -30,17 +30,35 @@ const DEPTH_PEN = 0;
 const DEPTH_PROP = 1; // terminals / gates
 const DEPTH_MOBILE = 2; // animals / robots
 
+/** A robot's behavioural mode, mirrored from the snapshot for visual feedback. */
+type RobotMode = 'idle' | 'frozen' | 'pursue' | 'ordered';
+
 /**
  * One entity's on-screen representation: a body shape + (optional) name label.
  * `body` is a generic GameObject so the body can be a rectangle, triangle, etc.
  * depending on `kind`; we only ever reposition it, never read its subtype back.
  * `kind` is remembered so a kind change (rare) rebuilds the right visual.
+ *
+ * The Three-Laws fields below let the player SEE the stealth working. We cache
+ * the last-rendered values so we only restyle a body when they actually change
+ * (a body is restyled in-place; only a `kind` change rebuilds it):
+ *   - `humanLikeness` drives an animal's outline (a human-looking animal glows)
+ *   - `mode`/`suspicion` drive a robot's tint + suspicion ring
  */
 interface EntityView {
   body: Phaser.GameObjects.Shape;
   label?: Phaser.GameObjects.Text;
   kind: Entity['kind'];
+  /** Suspicion ring for robots; created lazily the first time suspicion > 0. */
+  ring?: Phaser.GameObjects.Arc;
+  /** Last-rendered Three-Laws state, so we restyle only on change. */
+  humanLikeness?: number;
+  mode?: RobotMode;
+  suspicion?: number;
 }
+
+/** humanLikeness at/above this reads as "human" — mirrors the server freeze threshold. */
+const HUMAN_THRESHOLD = 0.6;
 
 /**
  * The single Scene. It owns the per-entity views and exposes `setEntities()` so
@@ -81,9 +99,15 @@ class WorldScene extends Phaser.Scene {
       if (view && view.kind === e.kind) {
         view.body.setPosition(e.x, e.y);
         view.label?.setPosition(e.x, e.y - RECT_SIZE);
+        view.ring?.setPosition(e.x, e.y);
+        // Reflect the Three-Laws state (humanLikeness / mode / suspicion); cheap
+        // and a no-op unless a value actually changed since last frame.
+        this.restyle(view, e);
       } else {
         if (view) this.destroyView(view);
-        this.views.set(e.id, this.createView(e));
+        const created = this.createView(e);
+        this.restyle(created, e);
+        this.views.set(e.id, created);
       }
     }
 
@@ -94,6 +118,80 @@ class WorldScene extends Phaser.Scene {
         this.views.delete(id);
       }
     }
+  }
+
+  /**
+   * Re-apply the Three-Laws visual feedback for an entity, restyling only the
+   * body fields that changed since the last frame (so a static room of entities
+   * costs nothing). Display-only: reads server-authoritative fields, mutates
+   * nothing on the entity.
+   */
+  private restyle(view: EntityView, e: Entity): void {
+    if (e.kind === 'animal' || e.kind === undefined) {
+      // First-Law stealth: a human-looking animal gets a bright white outline so
+      // robots' "is that a human?" read is legible to the player too.
+      const hl = readNumber(e.humanLikeness);
+      if (hl === view.humanLikeness) return;
+      view.humanLikeness = hl;
+      const human = hl !== undefined && hl >= HUMAN_THRESHOLD;
+      // Stroke alpha scales with humanLikeness so the disguise "warms up" toward
+      // the threshold; once human-looking it snaps to a solid white outline.
+      const alpha = human ? 1 : 0.6 * (hl ?? 0) + 0.4;
+      const width = human ? 3 : 2;
+      const color = human ? 0xffffff : 0xdddddd;
+      view.body.setStrokeStyle(width, color, alpha);
+      return;
+    }
+
+    if (e.kind === 'robot') {
+      const mode = readMode(e.mode);
+      const suspicion = readNumber(e.suspicion) ?? 0;
+      if (mode !== view.mode) {
+        view.mode = mode;
+        // Mode drives the body fill: frozen reads cold/blue (First-Law freeze),
+        // ordered reads green (Second-Law standdown — now working for you),
+        // pursue reads hostile/red, idle stays the neutral steel gray it spawns as.
+        const fill =
+          mode === 'frozen' ? 0x5aa0e0
+          : mode === 'ordered' ? 0x46c46a
+          : mode === 'pursue' ? 0xe05a5a
+          : 0x9aa3ad;
+        const stroke =
+          mode === 'frozen' ? 0xbfe0ff
+          : mode === 'ordered' ? 0x9bf0b0
+          : mode === 'pursue' ? 0xff3030
+          : 0x2b2f36;
+        // Shapes built via add.rectangle expose fill/stroke setters at runtime;
+        // EntityView.body is the generic Shape supertype, so narrow to use them.
+        const rect = view.body as Phaser.GameObjects.Rectangle;
+        rect.setFillStyle(fill);
+        rect.setStrokeStyle(2, stroke, 0.9);
+      }
+      // Suspicion ring: an orange halo whose opacity tracks how convinced the
+      // robot is. Created lazily, hidden when suspicion is negligible.
+      this.styleSuspicionRing(view, e, suspicion);
+      return;
+    }
+  }
+
+  /** Lazily create/update the orange suspicion halo around a robot. */
+  private styleSuspicionRing(view: EntityView, e: Entity, suspicion: number): void {
+    if (suspicion === view.suspicion) return;
+    view.suspicion = suspicion;
+    if (suspicion <= 0.05) {
+      view.ring?.setVisible(false);
+      return;
+    }
+    if (!view.ring) {
+      view.ring = this.add
+        .circle(e.x, e.y, RECT_SIZE * 0.9)
+        .setStrokeStyle(2, 0xffa500, 1)
+        .setFillStyle(0, 0)
+        .setOrigin(0.5)
+        .setDepth(DEPTH_MOBILE);
+    }
+    // Intensity rises with suspicion (0.05..1 → ~0.3..1 alpha).
+    view.ring.setStrokeStyle(2, 0xffa500, 0.3 + 0.7 * Math.min(1, suspicion)).setVisible(true);
   }
 
   /** Build the per-kind visual for a freshly-seen entity. */
@@ -173,7 +271,18 @@ class WorldScene extends Phaser.Scene {
   private destroyView(view: EntityView): void {
     view.body.destroy();
     view.label?.destroy();
+    view.ring?.destroy();
   }
+}
+
+/** Read a 0..1-ish numeric field, returning undefined for absent/NaN values. */
+function readNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+/** Narrow the snapshot's `mode` (index-signature `unknown`) to a RobotMode. */
+function readMode(v: unknown): RobotMode {
+  return v === 'frozen' || v === 'pursue' || v === 'ordered' ? v : 'idle';
 }
 
 /** Deterministic pastel color from an entity id so each rectangle is distinct. */

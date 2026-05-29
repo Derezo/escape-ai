@@ -4,6 +4,33 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.2: **Phase 2 — Three Laws stealth core.** The Asimov reference is now a
+  working mechanic, not a name-drop.
+  - **Shared:** new deterministic Three-Laws math in `shared/src/step.ts` —
+    `updateHumanLikeness`, `firstLawProtects`, `freezeThreshold`, `robotDecision`,
+    `dist2`, and a centralized `STEALTH` tunables block. Pure functions, reused by
+    the server (no duplication).
+  - **Server:** new `server/game/stealth.js` orchestrates the NPC sim, loading the
+    shared ESM math once via dynamic `import()` (server is CJS). Each tick: players'
+    human-likeness rises while still / collapses while fleeing; robots run the
+    First-Law freeze, pursue prey-looking animals, obey Second-Law orders (standdown
+    + suspicion gain — the double-edged element), decay suspicion, and a catch hook
+    soft-respawns caught players. New config tunables (ROBOT_SPEED, ORDER_DURATION,
+    etc.). Engine `init()` is now async to await the shared import before the first tick.
+  - **Fixed a one-shot-action race:** an action-less movement frame could clobber a
+    queued `order` before the engine tick consumed it (client send and tick are both
+    ~20Hz but not phase-locked). Actions now latch onto `player.pendingAction` and are
+    cleared only when the engine consumes them.
+  - **Client:** edge-triggered action keys (E interact / Q order / Space ability);
+    HUD shows a human-likeness bar + carrying state; the renderer reflects the Laws
+    visually — animals gain a bright outline as they look human, robots tint by mode
+    (blue frozen / green ordered / red pursue / gray idle) with an orange suspicion ring.
+  - Verified end-to-end against a live server: human-likeness 0→1 while still, robots
+    freeze/pursue correctly, orders register (suspicion → 0.99, `ordered` mode observed).
+  - *Known balance gap for Phase 5:* full-speed movement always exceeds the sprint
+    threshold, so looking human currently requires standing still — needs a walk/sprint
+    tuning pass.
+
 - 0.2.1: **Phase 1 — multiplayer scale first.** Extended the world model and proved
   the netcode syncs 20 players plus a populated world with no desync.
   - **Shared:** `Entity` gained typed optional fields `kind`

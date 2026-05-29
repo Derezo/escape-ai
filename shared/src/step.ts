@@ -13,6 +13,156 @@
 
 import type { Entity, Input } from './types.js';
 
+// ---------------------------------------------------------------------------
+// The Caves of Steel — Three-Laws stealth math (deterministic, both sides)
+//
+// These pure helpers encode the gameplay the server runs each tick and the
+// client can mirror for prediction/feedback. NONE of them read wall-clock time
+// or RNG; every time-dependent quantity comes in as `dt`. The server is still
+// authoritative for robot/animal NPC state — these just keep the math in one
+// place so client feedback (e.g. the human-likeness bar) never disagrees.
+// ---------------------------------------------------------------------------
+
+/** Tunables for the stealth loop. Centralized so Phase 5 can balance in one spot. */
+export const STEALTH = {
+  /** humanLikeness/sec gained while "behaving human" (still / upright / slow). */
+  RISE_PER_SEC: 0.5,
+  /** humanLikeness/sec lost while behaving like prey (sprinting / fleeing). */
+  DECAY_PER_SEC: 0.8,
+  /** Flat humanLikeness bonus while carrying the disguise prop (clipboard). */
+  PROP_BONUS: 0.35,
+  /** Speed (units/sec) above which an animal reads as "fleeing prey", not human. */
+  SPRINT_THRESHOLD: 150,
+  /** Base humanLikeness a robot needs to see before the First Law freezes it. */
+  FREEZE_THRESHOLD: 0.6,
+  /** Radius (world units) within which a robot perceives/engages an animal. */
+  PERCEPTION_RADIUS: 200,
+  /** suspicion/sec a robot sheds when nothing contradicts the human story. */
+  SUSPICION_DECAY_PER_SEC: 0.15,
+  /** suspicion added when an "animal" issues a Second-Law order (a contradiction). */
+  SUSPICION_PER_ORDER: 0.4,
+  /**
+   * How much each point of suspicion raises the effective freeze threshold: a
+   * suspicious robot demands a *more* convincingly-human target before it
+   * freezes, so the detective layer makes bluffing progressively harder.
+   */
+  SUSPICION_THRESHOLD_GAIN: 0.4,
+} as const;
+
+/** Squared distance between two entities (cheaper than sqrt for radius checks). */
+export function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * The effective First-Law freeze threshold for a robot given its suspicion. A
+ * calm robot (suspicion 0) freezes at FREEZE_THRESHOLD; a suspicious one needs a
+ * higher humanLikeness to be fooled. Clamped to a sane ceiling so a maxed-out
+ * robot is hard — but not strictly impossible — to bluff.
+ */
+export function freezeThreshold(suspicion: number): number {
+  return clamp(
+    STEALTH.FREEZE_THRESHOLD + suspicion * STEALTH.SUSPICION_THRESHOLD_GAIN,
+    STEALTH.FREEZE_THRESHOLD,
+    0.95,
+  );
+}
+
+/**
+ * Advance an animal's humanLikeness for one step based on how it's moving and
+ * whether it carries the disguise prop. Behaving human (slow/still) raises it;
+ * moving like fleeing prey (fast) drops it. Returns the new value in [0, 1].
+ *
+ * @param current  the animal's current humanLikeness (0..1)
+ * @param speed    the animal's instantaneous speed this step (world units/sec)
+ * @param carrying whether the animal holds the disguise prop
+ * @param dt       seconds elapsed
+ */
+export function updateHumanLikeness(
+  current: number,
+  speed: number,
+  carrying: boolean,
+  dt: number,
+): number {
+  const fleeing = speed > STEALTH.SPRINT_THRESHOLD;
+  const rate = fleeing ? -STEALTH.DECAY_PER_SEC : STEALTH.RISE_PER_SEC;
+  let next = current + rate * dt;
+  // The prop is a floor, not an addition: while carried it guarantees at least
+  // PROP_BONUS so a courier reads as plausibly human even while moving.
+  if (carrying) next = Math.max(next, STEALTH.PROP_BONUS);
+  return clamp(next, 0, 1);
+}
+
+/**
+ * Whether the First Law forbids `robot` from acting against `animal`: the animal
+ * is within perception range AND looks human enough to clear the robot's
+ * (suspicion-adjusted) freeze threshold. When true the robot must yield/freeze.
+ */
+export function firstLawProtects(robot: Entity, animal: Entity): boolean {
+  const hl = typeof animal.humanLikeness === 'number' ? animal.humanLikeness : 0;
+  const susp = typeof robot.suspicion === 'number' ? robot.suspicion : 0;
+  if (hl < freezeThreshold(susp)) return false;
+  return dist2(robot, animal) <= STEALTH.PERCEPTION_RADIUS * STEALTH.PERCEPTION_RADIUS;
+}
+
+/** A robot's possible dispositions for one tick. */
+export type RobotMode = 'idle' | 'frozen' | 'pursue';
+
+/** The outcome of a robot's Three-Laws reasoning for one tick. */
+export interface RobotDecision {
+  mode: RobotMode;
+  /** The animal the robot is reacting to (frozen by, or pursuing), if any. */
+  targetId?: string;
+  /** When pursuing, the unit vector toward the target (else 0,0). */
+  dirX: number;
+  dirY: number;
+}
+
+/**
+ * Run one robot's Three-Laws decision against the animals it can perceive.
+ *
+ * - **First Law** — if ANY perceived animal looks human enough, the robot must
+ *   not act: it freezes (it cannot risk harming a "human"). This is the stealth.
+ * - **Lockdown override** — once the world is in lockdown the First-Law caution
+ *   is dropped: the robot pursues the nearest animal regardless of disguise.
+ * - Otherwise the robot pursues the nearest non-human-looking animal in range.
+ *
+ * The Third Law (hazard self-preservation) is layered on by the server, which
+ * knows where hazards are; this function stays purely about perception + Laws.
+ */
+export function robotDecision(
+  robot: Entity,
+  animals: Entity[],
+  lockdown: boolean,
+): RobotDecision {
+  const r2 = STEALTH.PERCEPTION_RADIUS * STEALTH.PERCEPTION_RADIUS;
+
+  let nearest: Entity | undefined;
+  let nearestD2 = Infinity;
+  for (const a of animals) {
+    const d2 = dist2(robot, a);
+    if (d2 > r2) continue;
+    // First Law (only while not in lockdown): a convincingly-human animal in
+    // range freezes the robot outright — it can't risk acting near a "human".
+    if (!lockdown && firstLawProtects(robot, a)) {
+      return { mode: 'frozen', targetId: a.id, dirX: 0, dirY: 0 };
+    }
+    if (d2 < nearestD2) {
+      nearestD2 = d2;
+      nearest = a;
+    }
+  }
+
+  if (!nearest) return { mode: 'idle', dirX: 0, dirY: 0 };
+
+  const dx = nearest.x - robot.x;
+  const dy = nearest.y - robot.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { mode: 'pursue', targetId: nearest.id, dirX: dx / len, dirY: dy / len };
+}
+
 /** Clamp `v` into the inclusive range [min, max]. */
 export function clamp(v: number, min: number, max: number): number {
   if (v < min) return min;

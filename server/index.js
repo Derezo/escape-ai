@@ -38,16 +38,26 @@ app.get('/health', (req, res) => {
 });
 
 // --- Engine: wire shared state, then start the fixed-tick loop ---
-engine.init(io, sockets.connectedPlayers, sockets.rooms);
-engine.start();
+// engine.init() is async: it dynamic-import()s the ESM Three-Laws math from
+// shared/dist/step.js and caches it. We MUST await that before start() so the
+// math is available on the very first synchronous tick. Listen only once the
+// engine is live so /health and snapshots never race the import.
+engine.init(io, sockets.connectedPlayers, sockets.rooms)
+  .then(() => {
+    engine.start();
 
-// --- Listen ---
-httpServer.listen(config.PORT, config.HOST, () => {
-  console.log(
-    `tins2026-server listening on http://${config.HOST}:${config.PORT} ` +
-    `(tick ${config.TICK_RATE}Hz, env ${config.NODE_ENV})`
-  );
-});
+    // --- Listen ---
+    httpServer.listen(config.PORT, config.HOST, () => {
+      console.log(
+        `tins2026-server listening on http://${config.HOST}:${config.PORT} ` +
+        `(tick ${config.TICK_RATE}Hz, env ${config.NODE_ENV})`
+      );
+    });
+  })
+  .catch((err) => {
+    console.error('[FATAL] engine init failed:', err);
+    process.exit(1);
+  });
 
 // --- Resilience: log fatal errors and shut down cleanly ---
 process.on('uncaughtException', (err) => {

@@ -13,6 +13,10 @@ const world = require('../game/world');
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
+// The verbs `input` may carry. 'interact' (use a terminal / stand down a robot),
+// 'order' (Second-Law command), 'ability' (species power — Phase 4 stub).
+const ACTIONS = new Set(['interact', 'order', 'ability']);
+
 // Per-room monotonic join counter, used to deterministically spread spawns so
 // that ~20 players don't all stack on the origin. Survives leaves (it only
 // climbs) so concurrent joiners never share a spawn slot.
@@ -74,9 +78,19 @@ function register(socket, deps) {
       x: spawn.x,
       y: spawn.y,
       kind: 'animal',
+      // Three-Laws stealth state (Phase 2). humanLikeness rises while behaving
+      // human (slow/still) and drops while fleeing; carrying the disguise prop
+      // floors it. Both start blank — a fresh "animal" reads as pure prey.
+      humanLikeness: 0,
+      carrying: false,
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated
-      input: { seq: 0, dx: 0, dy: 0 }
+      input: { seq: 0, dx: 0, dy: 0 },
+      // Latched one-shot action awaiting the next engine tick. Kept OUTSIDE
+      // `input` so a later action-less movement frame can't clobber it before
+      // the engine reads it (client send rate and tick rate are both ~20Hz but
+      // not phase-locked, so without a latch an order frame races and is lost).
+      pendingAction: null
     };
     connectedPlayers.set(socket.id, player);
 
@@ -107,6 +121,15 @@ function register(socket, deps) {
 
     const dx = clamp(Number(payload.dx) || 0, -1, 1);
     const dy = clamp(Number(payload.dy) || 0, -1, 1);
+
+    // Optional one-shot action carried alongside movement (Phase 2). Only the
+    // three known verbs are accepted. We LATCH it onto player.pendingAction
+    // rather than into `input`, so that a subsequent action-less movement frame
+    // arriving before the next engine tick can't overwrite (drop) it. The
+    // engine consumes and clears pendingAction once per tick. A frame that
+    // carries no action leaves any already-latched action intact.
+    const action = ACTIONS.has(payload.action) ? payload.action : null;
+    if (action) player.pendingAction = action;
 
     player.inputSeq = seq;
     player.input = { seq, dx, dy };

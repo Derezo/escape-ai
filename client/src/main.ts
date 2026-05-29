@@ -15,7 +15,7 @@ import './style.css';
 
 import type { IRenderer } from '@shared/renderer';
 import type { Entity, WorldState } from '@shared/types';
-import type { InputMsg } from '@shared/net';
+import type { InputMsg, PlayerAction } from '@shared/net';
 import { applyInput, type Bounds } from '@shared/step';
 
 import { PhaserRenderer } from './render/phaser';
@@ -129,10 +129,45 @@ async function main(): Promise<void> {
 
   // --- Input capture (WASD + arrow keys) ---
   const keys = new Set<string>();
-  window.addEventListener('keydown', (e) => keys.add(e.key.toLowerCase()));
-  window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+  // Discrete actions are EDGE-TRIGGERED, not held: one keypress = one action.
+  // We map an action key to a PlayerAction, queue at most one action between
+  // input sends, and clear it after it rides out on a single frame. `actionHeld`
+  // gates the keydown so OS key-repeat doesn't enqueue the action every tick
+  // while the key is held down.
+  const ACTION_KEYS: Record<string, PlayerAction> = {
+    e: 'interact', // use nearest terminal / pick up the disguise prop
+    q: 'order', // issue the Second-Law order to the nearest robot
+    ' ': 'ability', // trigger this species' special
+  };
+  let queuedAction: PlayerAction | undefined;
+  const actionHeld = new Set<string>();
+
+  window.addEventListener('keydown', (e) => {
+    const key = e.key.toLowerCase();
+    const action = ACTION_KEYS[key];
+    if (action) {
+      // Space (and arrows below) would scroll the page; suppress that.
+      e.preventDefault();
+      // Edge-trigger: enqueue only on the press, not on auto-repeat.
+      if (!actionHeld.has(key)) {
+        actionHeld.add(key);
+        queuedAction = action;
+      }
+      return;
+    }
+    keys.add(key);
+  });
+  window.addEventListener('keyup', (e) => {
+    const key = e.key.toLowerCase();
+    actionHeld.delete(key);
+    keys.delete(key);
+  });
   // Drop held keys if the tab loses focus so the rectangle stops moving.
-  window.addEventListener('blur', () => keys.clear());
+  window.addEventListener('blur', () => {
+    keys.clear();
+    actionHeld.clear();
+  });
 
   function inputVector(): { dx: number; dy: number } {
     let dx = 0;
@@ -155,6 +190,12 @@ async function main(): Promise<void> {
 
     seq += 1;
     const input: InputMsg = { seq, dx, dy };
+    // Attach the one queued action (if any) to this single frame, then drain it
+    // so it never fires twice. The server resolves it against nearby entities.
+    if (queuedAction) {
+      input.action = queuedAction;
+      queuedAction = undefined;
+    }
     net.sendInput(input);
 
     // Client-side prediction: advance OUR entity immediately so movement feels
@@ -176,17 +217,38 @@ async function main(): Promise<void> {
     // until the first snapshot that carries it.
     const panic = world ? `${Math.round(world.panic)}/${world.panicCapacity}` : '...';
     const lockdown = world ? (world.lockdown ? 'yes' : 'no') : '...';
+
+    // First-Law stealth feedback: the server owns our humanLikeness, we just
+    // mirror it. A text bar plus a hint of the ~60% freeze threshold tells the
+    // player how close they are to looking human enough to freeze a robot.
+    const me = myId ? entities.get(myId) : undefined;
+    const hl = typeof me?.humanLikeness === 'number' ? me.humanLikeness : undefined;
+    const humanLike =
+      hl !== undefined
+        ? `human-like: ${bar(hl)} ${Math.round(hl * 100)}% (freeze ~60%)`
+        : `human-like: ...`;
+    // Show the disguise-prop state only when we actually carry it.
+    const carrying = me?.carrying === true ? `\ncarrying: prop` : '';
+
     hud.textContent =
       `TINS 2026\n` +
       `latency: ${lat}\n` +
       `players: ${playerCount}\n` +
       `seq: ${seq}  acked: ${lastAckedSeq}\n` +
       `panic: ${panic}\n` +
-      `lockdown: ${lockdown}`;
+      `lockdown: ${lockdown}\n` +
+      `${humanLike}${carrying}`;
 
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+}
+
+/** A 5-cell text meter (▓ filled, ░ empty) for a 0..1 value — used in the HUD. */
+function bar(value: number): string {
+  const cells = 5;
+  const filled = Math.max(0, Math.min(cells, Math.round(value * cells)));
+  return '▓'.repeat(filled) + '░'.repeat(cells - filled);
 }
 
 /** A short random handle so multiple tabs are visually distinct. */

@@ -27,6 +27,7 @@
 
 const config = require('../config');
 const world = require('./world');
+const stealth = require('./stealth');
 
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
@@ -48,15 +49,20 @@ let timer = null;
 const lastSentByRoom = new Map();
 
 /**
- * Wire up the engine. Call once at boot, before start().
+ * Wire up the engine. Call once at boot, before start(). ASYNC because it loads
+ * the deterministic Three-Laws math from shared/dist/step.js (ESM) via dynamic
+ * import() and caches it — that must resolve before the first synchronous tick,
+ * so index.js `await`s this before calling start().
  * @param {import('socket.io').Server} socketIo
  * @param {Map<string, object>} players  shared connectedPlayers map
  * @param {Map<string, Set<string>>} roomsMap  shared rooms map
  */
-function init(socketIo, players, roomsMap) {
+async function init(socketIo, players, roomsMap) {
   io = socketIo;
   connectedPlayers = players;
   rooms = roomsMap;
+  // Load + cache the shared stealth math once, before the loop runs.
+  await stealth.loadShared();
 }
 
 function start() {
@@ -86,6 +92,7 @@ function tick() {
 
   try {
     integratePlayers(dt);
+    stepNpcs(dt);
     broadcastSnapshots();
   } catch (err) {
     // Never let one bad tick kill the loop.
@@ -99,7 +106,8 @@ function tick() {
   timer = setTimeout(tick, delay);
 }
 
-/** Apply each player's latest input to its position. */
+/** Apply each player's latest input to its position, advance its stealth state,
+ *  and fire any one-shot action it carried this tick. */
 function integratePlayers(dt) {
   if (!connectedPlayers) return;
 
@@ -115,21 +123,49 @@ function integratePlayers(dt) {
       player.y += dy * config.PLAYER_SPEED * dt;
     }
 
+    // Three-Laws stealth: how this tick's movement reads to a robot (still =
+    // human, fleeing = prey). All math lives in shared; we just feed it speed.
+    stealth.stepPlayerHumanLikeness(player, dt);
+
+    // Consume the latched one-shot action (order / interact / ability), if any.
+    // Cleared immediately so it fires once per press; lobby.js latches it onto
+    // pendingAction so an action-less movement frame can't drop it pre-tick.
+    if (player.pendingAction) {
+      stealth.applyAction(player, player.pendingAction, player.room, currentTick);
+      player.pendingAction = null;
+    }
+
     // Record the last input sequence we've now simulated, so the snapshot's
     // `acks` lets clients reconcile their prediction.
     player.lastProcessedSeq = input.seq;
   }
 }
 
+/** Step the NPC simulation (robots) for every active room. Robots move and
+ *  change mode every tick, so they now ride the engine's per-tick delta diff. */
+function stepNpcs(dt) {
+  if (!rooms || !stealth.isReady()) return;
+
+  for (const [roomName, socketIds] of rooms) {
+    if (!socketIds || socketIds.size === 0) continue;
+    stealth.stepRobots(dt, roomName, connectedPlayers, rooms, currentTick);
+  }
+}
+
 /** Serialize one player into a snapshot entity. Players are tagged 'animal' so
- *  the client can render them alongside the world's idle animals. */
+ *  the client can render them alongside the world's idle animals. humanLikeness
+ *  and carrying ride along so the client can show stealth feedback (the bar /
+ *  prop indicator). Robots serialize their mode/suspicion straight from the
+ *  world entity objects, which stealth.stepRobots mutates in place each tick. */
 function toEntity(player) {
   return {
     id: player.id,
     x: player.x,
     y: player.y,
     name: player.name,
-    kind: 'animal'
+    kind: 'animal',
+    humanLikeness: player.humanLikeness || 0,
+    carrying: !!player.carrying
   };
 }
 
