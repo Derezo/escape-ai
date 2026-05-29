@@ -55,7 +55,48 @@ module.exports = {
     // robot is knocked back (world units).
     ELEPHANT_STUN_SECS: parseFloat(process.env.ELEPHANT_STUN_SECS) || 2,
     ELEPHANT_REACH_MULT: parseFloat(process.env.ELEPHANT_REACH_MULT) || 2,
-    ELEPHANT_PUSH_UNITS: parseFloat(process.env.ELEPHANT_PUSH_UNITS) || 24
+    ELEPHANT_PUSH_UNITS: parseFloat(process.env.ELEPHANT_PUSH_UNITS) || 24,
+
+    // --- The zoo expansion (Phase C). One ability per new species. ---
+    // CHAMELEON "cloak": seconds humanLikeness is floored to 1.0 (perfect disguise,
+    // even while moving) — the premier First-Law tool. Double-edged: cloaking near a
+    // robot raises its suspicion.
+    CHAMELEON_CLOAK_SECS: parseFloat(process.env.CHAMELEON_CLOAK_SECS) || 3,
+    // PEACOCK "dazzle": AoE stand-down. Seconds each robot in radius is ordered, and
+    // the radius (world units). Loud — latches one panic order per robot dazzled.
+    PEACOCK_DAZZLE_SECS: parseFloat(process.env.PEACOCK_DAZZLE_SECS) || 2,
+    PEACOCK_RADIUS: parseFloat(process.env.PEACOCK_RADIUS) || 140,
+    // SKUNK "stink": seconds the dropped hazard zone lingers, and its radius. Robots
+    // refuse to step into it (Third-Law self-preservation).
+    SKUNK_STINK_SECS: parseFloat(process.env.SKUNK_STINK_SECS) || 5,
+    SKUNK_RADIUS: parseFloat(process.env.SKUNK_RADIUS) || 70,
+    // MOLE "burrow": teleport distance along facing (world units) + seconds briefly
+    // unseen on resurfacing.
+    MOLE_BURROW_DIST: parseFloat(process.env.MOLE_BURROW_DIST) || 90,
+    MOLE_UNSEEN_SECS: parseFloat(process.env.MOLE_UNSEEN_SECS) || 1,
+    // CHEETAH "dash": seconds of a speed burst + the speed multiplier. Fast reads as
+    // prey, so humanLikeness crashes (the double edge, via updateHumanLikeness).
+    CHEETAH_DASH_SECS: parseFloat(process.env.CHEETAH_DASH_SECS) || 1.5,
+    CHEETAH_SPEED_MULT: parseFloat(process.env.CHEETAH_SPEED_MULT) || 2,
+    // PARROT "mimic": seconds the nearest robot stands down — like an order but WITH
+    // NO suspicion (a perfect human-voice mimic). Still latches panic.
+    PARROT_ORDER_SECS: parseFloat(process.env.PARROT_ORDER_SECS) || 2.5,
+    // TORTOISE "shell": seconds immovable + uncatchable, humanLikeness held.
+    TORTOISE_SHELL_SECS: parseFloat(process.env.TORTOISE_SHELL_SECS) || 3,
+    // KANGAROO "leap": hop distance along facing (world units) + seconds uncatchable
+    // mid-air.
+    KANGAROO_LEAP_DIST: parseFloat(process.env.KANGAROO_LEAP_DIST) || 130,
+    KANGAROO_AIR_SECS: parseFloat(process.env.KANGAROO_AIR_SECS) || 0.6,
+    // OWL "hush": flat panic drained off the room meter (anti-overflow team utility).
+    OWL_HUSH_AMOUNT: parseFloat(process.env.OWL_HUSH_AMOUNT) || 30,
+    // FOX "decoy": seconds the spawned human-looking decoy lasts + its humanLikeness
+    // (robots prefer to chase it, peeling pursuit off the team).
+    FOX_DECOY_SECS: parseFloat(process.env.FOX_DECOY_SECS) || 5,
+    FOX_DECOY_HL: parseFloat(process.env.FOX_DECOY_HL) || 0.5,
+
+    // Generic per-ability cooldown (seconds) so powers can't be spammed. The
+    // original four keep a small/zero cooldown to preserve their current feel.
+    COOLDOWN_SECS: parseFloat(process.env.ABILITY_COOLDOWN_SECS) || 4
   },
 
   // Environment helpers

@@ -24,10 +24,19 @@ const joinCountByRoom = new Map();
 
 // The species roster. A joining player is assigned one by join index (cycling),
 // reusing the same monotonic counter that spreads spawns. Species drives the
-// player's edge-triggered 'ability' (see game/stealth.js applyAction):
-//   ape → carry (disguise courier)   bird → flit (briefly uncatchable)
-//   rat → skitter (briefly unseen)    elephant → shove (stun + push a robot)
-const SPECIES_ROSTER = ['ape', 'bird', 'rat', 'elephant'];
+// player's edge-triggered 'ability' (see game/stealth.js applyAbility):
+//   ape → carry (disguise courier)     bird → flit (briefly uncatchable)
+//   rat → skitter (briefly unseen)     elephant → shove (stun + push a robot)
+//   chameleon → cloak (perfect disguise)   peacock → dazzle (AoE stand-down)
+//   skunk → stink (hazard zone)            mole → burrow (teleport + unseen)
+//   cheetah → dash (speed burst)           parrot → mimic (order, no suspicion)
+//   tortoise → shell (immovable+uncatch)   kangaroo → leap (long hop)
+//   owl → hush (drain panic)               fox → decoy (lure robots)
+// MUST match scripts/sprites/registry.js (every species needs atlas art).
+const SPECIES_ROSTER = [
+  'ape', 'bird', 'rat', 'elephant', 'chameleon', 'peacock', 'skunk',
+  'mole', 'cheetah', 'parrot', 'tortoise', 'kangaroo', 'owl', 'fox'
+];
 
 // Spawn players on a grid in the world's lower-left corner, stepping right then
 // wrapping down. Keeps them clear of the world props spawned by game/world.js.
@@ -96,10 +105,15 @@ function register(socket, deps) {
       carrying: false,
       // 8-way facing for the directional sprite; updated each tick from input.
       facing: 's',
-      // Species-ability timers (Phase 4). Each is a tick deadline; an effect is
-      // active while currentTick < the field. Read with `|| 0` so unset = off.
-      flitUntilTick: 0,       // bird: briefly uncatchable
-      skitterUntilTick: 0,    // rat: briefly invisible to robot perception
+      // Species-ability timers. Each is a tick deadline; an effect is active
+      // while currentTick < the field. Read with `|| 0` so unset = off.
+      flitUntilTick: 0,       // bird flit + kangaroo leap: briefly uncatchable
+      skitterUntilTick: 0,    // rat skitter + mole burrow: invisible to perception
+      cloakUntilTick: 0,      // chameleon: humanLikeness floored to 1
+      dashUntilTick: 0,       // cheetah: speed-burst multiplier
+      shellUntilTick: 0,      // tortoise: immovable + uncatchable + likeness held
+      abilityCdUntilTick: 0,  // generic per-ability cooldown gate
+      fx: null,               // active ability-effect echo for the client FX layer
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated
       input: { seq: 0, dx: 0, dy: 0 },

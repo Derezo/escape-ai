@@ -4,6 +4,39 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.13: **Full playable zoo — 14 species, one ability each + ability FX state on
+  the wire (Phase C of the visual-polish plan).** Only 4 species were playable and
+  abilities had zero on-screen state. Now every species in the roster is playable
+  with a unique, Three-Laws-tied power, and the activation state is broadcast so any
+  client can show FX for any player:
+  - **10 new abilities (server):** chameleon **cloak** (humanLikeness→1), peacock
+    **dazzle** (AoE robot stand-down, big panic spike), skunk **stink** (a hazard
+    zone robots refuse to enter — Third Law), mole **burrow** (teleport + unseen),
+    cheetah **dash** (speed burst that crashes humanLikeness), parrot **mimic**
+    (order a robot with NO suspicion), tortoise **shell** (immovable + uncatchable +
+    likeness held), kangaroo **leap** (long hop, briefly uncatchable), owl **hush**
+    (drain the panic meter), fox **decoy** (spawn a human-looking lure robots chase).
+    Niches: disguise / evasion / robot-control / panic-meta, so 14-way play stays
+    legible. Each reuses the existing timer/standdown/panic machinery; new tunables
+    live in `config.ABILITY`, all secs→ticks (deterministic).
+  - **fx echo on the wire:** `EntityFx {kind,startTick,untilTick}` set by every
+    handler via a shared `setFx` helper; `toEntity` forwards a player's live fx,
+    world entities (robots/hazards/decoys) carry it raw on the delta. `startTick` is
+    the client's one-shot-FX edge; `untilTick` drives sustained FX. Expired robot fx
+    is swept so the wire stays tidy.
+  - **Temporary world entities:** `world.addWorldEntity`/`pruneExpired`/`nextTempId`
+    back the skunk hazard + fox decoy; the engine sweeps expired ones each tick.
+    Robots avoid hazards via a deterministic post-decision nudge in `stepRobots`
+    (robotDecision stays pure perception). New `hazard` EntityKind (rendered as a
+    translucent zone; FX visuals land in Phase E).
+  - **Roster wiring:** `SPECIES_ROSTER` → all 14; decoy species widened to the full
+    zoo (decoys wander + animate, no abilities); per-player effect timers + a generic
+    cooldown gate added; `catchPlayer` clears all in-flight self-effects.
+  - Verified: shared + client build clean; server boots; a 14-client socket test
+    confirms all 14 species assign, 11 fx kinds flow over the wire, the chameleon's
+    cloak floors humanLikeness to 1, and skunk-hazard + fox-decoy entities spawn.
+    (carry/shove/mimic fx are correctly gated on prop/robot proximity.)
+
 - 0.2.12: **Renderer animation + 8-way facing + interpolation (Phase B of the
   visual-polish plan).** The renderer hard-`setPosition`'d static shapes with no
   animation or facing; abilities had no on-screen state at all. This wires the

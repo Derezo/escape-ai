@@ -80,14 +80,30 @@ function isReady() {
  * @param {object} player  the connected player (mutated)
  * @param {number} dt      seconds elapsed this tick
  */
-function stepPlayerHumanLikeness(player, dt) {
+function stepPlayerHumanLikeness(player, dt, currentTick) {
   if (!shared) return;
+
+  // CHAMELEON "cloak": a perfect disguise — humanLikeness floored to 1.0 while
+  // active, regardless of motion. Overrides the normal curve.
+  if ((player.cloakUntilTick || 0) > currentTick) {
+    player.humanLikeness = 1;
+    return;
+  }
+  // TORTOISE "shell": the player waits out a chase — humanLikeness is HELD at its
+  // current value (neither rising nor decaying) while shelled.
+  if ((player.shellUntilTick || 0) > currentTick) {
+    return;
+  }
+
   const input = player.input || {};
   const dx = input.dx || 0;
   const dy = input.dy || 0;
   // Speed must match the SAME walk/sprint speed integratePlayers moves at, or the
-  // disguise math would disagree with the motion the player sees.
-  const speed = Math.hypot(dx, dy) * shared.moveSpeed(input.sprint === true);
+  // disguise math would disagree with the motion the player sees. A cheetah dash
+  // multiplies that speed (so a dashing cheetah reads as fast-fleeing prey).
+  const dashing = (player.dashUntilTick || 0) > currentTick;
+  const speedMult = dashing ? config.ABILITY.CHEETAH_SPEED_MULT : 1;
+  const speed = Math.hypot(dx, dy) * shared.moveSpeed(input.sprint === true) * speedMult;
   player.humanLikeness = shared.updateHumanLikeness(
     player.humanLikeness || 0,
     speed,
@@ -104,6 +120,44 @@ function moveSpeed(sprint) {
 /** Map a movement vector to a Dir8 facing, from shared (held facing if zero). */
 function facingFromVec(dx, dy, prev) {
   return shared ? shared.facingFromVec(dx, dy, prev || 's') : (prev || 's');
+}
+
+/**
+ * Stamp the render-echo of an ability effect onto an entity (player OR world
+ * entity). `startTick` is the rising edge the client triggers a one-shot FX
+ * burst on; `untilTick` drives any sustained FX. toEntity forwards a player's fx
+ * while live; world entities (robots) carry it raw on the delta. One source of
+ * truth so every ability reports FX the same way.
+ * @param {object} entity
+ * @param {string} kind
+ * @param {number} currentTick
+ * @param {number} durationTicks
+ */
+function setFx(entity, kind, currentTick, durationTicks) {
+  entity.fx = { kind, startTick: currentTick, untilTick: currentTick + Math.max(1, durationTicks) };
+}
+
+/** Seconds -> whole ticks (deterministic; no wall clock). */
+function secsToTicks(secs) {
+  return Math.round(secs * config.TICK_RATE);
+}
+
+/**
+ * Third-Law hazard avoidance: would a step to (nx,ny) land a robot inside any
+ * active hazard zone (a skunk stink-cloud)? Robots refuse to enter, so the
+ * orchestrator zeroes the move (the robot stalls at the edge). Pure radius test;
+ * keeps robotDecision (perception) untouched.
+ * @returns {boolean}
+ */
+function entersHazard(nx, ny, worldEntities) {
+  for (const e of worldEntities) {
+    if (e.kind !== 'hazard') continue;
+    const r = (e.radius || config.ABILITY.SKUNK_RADIUS);
+    const ddx = nx - e.x;
+    const ddy = ny - e.y;
+    if (ddx * ddx + ddy * ddy <= r * r) return true;
+  }
+  return false;
 }
 
 /**
@@ -230,6 +284,11 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   for (const robot of worldEntities) {
     if (robot.kind !== 'robot') continue;
 
+    // Clear an expired ability-effect echo so a robot doesn't keep re-sending a
+    // stale fx on full refreshes (the client ignores an unchanged startTick, so
+    // this is just keeping the wire tidy).
+    if (robot.fx && robot.fx.untilTick < currentTick) robot.fx = null;
+
     // Suspicion sheds toward 0 every tick when nothing contradicts the human
     // story (a Second-Law order tops it back up — see applyAction).
     robot.suspicion = Math.max(
@@ -250,8 +309,14 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     robot.targetId = decision.targetId;
 
     if (decision.mode === 'pursue') {
-      robot.x += decision.dirX * speed * dt;
-      robot.y += decision.dirY * speed * dt;
+      // Third Law: a robot won't chase INTO a hazard (skunk stink). If the step
+      // would enter one it stalls at the edge this tick (still faces the target).
+      const nx = robot.x + decision.dirX * speed * dt;
+      const ny = robot.y + decision.dirY * speed * dt;
+      if (!entersHazard(nx, ny, worldEntities)) {
+        robot.x = nx;
+        robot.y = ny;
+      }
       // Face the chase direction (for the directional sprite).
       robot.facing = shared.facingFromVec(decision.dirX, decision.dirY, robot.facing || 's');
 
@@ -269,10 +334,15 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
         // single jolt to the panic meter (see stepPanic), so a botched bluff that
         // gets someone caught visibly pushes the whole room toward lockdown.
         //
-        // BIRD flit: a flitting player is briefly UNCATCHABLE (it flew over a
-        // wall, out of reach), so a touching robot can't grab it this tick.
-        const flitting = target.ref && (target.ref.flitUntilTick || 0) > currentTick;
-        if (!flitting && shared.dist2(robot, target) <= touchR2) {
+        // UNCATCHABLE windows: a touching robot can't grab the player this tick.
+        //   - BIRD flit / KANGAROO leap (flew/hopped out of reach) → flitUntilTick
+        //   - TORTOISE shell (bunkered, can't be grabbed) → shellUntilTick
+        const ref = target.ref;
+        const uncatchable = ref && (
+          (ref.flitUntilTick || 0) > currentTick ||
+          (ref.shellUntilTick || 0) > currentTick
+        );
+        if (!uncatchable && shared.dist2(robot, target) <= touchR2) {
           catchPlayer(target.ref);
           catches++;
         }
@@ -285,8 +355,11 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED);
       // Face the patrol heading (derive from the actual position delta).
       robot.facing = shared.facingFromVec(next.x - robot.x, next.y - robot.y, robot.facing || 's');
-      robot.x = next.x;
-      robot.y = next.y;
+      // Don't patrol into a hazard either (Third Law); hold position if it would.
+      if (!entersHazard(next.x, next.y, worldEntities)) {
+        robot.x = next.x;
+        robot.y = next.y;
+      }
     }
     // 'frozen' robots hold position (frozen by the First Law — a convincing human
     // is nearby and must not be disturbed); 'ordered' returned earlier in the loop.
@@ -371,10 +444,14 @@ function catchPlayer(player) {
   if (!player) return;
   player.humanLikeness = 0;
   player.carrying = false;
-  // A respawn cancels any in-flight species effect (flit / skitter) — the
-  // courier prop is freed by the prop-follow step once carrying drops.
+  // A respawn cancels every in-flight self-effect — the courier prop is freed by
+  // the prop-follow step once carrying drops.
   player.flitUntilTick = 0;
   player.skitterUntilTick = 0;
+  player.cloakUntilTick = 0;
+  player.dashUntilTick = 0;
+  player.shellUntilTick = 0;
+  player.fx = null;
   // Soft respawn at the world's spawn origin (mirrors lobby's SPAWN_ORIGIN).
   player.x = 50;
   player.y = 50;
@@ -437,33 +514,43 @@ function applyAction(player, action, roomName, currentTick) {
 }
 
 /**
- * Dispatch a player's species ability. Branches on player.species:
- *   - ape      "carry"    pick up / hand off / drop the disguise prop
- *   - bird     "flit"     a short uncatchable burst (flies over a wall)
- *   - rat      "skitter"  a short burst invisible to robot perception
- *   - elephant "shove"    stun + push the nearest robot (loud → feeds panic)
- * Unknown/absent species is a no-op (the bare starter point has no species).
+ * Dispatch a player's species ability (one per species). Gated by a generic
+ * cooldown so powers can't be spammed; each handler returns true if it actually
+ * FIRED (e.g. the elephant shove only fires with a robot in reach), so a no-op
+ * doesn't burn the cooldown. Unknown/absent species is a no-op.
+ *
+ * Niches: disguise (ape/chameleon/tortoise), evasion (bird/rat/mole/kangaroo/
+ * cheetah), robot-control (elephant/peacock/parrot/skunk), panic-meta (owl/fox).
  *
  * @param {object} player
  * @param {string} roomName
  * @param {number} currentTick
  */
 function applyAbility(player, roomName, currentTick) {
+  // Cooldown gate: refuse if a previous use is still cooling down.
+  if ((player.abilityCdUntilTick || 0) > currentTick) return;
+
+  let fired = false;
   switch (player.species) {
-    case 'ape':
-      apeCarry(player, roomName);
-      break;
-    case 'bird':
-      birdFlit(player, currentTick);
-      break;
-    case 'rat':
-      ratSkitter(player, currentTick);
-      break;
-    case 'elephant':
-      elephantShove(player, roomName, currentTick);
-      break;
-    default:
-      break;
+    case 'ape': fired = apeCarry(player, roomName, currentTick); break;
+    case 'bird': fired = birdFlit(player, currentTick); break;
+    case 'rat': fired = ratSkitter(player, currentTick); break;
+    case 'elephant': fired = elephantShove(player, roomName, currentTick); break;
+    case 'chameleon': fired = chameleonCloak(player, roomName, currentTick); break;
+    case 'peacock': fired = peacockDazzle(player, roomName, currentTick); break;
+    case 'skunk': fired = skunkStink(player, roomName, currentTick); break;
+    case 'mole': fired = moleBurrow(player, currentTick); break;
+    case 'cheetah': fired = cheetahDash(player, currentTick); break;
+    case 'parrot': fired = parrotMimic(player, roomName, currentTick); break;
+    case 'tortoise': fired = tortoiseShell(player, currentTick); break;
+    case 'kangaroo': fired = kangarooLeap(player, currentTick); break;
+    case 'owl': fired = owlHush(player, roomName, currentTick); break;
+    case 'fox': fired = foxDecoy(player, roomName, currentTick); break;
+    default: break;
+  }
+
+  if (fired) {
+    player.abilityCdUntilTick = currentTick + secsToTicks(config.ABILITY.COOLDOWN_SECS);
   }
 }
 
@@ -482,19 +569,22 @@ function applyAbility(player, roomName, currentTick) {
  * @param {object} player
  * @param {string} roomName
  */
-function apeCarry(player, roomName) {
+function apeCarry(player, roomName, currentTick) {
   const r2 = config.RECT_SIZE * config.RECT_SIZE;
   const entities = world.getWorldEntities(roomName);
   const prop = entities.find((e) => e.kind === 'prop');
-  if (!prop) return;
+  if (!prop) return false;
 
   if (!player.carrying) {
     // Pick up — only if the prop is free and in reach.
-    if (prop.carrierId) return;
-    if (shared.dist2(player, prop) > r2) return;
+    if (prop.carrierId) return false;
+    if (shared.dist2(player, prop) > r2) return false;
     player.carrying = true;
     prop.carrierId = player.id;
-    return;
+    // Sustained "carrying" glow: echo it for the carry's duration estimate (the
+    // client also reads `carrying` directly; this drives the pickup burst edge).
+    setFx(player, 'carry', currentTick, secsToTicks(1));
+    return true;
   }
 
   // Already carrying: prefer a hand-off to a nearby teammate, else drop.
@@ -510,6 +600,7 @@ function apeCarry(player, roomName) {
     player.carrying = false;
     recipient.carrying = true;
     prop.carrierId = recipient.id;
+    setFx(recipient, 'carry', currentTick, secsToTicks(1));
   } else {
     // DROP: leave the prop where the player is standing.
     player.carrying = false;
@@ -517,6 +608,7 @@ function apeCarry(player, roomName) {
     prop.x = player.x;
     prop.y = player.y;
   }
+  return true;
 }
 
 /**
@@ -528,7 +620,10 @@ function apeCarry(player, roomName) {
  * @param {number} currentTick
  */
 function birdFlit(player, currentTick) {
-  player.flitUntilTick = currentTick + Math.round(config.ABILITY.BIRD_FLIT_SECS * config.TICK_RATE);
+  const d = secsToTicks(config.ABILITY.BIRD_FLIT_SECS);
+  player.flitUntilTick = currentTick + d;
+  setFx(player, 'flit', currentTick, d);
+  return true;
 }
 
 /**
@@ -541,7 +636,10 @@ function birdFlit(player, currentTick) {
  * @param {number} currentTick
  */
 function ratSkitter(player, currentTick) {
-  player.skitterUntilTick = currentTick + Math.round(config.ABILITY.RAT_SKITTER_SECS * config.TICK_RATE);
+  const d = secsToTicks(config.ABILITY.RAT_SKITTER_SECS);
+  player.skitterUntilTick = currentTick + d;
+  setFx(player, 'skitter', currentTick, d);
+  return true;
 }
 
 /**
@@ -562,6 +660,33 @@ function elephantShove(player, roomName, currentTick) {
   const reach = config.RECT_SIZE * config.ABILITY.ELEPHANT_REACH_MULT;
   const reachR2 = reach * reach;
 
+  const nearest = nearestRobot(player, roomName, reachR2);
+  if (!nearest) return false;
+
+  // Stun: stand the robot down for the shove window (same field stepRobots reads
+  // for ordered standdown).
+  nearest.orderedUntilTick = currentTick + secsToTicks(config.ABILITY.ELEPHANT_STUN_SECS);
+
+  // Push: knock the robot directly away from the elephant a few units.
+  const dx = nearest.x - player.x;
+  const dy = nearest.y - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+  nearest.x += (dx / len) * config.ABILITY.ELEPHANT_PUSH_UNITS;
+  nearest.y += (dy / len) * config.ABILITY.ELEPHANT_PUSH_UNITS;
+
+  // FX on both: the shockwave at the elephant, the impact on the shoved robot.
+  setFx(player, 'shove', currentTick, secsToTicks(0.4));
+  setFx(nearest, 'shove', currentTick, secsToTicks(config.ABILITY.ELEPHANT_STUN_SECS));
+
+  // Loud: a shove feeds the panic meter just like an order. Latched here,
+  // consumed in stepPanic — the double-edged cost of brute force.
+  const worldState = world.getWorldState(roomName);
+  worldState.pendingOrders = (worldState.pendingOrders || 0) + 1;
+  return true;
+}
+
+/** Find the nearest robot to `player` within `reachR2` (squared), or null. */
+function nearestRobot(player, roomName, reachR2) {
   let nearest = null;
   let nearestD2 = Infinity;
   for (const e of world.getWorldEntities(roomName)) {
@@ -572,23 +697,201 @@ function elephantShove(player, roomName, currentTick) {
       nearest = e;
     }
   }
-  if (!nearest) return;
+  return nearest;
+}
 
-  // Stun: stand the robot down for the shove window (same field stepRobots reads
-  // for ordered standdown).
-  nearest.orderedUntilTick = currentTick + Math.round(config.ABILITY.ELEPHANT_STUN_SECS * config.TICK_RATE);
+// ---------------------------------------------------------------------------
+// The zoo expansion — 10 new species abilities (Phase C). Each returns true if
+// it FIRED (so applyAbility only burns the cooldown on a real activation), sets
+// its fx echo for the client FX layer, and ties into the Three-Laws/panic loop.
+// ---------------------------------------------------------------------------
 
-  // Push: knock the robot directly away from the elephant a few units.
-  const dx = nearest.x - player.x;
-  const dy = nearest.y - player.y;
-  const len = Math.hypot(dx, dy) || 1;
-  nearest.x += (dx / len) * config.ABILITY.ELEPHANT_PUSH_UNITS;
-  nearest.y += (dy / len) * config.ABILITY.ELEPHANT_PUSH_UNITS;
+/**
+ * CHAMELEON "cloak": a perfect disguise — humanLikeness is floored to 1.0 for
+ * CLOAK_SECS (even while moving), via stepPlayerHumanLikeness. Double-edged: if a
+ * robot is already perceiving the chameleon, cloaking is a visible contradiction
+ * that bumps that robot's suspicion (harder to bluff later).
+ */
+function chameleonCloak(player, roomName, currentTick) {
+  const d = secsToTicks(config.ABILITY.CHAMELEON_CLOAK_SECS);
+  player.cloakUntilTick = currentTick + d;
+  // Suspicion cost if a robot is within perception when you cloak.
+  const percR2 = shared.STEALTH.PERCEPTION_RADIUS * shared.STEALTH.PERCEPTION_RADIUS;
+  const near = nearestRobot(player, roomName, percR2);
+  if (near) near.suspicion = Math.min(1, (near.suspicion || 0) + shared.STEALTH.SUSPICION_PER_ORDER * 0.5);
+  setFx(player, 'cloak', currentTick, d);
+  return true;
+}
 
-  // Loud: a shove feeds the panic meter just like an order. Latched here,
-  // consumed in stepPanic — the double-edged cost of brute force.
+/**
+ * PEACOCK "dazzle": AoE stand-down. Every robot within PEACOCK_RADIUS is ordered
+ * (reuses orderedUntilTick) and turned toward the peacock. LOUD — each dazzled
+ * robot latches one panic order, so a big crowd is a big panic spike.
+ */
+function peacockDazzle(player, roomName, currentTick) {
+  const r2 = config.ABILITY.PEACOCK_RADIUS * config.ABILITY.PEACOCK_RADIUS;
+  const d = secsToTicks(config.ABILITY.PEACOCK_DAZZLE_SECS);
+  const worldState = world.getWorldState(roomName);
+  let hit = 0;
+  for (const e of world.getWorldEntities(roomName)) {
+    if (e.kind !== 'robot') continue;
+    if (shared.dist2(player, e) > r2) continue;
+    e.orderedUntilTick = currentTick + d;
+    e.facing = shared.facingFromVec(player.x - e.x, player.y - e.y, e.facing || 's');
+    setFx(e, 'dazzle', currentTick, d);
+    worldState.pendingOrders = (worldState.pendingOrders || 0) + 1;
+    hit++;
+  }
+  setFx(player, 'dazzle', currentTick, secsToTicks(0.5));
+  return hit > 0;
+}
+
+/**
+ * SKUNK "stink": drop a lingering hazard zone at the player's feet. Robots refuse
+ * to step into it (Third-Law self-preservation; see entersHazard). A temporary
+ * world entity with an expireTick — swept by world.pruneExpired.
+ */
+function skunkStink(player, roomName, currentTick) {
+  const d = secsToTicks(config.ABILITY.SKUNK_STINK_SECS);
+  const id = world.nextTempId(roomName, 'hazard');
+  world.addWorldEntity(roomName, {
+    id,
+    x: player.x,
+    y: player.y,
+    kind: 'hazard',
+    radius: config.ABILITY.SKUNK_RADIUS,
+    expireTick: currentTick + d,
+    fx: { kind: 'stink', startTick: currentTick, untilTick: currentTick + d }
+  });
+  setFx(player, 'stink', currentTick, secsToTicks(0.5));
+  return true;
+}
+
+/**
+ * MOLE "burrow": dig a short distance along the facing direction (a teleport,
+ * clamped to the world) and resurface briefly unseen (reuses skitterUntilTick).
+ */
+function moleBurrow(player, currentTick) {
+  const dir = unitFromFacing(player.facing);
+  player.x = clampWorld(player.x + dir.x * config.ABILITY.MOLE_BURROW_DIST);
+  player.y = clampWorld(player.y + dir.y * config.ABILITY.MOLE_BURROW_DIST);
+  player.skitterUntilTick = currentTick + secsToTicks(config.ABILITY.MOLE_UNSEEN_SECS);
+  setFx(player, 'burrow', currentTick, secsToTicks(0.5));
+  return true;
+}
+
+/**
+ * CHEETAH "dash": a brief speed burst (engine.integratePlayers reads dashUntilTick
+ * for the multiplier). Double-edged: fast reads as fleeing prey, so humanLikeness
+ * crashes via the shared curve.
+ */
+function cheetahDash(player, currentTick) {
+  const d = secsToTicks(config.ABILITY.CHEETAH_DASH_SECS);
+  player.dashUntilTick = currentTick + d;
+  setFx(player, 'dash', currentTick, d);
+  return true;
+}
+
+/**
+ * PARROT "mimic": a perfect human-voice mimic — orders the nearest robot to stand
+ * down like a Second-Law order but with NO suspicion cost. Still latches panic
+ * (it's a noise the zoo registers).
+ */
+function parrotMimic(player, roomName, currentTick) {
+  const percR2 = shared.STEALTH.PERCEPTION_RADIUS * shared.STEALTH.PERCEPTION_RADIUS;
+  const near = nearestRobot(player, roomName, percR2);
+  if (!near) return false;
+  const d = secsToTicks(config.ABILITY.PARROT_ORDER_SECS);
+  near.orderedUntilTick = currentTick + d;
+  // NO suspicion bump (the mimic point). But it is audible → feeds panic.
   const worldState = world.getWorldState(roomName);
   worldState.pendingOrders = (worldState.pendingOrders || 0) + 1;
+  setFx(player, 'mimic', currentTick, secsToTicks(0.6));
+  setFx(near, 'mimic', currentTick, d);
+  return true;
+}
+
+/**
+ * TORTOISE "shell": bunker down — immovable + uncatchable for SHELL_SECS, with
+ * humanLikeness HELD. integratePlayers zeroes movement, the catch hook skips it,
+ * and stepPlayerHumanLikeness freezes the value while shellUntilTick is live.
+ */
+function tortoiseShell(player, currentTick) {
+  const d = secsToTicks(config.ABILITY.TORTOISE_SHELL_SECS);
+  player.shellUntilTick = currentTick + d;
+  setFx(player, 'shell', currentTick, d);
+  return true;
+}
+
+/**
+ * KANGAROO "leap": a long directional hop along facing (clamped to the world),
+ * briefly uncatchable mid-air (reuses flitUntilTick).
+ */
+function kangarooLeap(player, currentTick) {
+  const dir = unitFromFacing(player.facing);
+  player.x = clampWorld(player.x + dir.x * config.ABILITY.KANGAROO_LEAP_DIST);
+  player.y = clampWorld(player.y + dir.y * config.ABILITY.KANGAROO_LEAP_DIST);
+  player.flitUntilTick = currentTick + secsToTicks(config.ABILITY.KANGAROO_AIR_SECS);
+  setFx(player, 'leap', currentTick, secsToTicks(0.6));
+  return true;
+}
+
+/**
+ * OWL "hush": drain a flat chunk off the room's panic meter — the team counter to
+ * the overflow container. Best used right before lockdown; the cooldown keeps it
+ * from being a permanent panic sink.
+ */
+function owlHush(player, roomName, currentTick) {
+  const worldState = world.getWorldState(roomName);
+  worldState.panic = Math.max(0, (worldState.panic || 0) - config.ABILITY.OWL_HUSH_AMOUNT);
+  setFx(player, 'hush', currentTick, secsToTicks(0.8));
+  return true;
+}
+
+/**
+ * FOX "decoy": spawn a temporary human-looking decoy animal that robots prefer to
+ * chase (high humanLikeness can also freeze them — First Law), peeling pursuit off
+ * the team. A temporary world entity (kind 'animal') that stepIdleAnimals drifts
+ * and pruneExpired removes.
+ */
+function foxDecoy(player, roomName, currentTick) {
+  const d = secsToTicks(config.ABILITY.FOX_DECOY_SECS);
+  const id = world.nextTempId(roomName, 'decoy');
+  world.addWorldEntity(roomName, {
+    id,
+    x: player.x,
+    y: player.y,
+    name: 'decoy',
+    kind: 'animal',
+    species: 'fox',
+    humanLikeness: config.ABILITY.FOX_DECOY_HL,
+    facing: 's',
+    expireTick: currentTick + d,
+    fx: { kind: 'decoy', startTick: currentTick, untilTick: currentTick + d }
+  });
+  setFx(player, 'decoy', currentTick, secsToTicks(0.5));
+  return true;
+}
+
+/** A unit vector from a Dir8 facing string (for burrow/leap displacement). */
+function unitFromFacing(facing) {
+  const SQ = Math.SQRT1_2;
+  switch (facing) {
+    case 'e': return { x: 1, y: 0 };
+    case 'w': return { x: -1, y: 0 };
+    case 's': return { x: 0, y: 1 };
+    case 'n': return { x: 0, y: -1 };
+    case 'se': return { x: SQ, y: SQ };
+    case 'sw': return { x: -SQ, y: SQ };
+    case 'ne': return { x: SQ, y: -SQ };
+    case 'nw': return { x: -SQ, y: -SQ };
+    default: return { x: 0, y: 1 };
+  }
+}
+
+/** Clamp a coordinate into the world bounds (mirrors engine.clampWorld). */
+function clampWorld(v) {
+  return Math.max(0, Math.min(config.WORLD_MAX, v));
 }
 
 /** True if the player is within RECT_SIZE of any terminal in its room. */

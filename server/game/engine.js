@@ -123,11 +123,18 @@ function integratePlayers(dt) {
     const input = player.input;
     if (!input) continue;
 
-    const dx = input.dx || 0;
-    const dy = input.dy || 0;
+    // TORTOISE "shell": immovable while shelled (it has bunkered down). Zero the
+    // movement intent so position holds, but still run facing/stealth/actions.
+    const shelled = (player.shellUntilTick || 0) > currentTick;
+    const dx = shelled ? 0 : (input.dx || 0);
+    const dy = shelled ? 0 : (input.dy || 0);
 
     if (dx !== 0 || dy !== 0) {
-      const speed = stealth.moveSpeed(input.sprint);
+      // CHEETAH "dash": a brief speed burst while dashUntilTick is in the future.
+      // Fast movement reads as fleeing prey, so humanLikeness crashes (the double
+      // edge, applied by stepPlayerHumanLikeness via the shared curve).
+      const dashing = (player.dashUntilTick || 0) > currentTick;
+      const speed = stealth.moveSpeed(input.sprint) * (dashing ? config.ABILITY.CHEETAH_SPEED_MULT : 1);
       player.x += dx * speed * dt;
       player.y += dy * speed * dt;
       // Keep players inside the zoo (0..WORLD_MAX). The gate is the only way out
@@ -144,7 +151,8 @@ function integratePlayers(dt) {
 
     // Three-Laws stealth: how this tick's movement reads to a robot (still =
     // human, fleeing = prey). All math lives in shared; we just feed it speed.
-    stealth.stepPlayerHumanLikeness(player, dt);
+    // currentTick lets it honor timed effects (chameleon cloak, tortoise shell).
+    stealth.stepPlayerHumanLikeness(player, dt, currentTick);
 
     // Win check: a player who reaches the perimeter gate has escaped.
     stealth.checkEscape(player, player.room);
@@ -171,6 +179,9 @@ function stepNpcs(dt) {
 
   for (const [roomName, socketIds] of rooms) {
     if (!socketIds || socketIds.size === 0) continue;
+    // Sweep expired temporary entities (skunk hazards, fox decoys) before anyone
+    // perceives them this tick, so a lapsed effect stops influencing the sim.
+    world.pruneExpired(roomName, currentTick);
     // Drift the idle decoy animals first so robots perceive them at this tick's
     // positions (no one-tick lag) when stepRobots runs its Three-Laws decision.
     stealth.stepIdleAnimals(dt, roomName, currentTick);

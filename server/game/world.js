@@ -53,8 +53,12 @@ function spawnStarterLayout() {
     add({ id: `robot-${i + 1}`, x: spot.x, y: spot.y, name: `Robot ${i + 1}`, kind: 'robot', suspicion: 0 });
   });
 
-  // ~8 idle animals, species cycled through the roster. humanLikeness starts at 0.
-  const species = ['ape', 'bird', 'rat', 'elephant'];
+  // ~8 idle animals, species cycled through the full roster so the decoys show off
+  // the whole zoo (they wander + animate but have no abilities). humanLikeness 0.
+  const species = [
+    'ape', 'bird', 'rat', 'elephant', 'chameleon', 'peacock', 'skunk',
+    'mole', 'cheetah', 'parrot', 'tortoise', 'kangaroo', 'owl', 'fox'
+  ];
   const animalSpots = [
     { x: 250, y: 500 },
     { x: 450, y: 550 },
@@ -141,10 +145,61 @@ function removeRoom(roomName) {
   roomWorlds.delete(roomName);
 }
 
+/**
+ * Add a (usually temporary) entity to a room's world — e.g. a skunk stink-cloud
+ * hazard or a fox lure decoy. Stored in the same entity map as the static props,
+ * so it rides the engine's delta diff automatically. An entity carrying an
+ * `expireTick` is swept by pruneExpired once that tick passes.
+ * @param {string} roomName
+ * @param {object} entity  must have a unique `id`
+ */
+function addWorldEntity(roomName, entity) {
+  getOrCreateRoomWorld(roomName).entities.set(entity.id, entity);
+}
+
+/** Remove a world entity by id (e.g. an expired hazard). */
+function removeWorldEntity(roomName, entityId) {
+  const rw = roomWorlds.get(roomName);
+  if (rw) rw.entities.delete(entityId);
+}
+
+/**
+ * Remove every world entity in a room whose `expireTick` has passed. Called each
+ * tick from the engine so temporary effects (hazards, decoys) clean themselves up
+ * and stop riding the snapshot. Returns the number removed.
+ * @param {string} roomName
+ * @param {number} currentTick
+ * @returns {number}
+ */
+function pruneExpired(roomName, currentTick) {
+  const rw = roomWorlds.get(roomName);
+  if (!rw) return 0;
+  let removed = 0;
+  for (const [id, e] of rw.entities) {
+    if (typeof e.expireTick === 'number' && e.expireTick <= currentTick) {
+      rw.entities.delete(id);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** Monotonic per-room counter for unique temporary-entity ids (no Math.random). */
+const tempCounterByRoom = new Map();
+function nextTempId(roomName, prefix) {
+  const n = (tempCounterByRoom.get(roomName) || 0) + 1;
+  tempCounterByRoom.set(roomName, n);
+  return `${prefix}-${n}`;
+}
+
 module.exports = {
   getOrCreateRoomWorld,
   getWorldEntities,
   getWorldState,
   removeRoom,
+  addWorldEntity,
+  removeWorldEntity,
+  pruneExpired,
+  nextTempId,
   INITIAL_WORLD_STATE
 };
