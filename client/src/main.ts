@@ -14,9 +14,9 @@
 import './style.css';
 
 import type { IRenderer } from '@shared/renderer';
-import type { Entity, WorldState } from '@shared/types';
+import type { Entity, WorldState, Dir8 } from '@shared/types';
 import type { InputMsg, PlayerAction } from '@shared/net';
-import { applyInput, moveSpeed, type Bounds } from '@shared/step';
+import { applyInput, moveSpeed, facingFromVec, type Bounds } from '@shared/step';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -253,15 +253,26 @@ async function main(): Promise<void> {
     // reconciles any drift (server positions win).
     if (myId) {
       const me = entities.get(myId);
-      if (me && (dx !== 0 || dy !== 0)) {
-        applyInput(me, input, dt, moveSpeed(sprint), PREDICTION_BOUNDS);
+      if (me) {
+        if (dx !== 0 || dy !== 0) {
+          applyInput(me, input, dt, moveSpeed(sprint), PREDICTION_BOUNDS);
+        }
+        // Predict our own facing so the avatar turns instantly on key-press
+        // rather than after a server round-trip. Same shared helper the server
+        // uses, so the next snapshot reconciles without a visible snap.
+        me.facing = facingFromVec(dx, dy, (me.facing as Dir8) ?? 's');
       }
     }
   }, INPUT_SEND_MS);
 
   // --- Render + HUD loop (every animation frame) ---
   function frame(): void {
-    renderer.syncEntities([...entities.values()]);
+    // Tag our own entity as local (client-only field; never crosses the wire) so
+    // the renderer snaps it to the predicted position while interpolating remote
+    // entities for smoothness. Cleared on others implicitly (only one is set).
+    const list = [...entities.values()];
+    for (const e of list) e._local = myId !== undefined && e.id === myId;
+    renderer.syncEntities(list);
 
     const lat = net.latency >= 0 ? `${net.latency} ms` : '...';
     // Panic/lockdown come from the snapshot's world state; show placeholders

@@ -4,9 +4,15 @@
  * It knows nothing about netcode or input; the game loop hands it a flat list of
  * entities every frame and it makes the screen match. Each entity is drawn by
  * its `kind` (The Caves of Steel populates the room with pens, robots, animals,
- * terminals and a gate) — no art assets required to boot, so the kit still runs
- * the moment you `npm run dev`. An entity with no `kind` (the bare starter-kit
- * point) is treated as an `animal`.
+ * terminals and a gate). An entity with no `kind` (the bare starter-kit point)
+ * is treated as an `animal`.
+ *
+ * Mobile entities (animals/robots) render as ANIMATED, 8-directional SPRITES from
+ * a packed atlas (assets/sprites/atlas.{png,json}) when it is present — idle and
+ * walk cycles, facing the movement direction. If the atlas (or a given species'
+ * frames) is missing, that entity FALLS BACK to the original geometric shape, so
+ * the kit still boots and plays with zero art. Positions are interpolated between
+ * snapshots for smoothness (the local player is snapped to its predicted pos).
  *
  * The 3D swap (BabylonRenderer) implements this same interface; see
  * shared/BABYLON_FALLBACK.md.
@@ -14,21 +20,29 @@
 
 import Phaser from 'phaser';
 import type { IRenderer, Entity } from '@shared/renderer';
+import type { Dir8 } from '@shared/types';
+import { facingFromVec } from '@shared/step';
 
 /** Visual size of a mobile entity (animal/robot), in pixels. */
 const RECT_SIZE = 28;
+/** Display size of a sprite (the 64px atlas frame scaled down). */
+const SPRITE_SIZE = 40;
 /** Side length of a pen enclosure square, in pixels. */
 const PEN_SIZE = 120;
 /** Visual size of a static marker (terminal/gate), in pixels. */
 const MARKER_SIZE = 20;
 /** Size of the carryable Clipboard prop, in pixels (smaller than a creature). */
 const PROP_SIZE = 16;
+/** The atlas texture key. */
+const ATLAS_KEY = 'creatures';
+/** Squared per-frame position delta above which an entity reads as "moving". */
+const MOVE_EPS2 = 0.6;
+/** Interpolation rate for remote entities (higher = snappier). */
+const LERP_RATE = 16;
 
 /**
- * Per-species base tint for animals. The id still spins the hue (colorFor) so
- * two apes are tellable apart, but a species' tint biases the body toward a
- * recognisable family colour so a player can read ape/bird/rat/elephant at a
- * glance. An unknown/absent species falls back to the pure id colour.
+ * Per-species base tint for animals — also used to tint the shape FALLBACK so the
+ * fallback matches the atlas family colour. (Kept for the no-atlas path.)
  */
 const SPECIES_TINT: Record<string, number> = {
   ape: 0x8d6e4f, // warm brown
@@ -37,35 +51,38 @@ const SPECIES_TINT: Record<string, number> = {
   elephant: 0x5a6b7a, // slate
 };
 
-/**
- * Draw depths. Pens are the floor of the room, so they sit UNDER the mobile
- * entities and static markers; everything else shares the default layer.
- */
+/** Draw depths. Pens floor; props/markers; mobile; fx on top. */
 const DEPTH_PEN = 0;
-const DEPTH_PROP = 1; // terminals / gates
+const DEPTH_PROP = 1; // terminals / gates / hazards
 const DEPTH_MOBILE = 2; // animals / robots
 
 /** A robot's behavioural mode, mirrored from the snapshot for visual feedback. */
 type RobotMode = 'idle' | 'frozen' | 'pursue' | 'ordered';
 
 /**
- * One entity's on-screen representation: a body shape + (optional) name label.
- * `body` is a generic GameObject so the body can be a rectangle, triangle, etc.
- * depending on `kind`; we only ever reposition it, never read its subtype back.
- * `kind` is remembered so a kind change (rare) rebuilds the right visual.
- *
- * The Three-Laws fields below let the player SEE the stealth working. We cache
- * the last-rendered values so we only restyle a body when they actually change
- * (a body is restyled in-place; only a `kind` change rebuilds it):
- *   - `humanLikeness` drives an animal's outline (a human-looking animal glows)
- *   - `mode`/`suspicion` drive a robot's tint + suspicion ring
+ * One entity's on-screen representation: a body (sprite OR shape) + optional
+ * name label, suspicion ring, and humanLikeness halo. We cache the last-rendered
+ * Three-Laws + animation state so we only restyle / re-play when something
+ * actually changed (a static room of entities costs nothing per frame).
  */
 interface EntityView {
-  body: Phaser.GameObjects.Shape;
+  body: Phaser.GameObjects.Shape | Phaser.GameObjects.Sprite;
+  isSprite: boolean;
+  species?: string;
   label?: Phaser.GameObjects.Text;
   kind: Entity['kind'];
   /** Suspicion ring for robots; created lazily the first time suspicion > 0. */
   ring?: Phaser.GameObjects.Arc;
+  /** humanLikeness halo for sprite animals (the shape path uses a stroke instead). */
+  halo?: Phaser.GameObjects.Arc;
+  /** Interpolated (displayed) position + the latest target from the snapshot. */
+  renderX: number;
+  renderY: number;
+  targetX: number;
+  targetY: number;
+  /** Last-rendered animation key + facing, so we only re-play on change. */
+  anim?: string;
+  facing: Dir8;
   /** Last-rendered Three-Laws state, so we restyle only on change. */
   humanLikeness?: number;
   mode?: RobotMode;
@@ -76,17 +93,86 @@ interface EntityView {
 const HUMAN_THRESHOLD = 0.6;
 
 /**
- * The single Scene. It owns the per-entity views and exposes `setEntities()` so
- * the renderer can push the latest entity list in from outside the Phaser
- * lifecycle.
+ * The single Scene. Owns the per-entity views, loads the atlas in preload(),
+ * builds directional animations in create(), and reconciles views to the latest
+ * entity list in update().
  */
 class WorldScene extends Phaser.Scene {
   private views = new Map<string, EntityView>();
   /** Latest entity list to draw; updated by the renderer, consumed in update(). */
   private pending: Entity[] = [];
+  /** True once the atlas texture loaded; gates the sprite path (else shapes). */
+  private atlasReady = false;
+  /** Species that have a full set of atlas frames (so anims exist for them). */
+  private animatedSpecies = new Set<string>();
 
   constructor() {
     super('world');
+  }
+
+  preload(): void {
+    // Relative paths (no leading slash) so they resolve under Vite base:'./'
+    // and inside the Capacitor Android WebView. Missing files just leave the
+    // atlas absent → the shape fallback takes over (handled in create/createView).
+    this.load.atlas(ATLAS_KEY, './sprites/atlas.png', './sprites/atlas.json');
+    this.load.on('loaderror', (file: Phaser.Loader.File) => {
+      if (file.key === ATLAS_KEY) this.atlasReady = false;
+    });
+  }
+
+  create(): void {
+    this.atlasReady = this.textures.exists(ATLAS_KEY);
+    if (this.atlasReady) this.buildAnimations();
+  }
+
+  /**
+   * Build idle/walk directional animations from whatever frames the atlas
+   * actually contains. We scan the atlas frame names (`species_state_dir_n`) and
+   * create one anim per (species,state,dir) that has frame 0 present — so the
+   * renderer supports exactly the species shipped in the atlas, no hardcoded list
+   * (a partially-populated atlas during fan-out still works).
+   */
+  private buildAnimations(): void {
+    const tex = this.textures.get(ATLAS_KEY);
+    const frameNames = tex.getFrameNames(); // e.g. ['ape_walk_s_0', ...]
+    const states: Record<string, number> = { idle: 2, walk: 4 };
+    const dirs: Dir8[] = ['s', 'se', 'e', 'ne', 'n', 'nw', 'w', 'sw'];
+    const present = new Set(frameNames);
+
+    // Discover species from frame names.
+    const species = new Set<string>();
+    for (const name of frameNames) {
+      const sp = name.split('_')[0];
+      if (sp) species.add(sp);
+    }
+
+    for (const sp of species) {
+      let complete = true;
+      for (const [state, count] of Object.entries(states)) {
+        for (const dir of dirs) {
+          const key = `${sp}_${state}_${dir}`;
+          // Require frame 0 to exist; collect the run of frames that do.
+          const frames: Phaser.Types.Animations.AnimationFrame[] = [];
+          for (let i = 0; i < count; i++) {
+            const frameName = `${sp}_${state}_${dir}_${i}`;
+            if (present.has(frameName)) frames.push({ key: ATLAS_KEY, frame: frameName });
+          }
+          if (frames.length === 0) {
+            complete = false;
+            continue;
+          }
+          if (!this.anims.exists(key)) {
+            this.anims.create({
+              key,
+              frames,
+              frameRate: state === 'walk' ? 10 : 3,
+              repeat: -1,
+            });
+          }
+        }
+      }
+      if (complete) this.animatedSpecies.add(sp);
+    }
   }
 
   /** Called by PhaserRenderer.syncEntities — just stash the latest list. */
@@ -95,9 +181,10 @@ class WorldScene extends Phaser.Scene {
   }
 
   // Phaser drives update() every frame; we reconcile views to `pending` here so
-  // creation/movement happens on the render thread.
-  update(): void {
+  // creation/movement happens on the render thread, then interpolate positions.
+  update(_time: number, delta: number): void {
     this.upsert(this.pending);
+    this.interpolate(delta / 1000);
   }
 
   /** Upsert (create/move) present entities, destroy vanished ones. */
@@ -106,21 +193,22 @@ class WorldScene extends Phaser.Scene {
 
     for (const e of entities) {
       seen.add(e.id);
-      // World coords map 1:1 to screen pixels for the skeleton. The camera
-      // origin is top-left, matching the server's (0,0) spawn.
       const view = this.views.get(e.id);
-      // Recreate the view if it's missing or its kind changed under it (so a
-      // server reclassification swaps the visual instead of leaving the wrong one).
       if (view && view.kind === e.kind) {
-        view.body.setPosition(e.x, e.y);
-        view.label?.setPosition(e.x, e.y - RECT_SIZE);
-        view.ring?.setPosition(e.x, e.y);
-        // Reflect the Three-Laws state (humanLikeness / mode / suspicion); cheap
-        // and a no-op unless a value actually changed since last frame.
+        // New target position from the snapshot; the local entity snaps (it is
+        // already client-predicted), remote entities interpolate (see interpolate()).
+        view.targetX = e.x;
+        view.targetY = e.y;
+        if (e._local === true) {
+          view.renderX = e.x;
+          view.renderY = e.y;
+        }
+        this.updateAnimation(view, e);
         this.restyle(view, e);
       } else {
         if (view) this.destroyView(view);
         const created = this.createView(e);
+        this.updateAnimation(created, e);
         this.restyle(created, e);
         this.views.set(e.id, created);
       }
@@ -135,26 +223,62 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** Exponentially smooth each view's render position toward its target. */
+  private interpolate(dt: number): void {
+    const k = 1 - Math.exp(-LERP_RATE * dt);
+    for (const view of this.views.values()) {
+      view.renderX += (view.targetX - view.renderX) * k;
+      view.renderY += (view.targetY - view.renderY) * k;
+      const x = view.renderX;
+      const y = view.renderY;
+      view.body.setPosition(x, y);
+      view.label?.setPosition(x, y - SPRITE_SIZE * 0.55);
+      view.ring?.setPosition(x, y);
+      view.halo?.setPosition(x, y);
+    }
+  }
+
   /**
-   * Re-apply the Three-Laws visual feedback for an entity, restyling only the
-   * body fields that changed since the last frame (so a static room of entities
-   * costs nothing). Display-only: reads server-authoritative fields, mutates
-   * nothing on the entity.
+   * For animated sprite views, pick idle vs walk + the facing animation and play
+   * it (only when the key changed). Uses the smoothed render→target delta to
+   * decide "moving", and prefers the wire `facing`, falling back to the motion
+   * vector. No-op for shape fallbacks.
+   */
+  private updateAnimation(view: EntityView, e: Entity): void {
+    if (!view.isSprite || !view.species) return;
+    const dx = view.targetX - view.renderX;
+    const dy = view.targetY - view.renderY;
+    const moving = dx * dx + dy * dy > MOVE_EPS2;
+    const facing: Dir8 = isDir8(e.facing) ? e.facing : facingFromVec(dx, dy, view.facing);
+    view.facing = facing;
+    const state = moving ? 'walk' : 'idle';
+    const key = `${view.species}_${state}_${facing}`;
+    if (view.anim !== key && this.anims.exists(key)) {
+      (view.body as Phaser.GameObjects.Sprite).play(key, true);
+      view.anim = key;
+    }
+  }
+
+  /**
+   * Re-apply the Three-Laws visual feedback for an entity, restyling only fields
+   * that changed since the last frame. Sprites and shapes take different paths
+   * (sprites can't setStrokeStyle/setFillStyle — they tint + use a halo arc).
    */
   private restyle(view: EntityView, e: Entity): void {
     if (e.kind === 'animal' || e.kind === undefined) {
-      // First-Law stealth: a human-looking animal gets a bright white outline so
-      // robots' "is that a human?" read is legible to the player too.
       const hl = readNumber(e.humanLikeness);
       if (hl === view.humanLikeness) return;
       view.humanLikeness = hl;
       const human = hl !== undefined && hl >= HUMAN_THRESHOLD;
-      // Stroke alpha scales with humanLikeness so the disguise "warms up" toward
-      // the threshold; once human-looking it snaps to a solid white outline.
       const alpha = human ? 1 : 0.6 * (hl ?? 0) + 0.4;
-      const width = human ? 3 : 2;
-      const color = human ? 0xffffff : 0xdddddd;
-      view.body.setStrokeStyle(width, color, alpha);
+      if (view.isSprite) {
+        // A human-looking animal gets a white halo whose intensity tracks hl.
+        this.styleHumanHalo(view, hl ?? 0, human, alpha);
+      } else {
+        const width = human ? 3 : 2;
+        const color = human ? 0xffffff : 0xdddddd;
+        (view.body as Phaser.GameObjects.Shape).setStrokeStyle(width, color, alpha);
+      }
       return;
     }
 
@@ -163,9 +287,8 @@ class WorldScene extends Phaser.Scene {
       const suspicion = readNumber(e.suspicion) ?? 0;
       if (mode !== view.mode) {
         view.mode = mode;
-        // Mode drives the body fill: frozen reads cold/blue (First-Law freeze),
-        // ordered reads green (Second-Law standdown — now working for you),
-        // pursue reads hostile/red, idle stays the neutral steel gray it spawns as.
+        // frozen → cold blue (First-Law freeze), ordered → green (Second-Law
+        // standdown), pursue → hostile red, idle → neutral.
         const fill =
           mode === 'frozen' ? 0x5aa0e0
           : mode === 'ordered' ? 0x46c46a
@@ -176,21 +299,42 @@ class WorldScene extends Phaser.Scene {
           : mode === 'ordered' ? 0x9bf0b0
           : mode === 'pursue' ? 0xff3030
           : 0x2b2f36;
-        // Shapes built via add.rectangle expose fill/stroke setters at runtime;
-        // EntityView.body is the generic Shape supertype, so narrow to use them.
-        const rect = view.body as Phaser.GameObjects.Rectangle;
-        rect.setFillStyle(fill);
-        rect.setStrokeStyle(2, stroke, 0.9);
+        if (view.isSprite) {
+          const sprite = view.body as Phaser.GameObjects.Sprite;
+          // idle reads as the sprite's own colours (clear tint); modes tint it.
+          if (mode === 'idle') sprite.clearTint();
+          else sprite.setTint(fill);
+        } else {
+          const rect = view.body as Phaser.GameObjects.Rectangle;
+          rect.setFillStyle(fill);
+          rect.setStrokeStyle(2, stroke, 0.9);
+        }
       }
-      // Suspicion ring: an orange halo whose opacity tracks how convinced the
-      // robot is. Created lazily, hidden when suspicion is negligible.
-      this.styleSuspicionRing(view, e, suspicion);
+      this.styleSuspicionRing(view, suspicion);
       return;
     }
   }
 
+  /** Lazily create/update the white humanLikeness halo behind a sprite animal. */
+  private styleHumanHalo(view: EntityView, hl: number, human: boolean, alpha: number): void {
+    if (hl <= 0.05) {
+      view.halo?.setVisible(false);
+      return;
+    }
+    if (!view.halo) {
+      view.halo = this.add
+        .circle(view.renderX, view.renderY, SPRITE_SIZE * 0.55)
+        .setStrokeStyle(2, 0xffffff, 1)
+        .setFillStyle(0, 0)
+        .setOrigin(0.5)
+        .setDepth(DEPTH_MOBILE - 1);
+    }
+    const color = human ? 0xffffff : 0xdddddd;
+    view.halo.setStrokeStyle(human ? 3 : 2, color, alpha).setVisible(true);
+  }
+
   /** Lazily create/update the orange suspicion halo around a robot. */
-  private styleSuspicionRing(view: EntityView, e: Entity, suspicion: number): void {
+  private styleSuspicionRing(view: EntityView, suspicion: number): void {
     if (suspicion === view.suspicion) return;
     view.suspicion = suspicion;
     if (suspicion <= 0.05) {
@@ -199,108 +343,132 @@ class WorldScene extends Phaser.Scene {
     }
     if (!view.ring) {
       view.ring = this.add
-        .circle(e.x, e.y, RECT_SIZE * 0.9)
+        .circle(view.renderX, view.renderY, SPRITE_SIZE * 0.6)
         .setStrokeStyle(2, 0xffa500, 1)
         .setFillStyle(0, 0)
         .setOrigin(0.5)
         .setDepth(DEPTH_MOBILE);
     }
-    // Intensity rises with suspicion (0.05..1 → ~0.3..1 alpha).
     view.ring.setStrokeStyle(2, 0xffa500, 0.3 + 0.7 * Math.min(1, suspicion)).setVisible(true);
   }
 
   /** Build the per-kind visual for a freshly-seen entity. */
   private createView(e: Entity): EntityView {
-    const kind = e.kind;
-    switch (kind) {
+    const base = (body: EntityView['body'], extra: Partial<EntityView> = {}): EntityView => ({
+      body,
+      isSprite: body instanceof Phaser.GameObjects.Sprite,
+      kind: e.kind,
+      renderX: e.x,
+      renderY: e.y,
+      targetX: e.x,
+      targetY: e.y,
+      facing: isDir8(e.facing) ? e.facing : 's',
+      ...extra,
+    });
+
+    switch (e.kind) {
       case 'pen':
-        // A large translucent enclosure outline, drawn UNDER the mobile entities.
-        return {
-          kind,
-          body: this.add
+        return base(
+          this.add
             .rectangle(e.x, e.y, PEN_SIZE, PEN_SIZE, 0x3a5a78, 0.12)
             .setStrokeStyle(2, 0x6fa8dc, 0.6)
             .setOrigin(0.5)
             .setDepth(DEPTH_PEN),
-        };
+        );
+
+      case 'hazard':
+        // A skunk stink-cloud / fox lure zone: a translucent radius marker robots
+        // avoid. Kept as a shape (the FX layer in Phase E animates a gas cloud).
+        return base(
+          this.add
+            .circle(e.x, e.y, RECT_SIZE * 1.4, 0x6b7d3a, 0.18)
+            .setStrokeStyle(2, 0x9bb04a, 0.5)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PROP),
+        );
 
       case 'robot': {
-        // A steel-gray diamond (rotated square) — clearly NOT an animal blob.
+        const sprite = this.makeSprite('robot', e);
+        if (sprite) return base(sprite, { species: 'robot', label: this.makeLabel(e) });
+        // Fallback: a steel-gray diamond (rotated square) — clearly not an animal.
         const body = this.add
           .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, 0x9aa3ad)
           .setStrokeStyle(2, 0x2b2f36, 0.9)
           .setOrigin(0.5)
           .setAngle(45)
           .setDepth(DEPTH_MOBILE);
-        return { kind, body, label: this.makeLabel(e) };
+        return base(body, { species: 'robot', label: this.makeLabel(e) });
       }
 
       case 'terminal':
-        // A small bright marker the player will later `interact` with.
-        return {
-          kind,
-          body: this.add
+        return base(
+          this.add
             .rectangle(e.x, e.y, MARKER_SIZE, MARKER_SIZE, 0x32d296)
             .setStrokeStyle(2, 0xffffff, 0.7)
             .setOrigin(0.5)
             .setDepth(DEPTH_PROP),
-        };
+        );
 
       case 'gate':
-        // A distinct amber marker, drawn as a thin tall bar to read as a door.
-        return {
-          kind,
-          body: this.add
+        return base(
+          this.add
             .rectangle(e.x, e.y, MARKER_SIZE * 0.5, MARKER_SIZE * 2, 0xe0a526)
             .setStrokeStyle(2, 0xffffff, 0.7)
             .setOrigin(0.5)
             .setDepth(DEPTH_PROP),
-        };
+        );
 
       case 'prop':
-        // The Clipboard: a small pale document — a slim portrait rect, clearly
-        // an inert item, not a creature. Sits on the prop layer with terminals.
-        return {
-          kind,
-          body: this.add
+        return base(
+          this.add
             .rectangle(e.x, e.y, PROP_SIZE * 0.8, PROP_SIZE, 0xeef0f2)
             .setStrokeStyle(2, 0x6b7280, 0.9)
             .setOrigin(0.5)
             .setDepth(DEPTH_PROP),
-        };
+        );
 
       case 'animal':
       default: {
-        // Players + idle animals. The body shape varies by species so the four
-        // animals read apart at a glance; the fill blends the id colour (so two
-        // of a species still differ) with a species tint. `undefined` kind (the
-        // bare starter point) falls through here as a plain id-coloured square.
-        const body = this.makeAnimalBody(e);
-        return { kind, body, label: this.makeLabel(e) };
+        const species = typeof e.species === 'string' ? e.species : 'ape';
+        const sprite = this.makeSprite(species, e);
+        if (sprite) return base(sprite, { species, label: this.makeLabel(e) });
+        // Fallback: the original per-species geometric shape.
+        return base(this.makeAnimalBody(e), { species, label: this.makeLabel(e) });
       }
     }
   }
 
   /**
-   * Build an animal's body, varying SHAPE by species (ape/bird/rat/elephant)
-   * and tinting the id colour toward the species' family colour. The body stays
-   * a generic Shape so `restyle()`'s humanLikeness outline applies uniformly,
-   * and so per-species shapes never leak into the rest of the lifecycle.
+   * Create an animated sprite for `species` if the atlas has its animations,
+   * else return undefined (caller draws the shape fallback). Starts on the
+   * idle-south frame; updateAnimation switches it each frame.
+   */
+  private makeSprite(species: string, e: Entity): Phaser.GameObjects.Sprite | undefined {
+    if (!this.atlasReady || !this.animatedSpecies.has(species)) return undefined;
+    const startFrame = `${species}_idle_s_0`;
+    if (!this.textures.get(ATLAS_KEY).has(startFrame)) return undefined;
+    const sprite = this.add
+      .sprite(e.x, e.y, ATLAS_KEY, startFrame)
+      .setOrigin(0.5)
+      .setDepth(DEPTH_MOBILE);
+    sprite.setDisplaySize(SPRITE_SIZE, SPRITE_SIZE);
+    return sprite;
+  }
+
+  /**
+   * Build an animal's body SHAPE FALLBACK, varying shape by species and tinting
+   * the id colour toward the species' family colour. Used only when the atlas (or
+   * this species' frames) is unavailable.
    */
   private makeAnimalBody(e: Entity): Phaser.GameObjects.Shape {
     const species = typeof e.species === 'string' ? e.species : undefined;
     const tint = species !== undefined ? SPECIES_TINT[species] : undefined;
-    // Blend toward the species tint when known so the family colour reads while
-    // each id still shifts the hue; unknown species keeps the pure id colour.
     const fill = tint !== undefined ? blendColors(colorFor(e.id), tint, 0.55) : colorFor(e.id);
-    // restyle() overrides this outline per-frame from humanLikeness; this is the
-    // neutral default a freshly-spawned animal shows before any First-Law read.
     const stroke = 0xffffff;
     const alpha = 0.6;
 
     switch (species) {
       case 'bird': {
-        // Light + nimble (flies): an upward triangle.
         const r = RECT_SIZE * 0.62;
         return this.add
           .triangle(e.x, e.y, 0, r, r, -r, -r, -r, fill)
@@ -309,7 +477,6 @@ class WorldScene extends Phaser.Scene {
           .setDepth(DEPTH_MOBILE);
       }
       case 'rat': {
-        // Small + squeezes through gaps: a compact diamond (rotated square).
         const d = RECT_SIZE * 0.7;
         return this.add
           .rectangle(e.x, e.y, d, d, fill)
@@ -319,7 +486,6 @@ class WorldScene extends Phaser.Scene {
           .setDepth(DEPTH_MOBILE);
       }
       case 'elephant': {
-        // Big + smashes: an oversized square so it reads as the heavy one.
         const big = RECT_SIZE * 1.25;
         return this.add
           .rectangle(e.x, e.y, big, big, fill)
@@ -329,7 +495,6 @@ class WorldScene extends Phaser.Scene {
       }
       case 'ape':
       default:
-        // Ape (climber) + the bare starter point: the baseline id-coloured square.
         return this.add
           .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, fill)
           .setStrokeStyle(2, stroke, alpha)
@@ -341,7 +506,7 @@ class WorldScene extends Phaser.Scene {
   /** A name label floating above a mobile entity. */
   private makeLabel(e: Entity): Phaser.GameObjects.Text {
     return this.add
-      .text(e.x, e.y - RECT_SIZE, e.name ?? e.id.slice(0, 6), {
+      .text(e.x, e.y - SPRITE_SIZE * 0.55, e.name ?? e.id.slice(0, 6), {
         fontFamily: 'monospace',
         fontSize: '12px',
         color: '#ffffff',
@@ -354,6 +519,7 @@ class WorldScene extends Phaser.Scene {
     view.body.destroy();
     view.label?.destroy();
     view.ring?.destroy();
+    view.halo?.destroy();
   }
 }
 
@@ -367,19 +533,23 @@ function readMode(v: unknown): RobotMode {
   return v === 'frozen' || v === 'pursue' || v === 'ordered' ? v : 'idle';
 }
 
-/** Deterministic pastel color from an entity id so each rectangle is distinct. */
+/** Type guard: is `v` a valid Dir8 string? */
+function isDir8(v: unknown): v is Dir8 {
+  return (
+    v === 's' || v === 'se' || v === 'e' || v === 'ne' ||
+    v === 'n' || v === 'nw' || v === 'w' || v === 'sw'
+  );
+}
+
+/** Deterministic pastel color from an entity id so each shape fallback is distinct. */
 function colorFor(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  // Spread hue across the wheel; fixed-ish saturation/lightness via HSV->RGB.
   const hue = h % 360;
   return hsvToInt(hue, 0.55, 0.95);
 }
 
-/**
- * Linearly blend two 0xRRGGBB colours: `t` of `b` mixed into `a` (t in 0..1).
- * Used to bias an animal's per-id colour toward its species' family tint.
- */
+/** Linearly blend two 0xRRGGBB colours: `t` of `b` mixed into `a` (t in 0..1). */
 function blendColors(a: number, b: number, t: number): number {
   const lerp = (x: number, y: number) => Math.round(x + (y - x) * t);
   const r = lerp((a >> 16) & 0xff, (b >> 16) & 0xff);
@@ -425,10 +595,10 @@ export class PhaserRenderer implements IRenderer {
       scene: this.scene,
     });
 
-    // Phaser boots asynchronously; resolve once the scene is live so callers can
-    // safely start pushing entities.
+    // Resolve once the scene's create() has run (after the loader completes), so
+    // the atlas + animations are ready before the first entity is drawn.
     await new Promise<void>((resolve) => {
-      this.game!.events.once(Phaser.Core.Events.READY, () => resolve());
+      this.scene!.events.once(Phaser.Scenes.Events.CREATE, () => resolve());
     });
   }
 

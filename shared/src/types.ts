@@ -17,7 +17,40 @@
  *   - `gate`     a perimeter or zone door (static, openable)
  *   - `prop`     a carryable disguise item (the Clipboard) — the ape's courier prop
  */
-export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop';
+export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop' | 'hazard';
+
+/**
+ * The 8 facing directions in screen space (y-down), used to pick the right
+ * directional sprite animation. These strings ARE the `dir` segment of every
+ * atlas frame key (`<species>_<state>_<dir>_<frame>`) — they must match the
+ * sprite generator's contract (scripts/sprites/contract.js DIRECTIONS) exactly.
+ * `facingFromVec` in step.ts maps a movement vector to one of these.
+ */
+export type Dir8 = 's' | 'se' | 'e' | 'ne' | 'n' | 'nw' | 'w' | 'sw';
+
+/**
+ * Which spectacular ability effect is active / just fired on an entity. Drives
+ * the client FX layer (particles/tweens/glow/shake). Defined here (not in
+ * step.ts) so types.ts has no import cycle with step.ts.
+ */
+export type FxKind =
+  | 'flit' | 'skitter' | 'shove' | 'carry'
+  | 'cloak' | 'dazzle' | 'stink' | 'burrow'
+  | 'dash' | 'mimic' | 'shell' | 'leap' | 'hush' | 'decoy';
+
+/**
+ * The render-echo of an ability effect, carried in the snapshot so ANY client
+ * can show FX for ANY player/robot (not just the local one). `startTick` is the
+ * rising edge the client triggers a one-shot burst on; `untilTick` drives any
+ * sustained FX (a glow that lasts the effect). The gameplay timers
+ * (flitUntilTick, etc.) remain server-side as the source of truth; `fx` is the
+ * compact echo derived from them at serialization time.
+ */
+export interface EntityFx {
+  kind: FxKind;
+  startTick: number;
+  untilTick: number;
+}
 
 /**
  * The atomic thing the world is made of. The index signature lets gameplay
@@ -40,6 +73,10 @@ export interface Entity {
   suspicion?: number;
   /** For `animal` (player): true once it has reached the gate and escaped (win). */
   escaped?: boolean;
+  /** 8-way facing for directional sprite animation. Absent → renderer derives from motion. */
+  facing?: Dir8;
+  /** Active/just-fired ability effect, for one-shot + sustained FX on any client. */
+  fx?: EntityFx;
   [key: string]: unknown;
 }
 

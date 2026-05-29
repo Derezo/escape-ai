@@ -11,7 +11,7 @@
  * frame/accumulator loop on the client).
  */
 
-import type { Entity, Input, WorldState } from './types.js';
+import type { Dir8, Entity, Input, WorldState } from './types.js';
 
 // ---------------------------------------------------------------------------
 // The Caves of Steel — Three-Laws stealth math (deterministic, both sides)
@@ -72,6 +72,29 @@ export function dist2(a: { x: number; y: number }, b: { x: number; y: number }):
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return dx * dx + dy * dy;
+}
+
+/**
+ * The 8 facings in index order by angle (east, then clockwise — screen y is down
+ * so increasing atan2 angle rotates clockwise). Index i = the direction at angle
+ * i * 45°. {@link facingFromVec} uses this to map a movement vector to a Dir8.
+ * Both the server (deriving authoritative facing) and the client (prediction +
+ * fallback) call facingFromVec so they always agree.
+ */
+export const DIR8: readonly Dir8[] = ['e', 'se', 's', 'sw', 'w', 'nw', 'n', 'ne'] as const;
+
+/**
+ * Map a movement vector to one of 8 facings. Pure + deterministic (no RNG/clock):
+ * the same args always yield the same dir, so client prediction and server
+ * authority can't disagree. A zero vector keeps the previous facing (`prev`), so a
+ * stationary entity holds the direction it last moved instead of snapping to a
+ * default. Default `prev` is 's' (facing the camera) for a never-moved entity.
+ */
+export function facingFromVec(dx: number, dy: number, prev: Dir8 = 's'): Dir8 {
+  if (dx === 0 && dy === 0) return prev;
+  let idx = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)); // -4..4
+  idx = ((idx % 8) + 8) % 8; // fold to 0..7
+  return DIR8[idx];
 }
 
 // ---------------------------------------------------------------------------

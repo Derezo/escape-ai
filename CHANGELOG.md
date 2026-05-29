@@ -4,6 +4,35 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.12: **Renderer animation + 8-way facing + interpolation (Phase B of the
+  visual-polish plan).** The renderer hard-`setPosition`'d static shapes with no
+  animation or facing; abilities had no on-screen state at all. This wires the
+  animated-sprite runtime end to end:
+  - **Facing on the wire (shared, once):** `Dir8` + `EntityFx`/`FxKind` types and
+    `Entity.facing`/`Entity.fx` in `@shared/types`; pure deterministic
+    `facingFromVec(dx,dy,prev)` + `DIR8` in `@shared/step` (a zero vector holds the
+    last facing). Verified by a new `scripts/check-facing.js` (8 mappings, purity,
+    zero-holds-prev, full-sweep).
+  - **Server facing:** computed for players (engine integrate, from authoritative
+    input), robots (pursue dir / patrol delta), and decoys (wander delta), then
+    serialized in `toEntity` (which also forwards a live `fx` echo). `loadShared`
+    now requires `facingFromVec`. A socket wire-test confirms all 8 facings flow for
+    both animals and robots.
+  - **Renderer (`phaser.ts`):** added `preload()` (loads `./sprites/atlas.{png,json}`)
+    + `create()` that builds idle/walk directional anims from whatever frames the
+    atlas actually contains (no hardcoded species list). Mobile entities render as
+    animated 8-directional sprites; each frame picks idle vs walk from motion and
+    plays the facing anim. The Three-Laws feedback is preserved on sprites
+    (humanLikeness → white halo, robot mode → tint, suspicion ring unchanged).
+    Positions are interpolated between snapshots (local player snapped via a
+    client-only `_local` flag). **Missing atlas / species → graceful fall back to the
+    original geometric shapes**, so the kit still boots + plays with zero art.
+  - **Client (`main.ts`):** predicts our own facing on key-press (same shared helper)
+    and tags the local entity `_local` for the renderer's snap-vs-interpolate split.
+  - Verified: shared + client build/typecheck clean (TS strict), atlas copies into
+    `client/dist/sprites/`, server boots and validates the new export, facing wire-test
+    green.
+
 - 0.2.11: **CLAUDE.md workflow directive** — added two Workflow rules: commit to the
   feature branch between every phase of plan execution (one phase = one checkpointed
   commit with a CHANGELOG entry), and validate all commits are complete (clean working

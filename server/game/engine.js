@@ -136,6 +136,12 @@ function integratePlayers(dt) {
       player.y = clampWorld(player.y);
     }
 
+    // Directional facing for sprite animation. Derived from the same authoritative
+    // input axes as the move, so a player always faces where it walked; a zero
+    // vector holds the last facing (shared.facingFromVec). Rides the snapshot via
+    // toEntity. Cheap, deterministic, and identical to the client's prediction.
+    player.facing = stealth.facingFromVec(dx, dy, player.facing || 's');
+
     // Three-Laws stealth: how this tick's movement reads to a robot (still =
     // human, fleeing = prey). All math lives in shared; we just feed it speed.
     stealth.stepPlayerHumanLikeness(player, dt);
@@ -180,9 +186,14 @@ function stepNpcs(dt) {
  *  the client can render them alongside the world's idle animals. humanLikeness
  *  and carrying ride along so the client can show stealth feedback (the bar /
  *  prop indicator). Robots serialize their mode/suspicion straight from the
- *  world entity objects, which stealth.stepRobots mutates in place each tick. */
+ *  world entity objects, which stealth.stepRobots mutates in place each tick.
+ *
+ *  `facing` rides along for directional sprite animation; `fx` is the render-echo
+ *  of an active ability effect (set by the ability handlers in stealth.js),
+ *  forwarded only while still live so a stale effect doesn't re-trigger FX. Both
+ *  are plain JSON, so they ride the snapshot's existing delta diff. */
 function toEntity(player) {
-  return {
+  const entity = {
     id: player.id,
     x: player.x,
     y: player.y,
@@ -192,9 +203,16 @@ function toEntity(player) {
     species: player.species,
     humanLikeness: player.humanLikeness || 0,
     carrying: !!player.carrying,
+    // 8-way facing for the directional sprite (held facing when standing still).
+    facing: player.facing || 's',
     // Sticky win flag — the client shows a victory state for escaped players.
     escaped: !!player.escaped
   };
+  // Forward an active ability effect echo (one-shot + sustained FX on any client).
+  if (player.fx && player.fx.untilTick >= currentTick) {
+    entity.fx = player.fx;
+  }
+  return entity;
 }
 
 /** Broadcast a snapshot to every active room. */

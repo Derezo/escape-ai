@@ -94,6 +94,8 @@ function register(socket, deps) {
       // floors it. Both start blank — a fresh "animal" reads as pure prey.
       humanLikeness: 0,
       carrying: false,
+      // 8-way facing for the directional sprite; updated each tick from input.
+      facing: 's',
       // Species-ability timers (Phase 4). Each is a tick deadline; an effect is
       // active while currentTick < the field. Read with `|| 0` so unset = off.
       flitUntilTick: 0,       // bird: briefly uncatchable

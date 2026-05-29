@@ -51,7 +51,7 @@ async function loadShared() {
   const mod = await import('../../shared/dist/step.js');
   const required = [
     'STEALTH', 'updateHumanLikeness', 'firstLawProtects',
-    'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep'
+    'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep', 'facingFromVec'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -99,6 +99,11 @@ function stepPlayerHumanLikeness(player, dt) {
 /** The per-frame movement speed for an input (walk vs sprint), from shared. */
 function moveSpeed(sprint) {
   return shared ? shared.moveSpeed(sprint === true) : config.PLAYER_SPEED;
+}
+
+/** Map a movement vector to a Dir8 facing, from shared (held facing if zero). */
+function facingFromVec(dx, dy, prev) {
+  return shared ? shared.facingFromVec(dx, dy, prev || 's') : (prev || 's');
 }
 
 /**
@@ -247,6 +252,8 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     if (decision.mode === 'pursue') {
       robot.x += decision.dirX * speed * dt;
       robot.y += decision.dirY * speed * dt;
+      // Face the chase direction (for the directional sprite).
+      robot.facing = shared.facingFromVec(decision.dirX, decision.dirY, robot.facing || 's');
 
       const target = animals.find((a) => a.id === decision.targetId);
       // Panic is the alarm over the ESCAPE, so only a robot chasing a real
@@ -276,6 +283,8 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       // around. A decoy/player that drifts into perception flips it to 'pursue'
       // next tick. Patrol is intentionally slower than a chase (config.PATROL_SPEED).
       const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED);
+      // Face the patrol heading (derive from the actual position delta).
+      robot.facing = shared.facingFromVec(next.x - robot.x, next.y - robot.y, robot.facing || 's');
       robot.x = next.x;
       robot.y = next.y;
     }
@@ -308,6 +317,8 @@ function stepIdleAnimals(dt, roomName, currentTick) {
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
     const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED);
+    // Face the drift direction so the decoy's walk animation reads correctly.
+    e.facing = shared.facingFromVec(next.x - e.x, next.y - e.y, e.facing || 's');
     e.x = next.x;
     e.y = next.y;
   }
@@ -633,6 +644,7 @@ module.exports = {
   isReady,
   stepPlayerHumanLikeness,
   moveSpeed,
+  facingFromVec,
   stepRobots,
   stepIdleAnimals,
   stepPanic,
