@@ -28,6 +28,7 @@
 const config = require('../config');
 const world = require('./world');
 const stealth = require('./stealth');
+const quests = require('./quests');
 
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
@@ -155,8 +156,17 @@ function integratePlayers(dt) {
     // currentTick lets it honor timed effects (chameleon cloak, tortoise shell).
     stealth.stepPlayerHumanLikeness(player, dt, currentTick);
 
+    // Phase 6 side-quest progress: a 'reach' quest completes when the player
+    // stands on its own species' home (questObject) tile. Run BEFORE checkEscape
+    // so arriving home and reaching the gate the same tick still escapes. No-op
+    // for fetch/activate quests (those advance at the gate / on interact).
+    if (player.quest && !player.quest.complete) {
+      quests.stepReach(player, player.room);
+    }
+
     // Win + respawn lifecycle: reaching the gate escapes (shows the banner);
-    // after a brief celebration the player respawns as a fresh animal.
+    // after a brief celebration the player respawns as a fresh animal. The gate
+    // is GATED on quest completion (stealth.checkEscape).
     stealth.checkEscape(player, player.room, currentTick);
 
     // Consume the latched one-shot action (order / interact / ability), if any.
@@ -258,6 +268,14 @@ function toEntity(player) {
   // Forward an active ability effect echo (one-shot + sustained FX on any client).
   if (player.fx && player.fx.untilTick >= currentTick) {
     entity.fx = player.fx;
+  }
+  // Phase 6: forward the player's side-quest so the client HUD can surface it.
+  // Plain JSON ({type,title,blurb,done,need,complete}) → rides the delta diff.
+  // questBlocked is the last tick this player brushed the gate WITHOUT a complete
+  // quest, so the client can flash a "finish your quest" hint near the gate.
+  if (player.quest) {
+    entity.quest = player.quest;
+    if (player.questBlocked) entity.questBlocked = player.questBlocked;
   }
   return entity;
 }

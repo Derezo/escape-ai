@@ -16,6 +16,7 @@
 
 const config = require('../config');
 const world = require('./world');
+const quests = require('./quests');
 const speciesRoster = require('../socket/species-roster');
 
 // The cached shared module (resolved by loadShared() before the loop starts).
@@ -576,6 +577,10 @@ function respawnPlayer(player, spawn) {
   player.shellUntilTick = 0;
   player.abilityCdUntilTick = 0;
   player.fx = null;
+  // Phase 6: the respawn handed the player a NEW species above, so re-derive its
+  // quest and reset all progress (done:0/complete:false). Must run AFTER the
+  // species reassignment so the new run gets the new animal's quest.
+  quests.initPlayer(player);
   // Back to the room's first map spawn point (mirrors catchPlayer).
   const at = spawn || { x: 50, y: 50 };
   player.x = at.x;
@@ -609,14 +614,27 @@ function checkEscape(player, roomName, currentTick) {
   if (!gate) return;
   // A generous reach so brushing the gate counts (it's the goal, not a trap).
   const reach = config.RECT_SIZE * 1.5;
-  if (shared.dist2(player, gate) <= reach * reach) {
-    player.escaped = true;
-    player.escapeUntilTick = currentTick + secsToTicks(config.ESCAPE_CELEBRATION_SECS);
-    // Persistent stat: this flips exactly once per run (guarded by `player.escaped`
-    // above), so each escape is counted once. Decoupled from the DB; the engine
-    // flushes the delta promptly on the escape edge tick.
-    bumpStat(player, 'escapes');
+  if (shared.dist2(player, gate) > reach * reach) return;
+
+  // Phase 6: the ape's 'fetch' quest completes the instant a CARRYING player
+  // reaches the gate (the deposit). Evaluate it BEFORE the gate gating below so
+  // the same tick both completes the quest and lets the courier escape.
+  quests.stepFetchAtGate(player, gate, reach);
+
+  // GATE GATING: a player may only escape once its per-species quest is complete.
+  // If it reaches the gate without a complete quest, stamp questBlocked (a tick
+  // the client can show a "finish your quest" hint from) and refuse the escape.
+  if (!quests.isComplete(player)) {
+    player.questBlocked = currentTick;
+    return;
   }
+
+  player.escaped = true;
+  player.escapeUntilTick = currentTick + secsToTicks(config.ESCAPE_CELEBRATION_SECS);
+  // Persistent stat: this flips exactly once per run (guarded by `player.escaped`
+  // above), so each escape is counted once. Decoupled from the DB; the engine
+  // flushes the delta promptly on the escape edge tick.
+  bumpStat(player, 'escapes');
 }
 
 /**
@@ -642,6 +660,9 @@ function applyAction(player, action, roomName, currentTick) {
       // patrol down). Phase 4 wires real terminal effects + disguise-prop pickup.
       if (nearTerminal(player, roomName)) {
         orderNearestRobot(player, roomName, currentTick);
+        // Phase 6: an 'activate' quest (elephant/peacock/parrot) counts each
+        // DISTINCT terminal tapped toward its target. No-op for other quests.
+        quests.onInteract(player, roomName);
       }
       break;
     case 'ability':

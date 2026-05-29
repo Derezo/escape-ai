@@ -65,6 +65,7 @@ async function main(): Promise<void> {
     <div class="hud-row"><span class="hud-key">panic</span><span class="hud-val" id="hud-panic">…</span></div>
     <div class="hud-row hud-lockdown" id="hud-lockdown-row"><span class="hud-key">status</span><span class="hud-val" id="hud-lockdown">LOCKDOWN</span></div>
     <div class="hud-row"><span class="hud-key">human-like</span><span class="hud-val" id="hud-human">…</span></div>
+    <div class="hud-row" id="hud-quest-row"><span class="hud-key">quest</span><span class="hud-val" id="hud-quest">…</span></div>
     <div class="hud-row hud-carry" id="hud-carry-row"><span class="hud-key">carrying</span><span class="hud-val">prop</span></div>
   `;
   document.body.appendChild(hud);
@@ -75,6 +76,8 @@ async function main(): Promise<void> {
   const hudPanic = hud.querySelector<HTMLElement>('#hud-panic')!;
   const hudLockdownRow = hud.querySelector<HTMLElement>('#hud-lockdown-row')!;
   const hudHuman = hud.querySelector<HTMLElement>('#hud-human')!;
+  const hudQuest = hud.querySelector<HTMLElement>('#hud-quest')!;
+  const hudQuestRow = hud.querySelector<HTMLElement>('#hud-quest-row')!;
   const hudCarryRow = hud.querySelector<HTMLElement>('#hud-carry-row')!;
 
   // --- Lockdown overlay (full-screen, click-through) ---
@@ -149,6 +152,12 @@ async function main(): Promise<void> {
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
 
+  // The latest server tick we've seen (from snapshots). Used to judge whether a
+  // transient stamp like `questBlocked` is RECENT — i.e. we just brushed the gate
+  // without a complete quest — so the HUD can flash a short "finish your quest"
+  // hint rather than show it forever. 0 until the first snapshot.
+  let latestTick = 0;
+
   // The regenerated world map (from the seed the server sends once on join). Used
   // for collision-aware client prediction AND handed to the renderer to draw the
   // tilemap. Undefined until the `map` event arrives.
@@ -203,11 +212,13 @@ async function main(): Promise<void> {
 
   net.onSnapshot((msg) => {
     // Merge the delta: server positions WIN (reconciliation). New fields (kind,
-    // species, ...) ride through the spread and reach the renderer untouched.
+    // species, quest, ...) ride through the spread and reach the renderer untouched.
     for (const e of msg.entities) {
       entities.set(e.id, { ...entities.get(e.id), ...e });
     }
-    // Capture the global panic/lockdown state for the HUD (display-only).
+    // Track the authoritative tick clock (for transient-stamp recency like
+    // questBlocked) and capture the global panic/lockdown state for the HUD.
+    if (typeof msg.tick === 'number') latestTick = msg.tick;
     if (msg.world) world = msg.world;
   });
 
@@ -409,6 +420,34 @@ async function main(): Promise<void> {
     // Human-likeness: a 5-cell bar + percent, with the ~60% freeze-threshold hint.
     hudHuman.textContent =
       hl !== undefined ? `${bar(hl)} ${Math.round(hl * 100)}% (freeze ~60%)` : '…';
+
+    // --- Side-quest row: surface the active quest + progress (display-only). ---
+    // The server owns quest progress (gates the gate on completion); we just mirror
+    // it. Show the title with a ✓ when complete; an 'activate' quest also shows
+    // its N/need tally. If we recently brushed the gate WITHOUT a complete quest
+    // (questBlocked stamped within ~1.5s = ~30 ticks at 20Hz), flash a hint that
+    // the quest must be finished first, and tint the row.
+    const quest = me?.quest;
+    if (quest) {
+      const blocked =
+        typeof me?.questBlocked === 'number' && latestTick - me.questBlocked <= 30;
+      if (quest.complete) {
+        hudQuest.textContent = `${quest.title} ✓`;
+      } else if (blocked) {
+        hudQuest.textContent = 'finish your quest to escape!';
+      } else if (quest.type === 'activate') {
+        hudQuest.textContent = `${quest.title} ${quest.done}/${quest.need}`;
+      } else {
+        hudQuest.textContent = quest.title;
+      }
+      // Tint: green when done, amber when blocked at the gate, default otherwise.
+      hudQuestRow.classList.toggle('quest-done', quest.complete);
+      hudQuestRow.classList.toggle('quest-blocked', !quest.complete && blocked);
+    } else {
+      hudQuest.textContent = '…';
+      hudQuestRow.classList.remove('quest-done', 'quest-blocked');
+    }
+
     // Carrying row: shown only while we actually hold the disguise prop.
     hudCarryRow.classList.toggle('active', me?.carrying === true);
 

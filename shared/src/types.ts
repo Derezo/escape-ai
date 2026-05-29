@@ -53,6 +53,27 @@ export interface EntityFx {
 }
 
 /**
+ * A player's live side-quest progress (Phase 6), as it rides the snapshot. The
+ * static quest DEFINITIONS live in quests.ts (QuestDef); this is the per-player
+ * mutable view the server owns and the client HUD reads. `done`/`need` drive the
+ * progress readout; `complete` gates the escape gate server-side.
+ */
+export interface QuestProgress {
+  /** The mechanic: 'reach' your home, 'fetch' the prop to the gate, 'activate' terminals. */
+  type: 'reach' | 'fetch' | 'activate';
+  /** Short HUD title, e.g. "Reach your den". */
+  title: string;
+  /** One-line, ability-themed flavor. */
+  blurb: string;
+  /** Progress so far (0..need). */
+  done: number;
+  /** Target count (reach/fetch = 1, activate = 3). */
+  need: number;
+  /** True once the quest is satisfied — the gate will then let this animal out. */
+  complete: boolean;
+}
+
+/**
  * The atomic thing the world is made of. The index signature lets gameplay
  * rules bolt on arbitrary fields without breaking serialization; the named
  * optional fields below are the ones The Caves of Steel reads on both sides, so
@@ -77,6 +98,10 @@ export interface Entity {
   facing?: Dir8;
   /** Active/just-fired ability effect, for one-shot + sustained FX on any client. */
   fx?: EntityFx;
+  /** For `animal` (player): its per-species side-quest progress (Phase 6). */
+  quest?: QuestProgress;
+  /** For `animal` (player): the last tick it brushed the gate WITHOUT a complete quest. */
+  questBlocked?: number;
   [key: string]: unknown;
 }
 

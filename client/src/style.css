@@ -106,6 +106,19 @@ body {
   color: #06d6a0;
 }
 
+/* Side-quest row tints (Phase 6): win-green once the quest is complete (the gate
+   will let you out), amber when you brush the gate without finishing it. The row
+   is always shown; only its value colour changes. */
+#hud-quest-row.quest-done .hud-val {
+  color: #06d6a0;
+}
+
+#hud-quest-row.quest-blocked .hud-val {
+  color: #ffd166;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 209, 102, 0.5);
+}
+
 /* Full-screen lockdown overlay: a pulsing red vignette + banner shown only
    while the room is sealed. Click-through and display-only. Hidden until
    main.ts adds `.active` on the lockdown false->true edge. */

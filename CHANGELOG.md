@@ -4,6 +4,41 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.30: **Per-species side-quests: the gate now gates (Phase 6).** Each of the 14
+  playable species must finish a short side-quest before the perimeter gate will let it
+  out. Three mechanics, themed per species so the flavor varies while the server logic
+  stays small.
+  - **`shared/src/quests.ts` (new, pure + deterministic):** `QuestDef`, `QuestType`
+    (`reach`/`fetch`/`activate`), `questForSpecies(species)` (a pure lookup), and the
+    `QUEST_BY_SPECIES` table with an ability-themed title+blurb for all 14. Assignment:
+    **ape = fetch** (courier the Clipboard to the gate, need 1); **elephant/peacock/parrot
+    = activate** (tap 3 distinct keeper terminals); the other **ten = reach** (return to
+    your own enclosure/home, need 1). Added to the `shared` barrel; `Entity` gains a typed
+    optional `quest: QuestProgress` + `questBlocked` in `shared/src/types.ts` so the
+    progress rides the snapshot.
+  - **`server/game/quests.js` (new):** per-player progress (`player.quest =
+    {type,title,blurb,done,need,complete}`) consuming the shared defs via
+    `world.questForSpecies`. `initPlayer` (join + respawn), `stepReach` (per-tick distance
+    to the species' own questObject), `onInteract` (counts distinct terminals for
+    `activate`), `stepFetchAtGate` (ape completes at the gate while carrying). The shared
+    quest model is loaded once in `server/game/world.js`'s `loadSharedWorld` and exposed as
+    `world.questForSpecies`.
+  - **Gate gating (`server/game/stealth.js`):** `checkEscape` now refuses the escape unless
+    `player.quest.complete` — it stamps a transient `player.questBlocked` tick instead, so
+    the client can hint. The ape's fetch completes the same tick it reaches the gate, so the
+    courier escapes immediately. `respawnPlayer` re-initializes the quest for the NEW
+    species. `applyAction`'s interact branch advances `activate` quests.
+  - **Wiring (`server/game/engine.js`, `server/socket/lobby.js`):** the engine runs the
+    per-tick `reach` advance before `checkEscape` and forwards `player.quest`/`questBlocked`
+    in `toEntity`; lobby initializes the quest on join.
+  - **Client (`client/src/main.ts`, `help.ts`, `style.css`):** a new HUD **quest** row shows
+    the title + `done/need` + a ✓ when complete, flashes "finish your quest to escape!" when
+    you brush the gate without finishing (tracked via the snapshot tick), and tints
+    green/amber. The help widget's Goal blurb now explains the per-species quest gate.
+  - **Tests:** `shared/test/quests.test.mjs` (new, zero-dep) pins the model — coverage,
+    mechanic distribution, short titles, and `questForSpecies` purity. `npm test` is green
+    (14 tests: 10 existing + 4 new).
+
 - 0.2.29: **The world is on screen: tilemap rendering, camera-follow, Y-sort, roof-fade
   (Phase 5).** The client now draws the generated zoo instead of a dark void — verified with
   headless-Chrome screenshots end-to-end.

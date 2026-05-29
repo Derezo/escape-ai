@@ -53,6 +53,12 @@ async function loadSharedWorld() {
   // Relative to this file (server/game/world.js) -> shared/dist/*.js.
   const worldMod = await import('../../shared/dist/world.js');
   const rngMod = await import('../../shared/dist/rng.js');
+  // Phase 6: the per-species quest definitions live in shared/dist/quests.js
+  // (the ONE source of truth). We load them here, alongside the world generator,
+  // so the server has a single shared-world cache to draw both the map AND the
+  // quest model from — game/quests.js then calls world.questForSpecies(species)
+  // rather than maintaining its own loader/cache.
+  const questMod = await import('../../shared/dist/quests.js');
 
   const required = {
     generateWorld: worldMod.generateWorld,
@@ -62,7 +68,8 @@ async function loadSharedWorld() {
     tileSolid: worldMod.tileSolid,
     isSolidAt: worldMod.isSolidAt,
     worldToTile: worldMod.worldToTile,
-    seedFromString: rngMod.seedFromString
+    seedFromString: rngMod.seedFromString,
+    questForSpecies: questMod.questForSpecies
   };
   const missing = Object.keys(required).filter((name) => required[name] === undefined);
   if (missing.length) {
@@ -291,6 +298,24 @@ function nextTempId(roomName, prefix) {
   return `${prefix}-${n}`;
 }
 
+/**
+ * The shared quest definition for a species (Phase 6). A pure lookup into the
+ * cached shared/dist/quests.js — the ONE source of truth for per-species quests.
+ * Throws if called before loadSharedWorld() resolves (a programmer error; the
+ * engine awaits it at boot), rather than silently returning undefined.
+ * @param {string} species
+ * @returns {{species:string,type:string,title:string,blurb:string,need:number}}
+ */
+function questForSpecies(species) {
+  if (!sharedWorld) {
+    throw new Error(
+      'world.questForSpecies() called before loadSharedWorld() resolved. ' +
+      'engine.init() must await world.loadSharedWorld() before any player joins.'
+    );
+  }
+  return sharedWorld.questForSpecies(species);
+}
+
 module.exports = {
   loadSharedWorld,
   getOrCreateRoomWorld,
@@ -303,5 +328,6 @@ module.exports = {
   addWorldEntity,
   pruneExpired,
   nextTempId,
+  questForSpecies,
   INITIAL_WORLD_STATE
 };

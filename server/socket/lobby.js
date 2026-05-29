@@ -10,6 +10,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const world = require('../game/world');
+const quests = require('../game/quests');
 const speciesRoster = require('./species-roster');
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -131,8 +132,17 @@ function register(socket, deps) {
       // `input` so a later action-less movement frame can't clobber it before
       // the engine reads it (client send rate and tick rate are both ~20Hz but
       // not phase-locked, so without a latch an order frame races and is lost).
-      pendingAction: null
+      pendingAction: null,
+      // Phase 6 per-species side-quest: each animal must complete its quest
+      // before the gate will let it out. Initialized below from the shared quest
+      // model (quests.initPlayer sets player.quest + questTerminals + questBlocked).
+      quest: null,
+      questTerminals: null,
+      questBlocked: 0
     };
+    // Derive the quest for this player's species (reach/fetch/activate). Done
+    // AFTER the species is resolved above, so the quest matches the avatar.
+    quests.initPlayer(player);
     connectedPlayers.set(socket.id, player);
 
     // Track room membership and join the Socket.IO room for broadcasts.

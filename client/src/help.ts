@@ -59,8 +59,12 @@ const CONTROLS_HTML = `
     <li><b>H</b> or <b>?</b> — toggle this help</li>
   </ul>
   <h2>Goal</h2>
-  <p>Reach the <b>gate</b> at the far right edge to escape. Walk to stay human,
-    time your orders, and don't tip the zoo into lockdown.</p>
+  <p>Reach the <b>gate</b> at the far right edge to escape. But first, finish your
+    animal's <b>side-quest</b> — shown in the <b>HUD</b> (top-left). Each species has
+    its own: most must <b>return home</b>, the keeper-controllers must <b>tap three
+    terminals</b>, and the ape must <b>courier the Clipboard</b> to the gate. The
+    gate won't open until your quest reads <b>✓</b>. Walk to stay human, time your
+    orders, and don't tip the zoo into lockdown.</p>
 `;
 
 /**
