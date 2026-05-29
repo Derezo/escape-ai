@@ -4,6 +4,13 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.7: **Phase 5c — clean-clone verification + README.** Verified the full build
+  from a fresh `git clone` (shared build → server install → client build) and a
+  runtime boot + 12-bot sync with no errors — the server's dynamic `shared/dist`
+  import resolves as long as `shared/` is built first (now called out in the README).
+  Rewrote the README Quick-start to describe the actual game (walk/sprint, order,
+  ability, escape via the gate) instead of the old move-a-rectangle demo.
+
 - 0.2.6: **Phase 5b — themed sprites + per-species visuals.** The sprite generator's
   `SPRITES` table now matches the real game (ape/bird/rat/elephant/robot/pen/terminal/
   gate/prop; new hexagon + clipboard shapes); stale starter-kit SVGs removed. The

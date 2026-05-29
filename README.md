@@ -93,9 +93,14 @@ cd server && npm install && npm run dev      # or: npm start
 cd client && npm install && npm run dev
 ```
 
-Open the printed Vite URL in **two browser tabs** — each joins the default room and
-you'll see both players' rectangles move in sync (WASD / arrow keys). The HUD shows
-latency and player count.
+Open the printed Vite URL in **two or more browser tabs** — each joins the default
+room as an escaped animal. The manual opens on first load (toggle with **H**/**?**).
+**Walk** with WASD/arrows (stay still to look human and freeze the keeper-robots),
+**Shift** to sprint, **Q** to order a robot, **Space** for your species ability, and
+reach the **gate** on the right edge to escape. The HUD shows latency, the panic
+meter, your human-likeness, and the lockdown state.
+
+> Build `shared/` first (step 1) — the server loads its compiled `dist/` at boot.
 
 Point the client at another server with `VITE_SERVER_URL`:
 
