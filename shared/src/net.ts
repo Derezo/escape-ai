@@ -11,6 +11,7 @@ import type { Entity, Input, Player, WorldState } from './types.js';
 
 /** Event names the CLIENT emits (server listens for these). */
 export const CLIENT_EVENTS = {
+  AUTH_LOGIN: 'auth:login',
   LOBBY_JOIN: 'lobby:join',
   INPUT: 'input',
   PING: 'ping',
@@ -18,6 +19,7 @@ export const CLIENT_EVENTS = {
 
 /** Event names the SERVER emits (client listens for these). */
 export const SERVER_EVENTS = {
+  AUTH_RESULT: 'auth:result',
   LOBBY_STATE: 'lobby:state',
   SNAPSHOT: 'snapshot',
   PONG: 'pong',
@@ -28,10 +30,26 @@ export type ServerEvent = (typeof SERVER_EVENTS)[keyof typeof SERVER_EVENTS];
 
 // --- Client -> server payloads ---------------------------------------------
 
-/** Payload for `lobby:join`. */
+/**
+ * Payload for `auth:login`. Username-only accounts with a persisted token
+ * (Parasite-style): the client sends a username, plus a previously-issued
+ * `token` if it has one in localStorage (→ session restore / auto-login). A
+ * returning player may also send their chosen `species`.
+ *   - token present & valid → restore that account (username taken from the DB)
+ *   - no token, username free → claim it, server issues a fresh token
+ *   - no token, username taken → rejected (`name_taken`)
+ */
+export interface AuthLogin {
+  username: string;
+  token?: string;
+  species?: string;
+}
+
+/** Payload for `lobby:join`. `species` is the returning player's pick (optional). */
 export interface LobbyJoin {
   room: string;
   name: string;
+  species?: string;
 }
 
 /**
@@ -67,6 +85,49 @@ export interface Ping {
 
 // --- Server -> client payloads ---------------------------------------------
 
+/**
+ * Persisted per-user stats (server SQLite store). Returned in `AuthResult` so
+ * the help widget's Stats tab can render immediately on login, and surfaced
+ * again whenever the server re-issues an `auth:result`. All counters are
+ * cumulative across sessions; timestamps are ISO strings.
+ */
+export interface UserStats {
+  /** Sessions started (incremented once per successful login). */
+  games: number;
+  /** Successful gate escapes. */
+  escapes: number;
+  /** Times caught by a keeper robot. */
+  caught: number;
+  /** Second-Law orders issued (Q). */
+  ordersIssued: number;
+  /** Species abilities fired (Space). */
+  abilitiesUsed: number;
+  /** Total play time accumulated across sessions, in seconds. */
+  playSeconds: number;
+  /** Species used in the most recent session (drives the selector default). */
+  lastSpecies?: string;
+  /** When the account was created (ISO 8601). */
+  firstSeen?: string;
+  /** Most recent login (ISO 8601). */
+  lastSeen?: string;
+}
+
+/**
+ * Payload for `auth:result` — the reply to `auth:login`. On success it carries
+ * the issued/echoed `token` (the client persists it), the authoritative
+ * `username`, and the user's `stats`. On failure `reason` says why:
+ *   - `name_taken` the username is owned by a different account
+ *   - `bad_token`  the supplied token is unknown/mismatched (client clears it)
+ *   - `invalid`    the username was empty/malformed
+ */
+export interface AuthResult {
+  ok: boolean;
+  reason?: 'name_taken' | 'bad_token' | 'invalid';
+  token?: string;
+  username?: string;
+  stats?: UserStats;
+}
+
 /** Payload for `lobby:state`. */
 export interface LobbyState {
   players: Player[];
@@ -95,12 +156,14 @@ export interface Pong {
  * ClientToServerEvents. Importing these is not required but documents the wire.
  */
 export interface ClientToServerEvents {
+  [CLIENT_EVENTS.AUTH_LOGIN]: (payload: AuthLogin) => void;
   [CLIENT_EVENTS.LOBBY_JOIN]: (payload: LobbyJoin) => void;
   [CLIENT_EVENTS.INPUT]: (payload: InputMsg) => void;
   [CLIENT_EVENTS.PING]: (payload: Ping) => void;
 }
 
 export interface ServerToClientEvents {
+  [SERVER_EVENTS.AUTH_RESULT]: (payload: AuthResult) => void;
   [SERVER_EVENTS.LOBBY_STATE]: (payload: LobbyState) => void;
   [SERVER_EVENTS.SNAPSHOT]: (payload: SnapshotMsg) => void;
   [SERVER_EVENTS.PONG]: (payload: Pong) => void;

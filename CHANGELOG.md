@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.19: **"AI Escape" rebrand + shared auth/species foundation** (phase 1 + 2a/4d of
+  the accounts plan). The product title is now **AI Escape** (`client/index.html` tab
+  title, `client/capacitor.config.ts` `appName`); the in-world story name *The Caves of
+  Steel* stays as narrative flavor. Laid the cross-side foundation the login + help work
+  builds on:
+  - **Net contract** (`shared/src/net.ts`): new `auth:login` (client→server, `AuthLogin
+    {username, token?, species?}`) and `auth:result` (server→client, `AuthResult {ok,
+    reason?, token?, username?, stats?}`) events, a `UserStats` shape, and an optional
+    `species` on `LobbyJoin`. Existing `lobby:join`/`input`/`snapshot`/`ping` shapes are
+    unchanged. Both events wired into the typed `ClientToServerEvents`/`ServerToClientEvents`.
+  - **Shared species roster** (`shared/src/species.ts`): one source of truth for the 14
+    playable species — `{ key, label, ability, fx, blurb }` — consumed by the server
+    roster, the client login selector, and the help Species tab, replacing the copy that
+    was duplicated across `lobby.js`, `manual.ts`, and the registry comments. Exported
+    from the shared barrel.
+
 - 0.2.18: **Fix — walk animation never played.** The renderer decided idle-vs-walk
   from the render→target position gap (`targetX - renderX`), but that gap is ~0 for
   the **local player** (its view snaps render to target every frame, being client-

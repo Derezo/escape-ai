@@ -7,3 +7,4 @@ export * from './types.js';
 export * from './net.js';
 export * from './step.js';
 export * from './renderer.js';
+export * from './species.js';
