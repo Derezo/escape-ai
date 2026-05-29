@@ -54,6 +54,19 @@ async function main(): Promise<void> {
   hud.id = 'hud';
   document.body.appendChild(hud);
 
+  // --- Lockdown overlay (full-screen, click-through) ---
+  // A pulsing red vignette + banner shown only while world.lockdown is true.
+  // Click-through and display-only; the `.active` class (toggled below on the
+  // lockdown edge) drives the CSS pulse + visibility. The banner lives inside
+  // so it pulses with the border.
+  const lockdownOverlay = document.createElement('div');
+  lockdownOverlay.id = 'lockdown-overlay';
+  const lockdownBanner = document.createElement('div');
+  lockdownBanner.id = 'lockdown-banner';
+  lockdownBanner.textContent = '⚠ LOCKDOWN';
+  lockdownOverlay.appendChild(lockdownBanner);
+  document.body.appendChild(lockdownOverlay);
+
   // --- Identity: a random name so two tabs are distinguishable. The server
   // assigns the authoritative entity id; we match "our" entity by this name. ---
   const myName = prompt('Your name?')?.trim() || randomName();
@@ -77,6 +90,9 @@ async function main(): Promise<void> {
   // (server-authoritative, display-only in Phase 1). Undefined until the first
   // snapshot that carries it.
   let world: WorldState | undefined;
+  // Last lockdown value we drove the overlay from, so the false<->true edge is
+  // detected once (we toggle the CSS class on change, not every frame).
+  let prevLockdown = false;
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -214,9 +230,29 @@ async function main(): Promise<void> {
 
     const lat = net.latency >= 0 ? `${net.latency} ms` : '...';
     // Panic/lockdown come from the snapshot's world state; show placeholders
-    // until the first snapshot that carries it.
-    const panic = world ? `${Math.round(world.panic)}/${world.panicCapacity}` : '...';
+    // until the first snapshot that carries it. The panic meter renders as a
+    // 10-cell bar (reusing the HUD `bar()` helper) plus the raw fill, so the
+    // player can see the escape getting noisy long before it overflows.
+    const panic = world
+      ? `${bar(world.panic / world.panicCapacity, 10)} ${Math.round(world.panic)}/${world.panicCapacity}`
+      : '...';
     const lockdown = world ? (world.lockdown ? 'yes' : 'no') : '...';
+
+    // Edge-trigger the lockdown overlay: only touch the DOM when lockdown
+    // actually flips, not every frame. The CSS `.active` class drives the
+    // pulsing red vignette + banner.
+    const lockedNow = world?.lockdown ?? false;
+    if (lockedNow !== prevLockdown) {
+      lockdownOverlay.classList.toggle('active', lockedNow);
+      if (lockedNow) {
+        // false -> true: panic overflowed, the room seals.
+        // Phase 4 plays the klaxon SFX here.
+      } else {
+        // true -> false: panic drained below the hysteresis floor, lockdown lifts.
+        // Phase 4 plays the klaxon SFX here (the all-clear / klaxon stop).
+      }
+      prevLockdown = lockedNow;
+    }
 
     // First-Law stealth feedback: the server owns our humanLikeness, we just
     // mirror it. A text bar plus a hint of the ~60% freeze threshold tells the
@@ -244,9 +280,11 @@ async function main(): Promise<void> {
   requestAnimationFrame(frame);
 }
 
-/** A 5-cell text meter (▓ filled, ░ empty) for a 0..1 value — used in the HUD. */
-function bar(value: number): string {
-  const cells = 5;
+/**
+ * A text meter (▓ filled, ░ empty) for a 0..1 value — used in the HUD. Defaults
+ * to 5 cells (the humanLikeness bar); the panic meter passes a wider count.
+ */
+function bar(value: number, cells = 5): string {
   const filled = Math.max(0, Math.min(cells, Math.round(value * cells)));
   return '▓'.repeat(filled) + '░'.repeat(cells - filled);
 }

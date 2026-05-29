@@ -11,7 +11,7 @@
  * frame/accumulator loop on the client).
  */
 
-import type { Entity, Input } from './types.js';
+import type { Entity, Input, WorldState } from './types.js';
 
 // ---------------------------------------------------------------------------
 // The Caves of Steel — Three-Laws stealth math (deterministic, both sides)
@@ -161,6 +161,75 @@ export function robotDecision(
   const dy = nearest.y - robot.y;
   const len = Math.hypot(dx, dy) || 1;
   return { mode: 'pursue', targetId: nearest.id, dirX: dx / len, dirY: dy / len };
+}
+
+// ---------------------------------------------------------------------------
+// Catastrophic overflow — the panic meter (TINS technical rule #132)
+//
+// The zoo-wide panic meter is the "container". It rises as the escape gets
+// noisy (chases, orders, captures) and bleeds down when the players lie low.
+// When it overflows (panic >= capacity) the zoo flips into LOCKDOWN: robots
+// drop their First-Law caution (robotDecision is called with lockdown=true) and
+// speed up. Lockdown clears only once panic drains back below a LOW watermark —
+// hysteresis so it doesn't flicker on and off at the brim.
+// ---------------------------------------------------------------------------
+
+/** Tunables for the panic/overflow loop. Centralized for Phase-5 balancing. */
+export const PANIC = {
+  /** Passive drain (points/sec) while nothing is actively escalating. */
+  DECAY_PER_SEC: 4,
+  /** Added per robot that is actively pursuing this tick (points/sec each). */
+  RISE_PER_PURSUIT_PER_SEC: 3,
+  /** One-shot spike when a player is caught by a robot. */
+  RISE_PER_CATCH: 25,
+  /** One-shot bump per Second-Law order issued (ties orders to the container). */
+  RISE_PER_ORDER: 8,
+  /**
+   * Fraction of capacity panic must fall back below before LOCKDOWN lifts.
+   * 0.3 = drain to 30% to recover — punishing but not permanent.
+   */
+  RECOVERY_FRACTION: 0.3,
+} as const;
+
+/**
+ * The per-tick panic inputs the server tallies and hands to {@link stepPanic}.
+ * Keeping these as plain counts (not live entity refs) keeps the math pure and
+ * trivially testable.
+ */
+export interface PanicEvents {
+  /** How many robots are actively pursuing a target this tick. */
+  pursuingRobots: number;
+  /** How many players were caught this tick (usually 0 or 1). */
+  catches: number;
+  /** How many Second-Law orders were issued this tick. */
+  orders: number;
+}
+
+/**
+ * Advance the panic meter and the lockdown flag for one tick, in place, and
+ * return the same object. Pure: all time-dependence comes through `dt`, all
+ * escalation through `events`. The overflow → lockdown transition (and the
+ * hysteretic recovery) is the single authoritative definition of the rule.
+ */
+export function stepPanic(world: WorldState, events: PanicEvents, dt: number): WorldState {
+  const rise =
+    events.pursuingRobots * PANIC.RISE_PER_PURSUIT_PER_SEC * dt +
+    events.catches * PANIC.RISE_PER_CATCH +
+    events.orders * PANIC.RISE_PER_ORDER;
+  const fall = PANIC.DECAY_PER_SEC * dt;
+
+  world.panic = clamp(world.panic + rise - fall, 0, world.panicCapacity);
+
+  if (!world.lockdown) {
+    // Overflow: the container brimmed over. Chaos ensues.
+    if (world.panic >= world.panicCapacity) world.lockdown = true;
+  } else {
+    // Recover only once it has drained well below the brim (hysteresis).
+    if (world.panic <= world.panicCapacity * PANIC.RECOVERY_FRACTION) {
+      world.lockdown = false;
+    }
+  }
+  return world;
 }
 
 /** Clamp `v` into the inclusive range [min, max]. */

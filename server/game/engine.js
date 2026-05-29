@@ -141,14 +141,19 @@ function integratePlayers(dt) {
   }
 }
 
-/** Step the NPC simulation (robots) for every active room. Robots move and
- *  change mode every tick, so they now ride the engine's per-tick delta diff. */
+/** Step the NPC simulation (robots) + the panic/overflow meter for every active
+ *  room. Robots move and change mode every tick, so they ride the per-tick delta
+ *  diff; the panic meter rides the snapshot's `world` field. */
 function stepNpcs(dt) {
   if (!rooms || !stealth.isReady()) return;
 
   for (const [roomName, socketIds] of rooms) {
     if (!socketIds || socketIds.size === 0) continue;
-    stealth.stepRobots(dt, roomName, connectedPlayers, rooms, currentTick);
+    const robotEvents = stealth.stepRobots(dt, roomName, connectedPlayers, rooms, currentTick);
+    const { enteredLockdown, liftedLockdown } = stealth.stepPanic(dt, roomName, robotEvents);
+    // Lockdown transitions are rare and operationally interesting — log them.
+    if (enteredLockdown) console.log(`[engine] room "${roomName}" → LOCKDOWN (panic overflowed)`);
+    if (liftedLockdown) console.log(`[engine] room "${roomName}" lockdown lifted (panic drained)`);
   }
 }
 

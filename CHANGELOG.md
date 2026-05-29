@@ -4,6 +4,26 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.3: **Phase 3 — catastrophic overflow → lockdown** (TINS technical rule #132).
+  - **Shared:** new deterministic `stepPanic(world, events, dt)` + `PANIC` tunables in
+    `shared/src/step.ts`. The panic meter is the "container": it rises from robots
+    pursuing players, player catches, and Second-Law orders; decays when players lie
+    low; overflows to `lockdown` at capacity and lifts only after draining below 30%
+    (hysteresis, so it doesn't flicker at the brim).
+  - **Server:** `stepRobots` now tallies pursuit/catch events and `applyAction` latches
+    order counts; a new `stepPanic` per room runs the shared overflow math each tick and
+    logs lockdown transitions. **Important fix:** only robots chasing real *players*
+    stoke panic — chasing idle scenery-animals does not, otherwise the meter climbed to
+    overflow with zero player provocation. In lockdown, robots already drop First-Law
+    caution (via `robotDecision(…, true)`) and speed up.
+  - **Client:** the panic HUD line is now a 10-cell meter bar; a full-screen pulsing-red
+    lockdown overlay + "⚠ LOCKDOWN" banner makes overflow unmissable (edge-triggered,
+    with a seam left for the Phase-4 klaxon SFX).
+  - Verified live: idle player keeps panic at 0; provocation overflows → lockdown; panic
+    drains and lockdown lifts once contact is broken.
+  - Logged three balance/level items for Phase 5 in `FINDINGS_OUTSIDE_SCOPE.md`
+    (still-to-look-human, slow recovery in contact, no world walls).
+
 - 0.2.2: **Phase 2 — Three Laws stealth core.** The Asimov reference is now a
   working mechanic, not a name-drop.
   - **Shared:** new deterministic Three-Laws math in `shared/src/step.ts` —

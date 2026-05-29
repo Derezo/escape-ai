@@ -139,7 +139,7 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities) {
  * @param {number} currentTick  the engine's tick counter, for orderedUntilTick
  */
 function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
-  if (!shared) return;
+  if (!shared) return { pursuingRobots: 0, catches: 0 };
 
   const worldEntities = world.getWorldEntities(roomName);
   const worldState = world.getWorldState(roomName);
@@ -148,6 +148,10 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   const animals = gatherAnimals(roomName, connectedPlayers, rooms, worldEntities);
   const touchR2 = config.RECT_SIZE * config.RECT_SIZE;
   const speed = config.ROBOT_SPEED * (lockdown ? config.ROBOT_LOCKDOWN_SPEED_MULT : 1);
+
+  // Tally what fed the panic meter this tick (consumed by stepPanic).
+  let pursuingRobots = 0;
+  let catches = 0;
 
   for (const robot of worldEntities) {
     if (robot.kind !== 'robot') continue;
@@ -175,17 +179,68 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       robot.x += decision.dirX * speed * dt;
       robot.y += decision.dirY * speed * dt;
 
-      // CATCH HOOK: a pursuing robot that touches a PLAYER catches it. Phase 2
-      // keeps the consequence soft — reset humanLikeness and respawn — leaving
-      // lockdown/elimination tuning to Phase 3.
       const target = animals.find((a) => a.id === decision.targetId);
-      if (target && target.isPlayer && shared.dist2(robot, target) <= touchR2) {
-        catchPlayer(target.ref);
+      // Panic is the alarm over the ESCAPE, so only a robot chasing a real
+      // PLAYER stokes it — chasing idle scenery-animals must not, or the meter
+      // would climb to overflow with no player provocation (the room's idle
+      // animals always read as prey and never escape). Idle-animal pursuit is
+      // pure ambient behavior with no bearing on the container.
+      if (target && target.isPlayer) {
+        pursuingRobots++;
+
+        // CATCH HOOK: a pursuing robot that touches a player catches it — a soft
+        // respawn (reset disguise + teleport to spawn). A catch is the biggest
+        // single jolt to the panic meter (see stepPanic), so a botched bluff that
+        // gets someone caught visibly pushes the whole room toward lockdown.
+        if (shared.dist2(robot, target) <= touchR2) {
+          catchPlayer(target.ref);
+          catches++;
+        }
       }
     }
     // 'idle' and 'frozen' robots hold position — frozen by the First Law (a
     // convincing human nearby), idle when nothing is in range.
   }
+
+  return { pursuingRobots, catches };
+}
+
+/**
+ * Advance one room's panic meter + lockdown for this tick. Pulls the order
+ * count latched on the world by applyAction since the last call, combines it
+ * with the robot-pursuit/catch tallies from stepRobots, and runs the shared
+ * overflow math. Returns whether lockdown just toggled this tick (for the
+ * server log / future hooks).
+ *
+ * @param {number} dt
+ * @param {string} roomName
+ * @param {{pursuingRobots:number, catches:number}} robotEvents
+ * @returns {{ enteredLockdown: boolean, liftedLockdown: boolean }}
+ */
+function stepPanic(dt, roomName, robotEvents) {
+  if (!shared) return { enteredLockdown: false, liftedLockdown: false };
+
+  const worldState = world.getWorldState(roomName);
+  const wasLockdown = !!worldState.lockdown;
+
+  // Consume the orders issued since the previous tick (latched in applyAction).
+  const orders = worldState.pendingOrders || 0;
+  worldState.pendingOrders = 0;
+
+  shared.stepPanic(
+    worldState,
+    {
+      pursuingRobots: robotEvents.pursuingRobots || 0,
+      catches: robotEvents.catches || 0,
+      orders
+    },
+    dt
+  );
+
+  return {
+    enteredLockdown: !wasLockdown && worldState.lockdown,
+    liftedLockdown: wasLockdown && !worldState.lockdown
+  };
 }
 
 /**
@@ -277,6 +332,10 @@ function orderNearestRobot(player, roomName, currentTick) {
   // ...but the contradiction raises its suspicion (clamped to 1). Orders help
   // now and cost you later — the core risk/reward of the stealth loop.
   nearest.suspicion = Math.min(1, (nearest.suspicion || 0) + shared.STEALTH.SUSPICION_PER_ORDER);
+  // ...and it nudges the zoo-wide panic meter (the double-edged element ties
+  // straight into the overflow container). Latched here, consumed in stepPanic.
+  const worldState = world.getWorldState(roomName);
+  worldState.pendingOrders = (worldState.pendingOrders || 0) + 1;
 }
 
 module.exports = {
@@ -284,6 +343,7 @@ module.exports = {
   isReady,
   stepPlayerHumanLikeness,
   stepRobots,
+  stepPanic,
   applyAction,
   // Exported for testing / future reuse.
   catchPlayer,
