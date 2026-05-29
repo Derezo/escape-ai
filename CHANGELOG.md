@@ -4,6 +4,39 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.21: **Client — splash → login → game, restyled HUD, tabbed help widget** (phases 3 & 4
+  of the accounts plan). Replaces the bare `prompt('Your name?')` and the manual-opens-on-load
+  with a designed front end; all UI stays DOM/CSS overlays (renderer-agnostic).
+  - **`client/src/auth.ts`** (new): localStorage wrapper (`aiescape.auth` → `{username, token}`),
+    defensive load/save/clear — the Parasite-style persisted identity.
+  - **`client/src/menu.ts`** (new): `runMenu(net)` drives the pre-game UI and resolves once
+    authed. An animated **"AI ESCAPE" splash** ("Press any key to continue"; the first gesture
+    also unlocks audio), then a **login panel** — auto-login via stored token ("Welcome back…"),
+    else a username field + a **species selector** (a grid of all 14 species with animated atlas
+    sprites, defaulting to the user's last species). Handles every `auth:result`: `ok` saves the
+    token and joins; `name_taken` shows an inline error; `bad_token` clears storage and falls back
+    to manual entry. Caches the latest `UserStats` for the help widget.
+  - **`client/src/species-sprite.ts`** (new): a pure-CSS animated sprite from the existing atlas
+    (`./sprites/atlas.png`/`.json`, 64px frames) — fetched once and shared; steps the `*_walk_s_*`
+    cycle via `@keyframes steps(4)` (no JS timers → no cleanup/leak), with a colored-block fallback
+    (mirroring the renderer's `SPECIES_TINT`) when the atlas is absent. Reused by the login selector
+    and the help Species tab.
+  - **`client/src/help.ts`** (new, replaces `manual.ts`): the manual becomes a **tabbed widget**
+    (H/? toggles, Esc/× closes, no longer opens on load). **Controls** (default), **Species** (all
+    14 animated cards with ability + blurb), **More** (the lore — premise, verbatim Three Laws, the
+    double-edged-order/Sutskever callout, overflow, the "THE CAVES OF STEEL" flavor + U.S. Robots
+    footer), and **Stats** (the logged-in user's games/escapes/caught/orders/abilities/play-time/
+    last-species, refreshed on each activation).
+  - **`net/client.ts`**: `login(username, token?, species?)`, `onAuthResult(cb)`, and `join(...)`
+    extended with optional species — all via the shared event constants.
+  - **`main.ts`**: gated boot (awaits `runMenu` before `net.join`); the HUD is redesigned from a
+    `white-space:pre` debug dump into a styled, condensed panel — title **AI ESCAPE** + rows for
+    latency, players, panic bar, lockdown indicator, human-like bar (+freeze hint), and carrying
+    (shown only when relevant). Dropped the dead seq/acked debug row and unused `randomName()`.
+  - **`style.css`**: splash/login/species-picker/help-tabs/stats styling + animated title
+    keyframes, consistent with the dark palette and z-index discipline.
+  - Verified: `tsc --noEmit` + `vite build` clean; bundle contains the new flow + "AI ESCAPE".
+
 - 0.2.20: **Server — SQLite accounts, auth tokens, session restore, persistent stats**
   (phase 2 of the accounts plan). The server was fully anonymous (a `prompt()` name → an
   in-memory UUID, nothing persisted); it now has username-only accounts backed by SQLite.

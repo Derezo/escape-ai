@@ -1,0 +1,269 @@
+/**
+ * The pre-game front end: a splash screen, then a login with a species picker.
+ *
+ * `runMenu()` owns the whole "before you're in the world" experience and
+ * RESOLVES exactly once — when the player is authenticated and ready to join.
+ * main.ts awaits it, then calls `net.join(...)`; nothing joins until auth lands.
+ *
+ * Flow:
+ *   1. SPLASH — animated "AI ESCAPE" title; any key/pointer dismisses it. That
+ *      first gesture ALSO unlocks audio (browsers gate the AudioContext on a
+ *      user gesture) — see the audio-unlock note below.
+ *   2. LOGIN — if a token is stored, auto-login ("Welcome back, …"); else a
+ *      username field + a grid species picker + Play. Submit emits auth:login.
+ *   3. auth:result — on ok, persist the token, cache the stats, resolve. On a
+ *      failure reason, show an inline error / fall back to manual entry.
+ *
+ * Audio-unlock coordination: the unlock lives HERE (menu.ts calls
+ * `unlockAudio()` on the splash's first-gesture handler). main.ts no longer
+ * registers its own once-listeners, so audio is unlocked exactly once. This is
+ * the natural home for it — the first gesture a player makes IS the splash
+ * dismissal, which is already a one-shot handler.
+ *
+ * Pure DOM/CSS overlays (renderer-agnostic). Species copy + roster come from
+ * `@shared/species`; event handling goes through NetClient (no wire strings).
+ */
+
+import type { NetClient } from './net/client';
+import type { AuthResult, UserStats } from '@shared/net';
+import { SPECIES } from '@shared/species';
+import { unlockAudio } from './audio';
+import { loadAuth, saveAuth, clearAuth } from './auth';
+import { createSpeciesSprite } from './species-sprite';
+
+/** The tagline under the splash title — the premise in one breath. */
+const SPLASH_TAGLINE = 'The zoo is run by robots. Look human. Walk out.';
+
+/** What `runMenu` resolves with once the player is authed and ready to join. */
+export interface MenuResult {
+  username: string;
+  species?: string;
+}
+
+/**
+ * Module-level cache of the most recent successful auth's stats, so the help
+ * widget's Stats tab can render the logged-in player's record without threading
+ * the value through main.ts. Updated in the auth:result handler below.
+ */
+let lastStats: UserStats | undefined;
+
+/** The latest UserStats from a successful login, or undefined before first login. */
+export function getLastStats(): UserStats | undefined {
+  return lastStats;
+}
+
+/**
+ * Drive the splash → login flow and resolve once the player is authenticated.
+ * Builds (and tears down) its own overlays; leaves the DOM clean on resolve.
+ */
+export function runMenu(net: NetClient): Promise<MenuResult> {
+  return new Promise<MenuResult>((resolve) => {
+    // --- Build the splash overlay (shown first) -----------------------------
+    const splash = document.createElement('div');
+    splash.id = 'splash';
+    splash.innerHTML = `
+      <div id="splash-inner">
+        <h1 id="splash-title">AI ESCAPE</h1>
+        <p id="splash-tagline">${SPLASH_TAGLINE}</p>
+        <p id="splash-prompt">Press any key to continue</p>
+      </div>
+    `;
+    document.body.appendChild(splash);
+
+    // --- Build the login overlay (hidden until the splash is dismissed) -----
+    const login = document.createElement('div');
+    login.id = 'login';
+    login.innerHTML = `
+      <div id="login-panel">
+        <h2 id="login-title">Identify yourself</h2>
+        <div id="login-welcome" hidden></div>
+        <div id="login-form">
+          <label id="login-name-label" for="login-name">Name</label>
+          <input id="login-name" type="text" maxlength="32" autocomplete="off"
+                 spellcheck="false" placeholder="your handle" />
+          <p id="login-error" class="login-error" hidden></p>
+          <p id="login-species-label">Choose your species</p>
+          <div id="species-picker" role="listbox" aria-label="Species"></div>
+          <button id="login-play" type="button">Play</button>
+        </div>
+      </div>
+    `;
+    login.style.display = 'none';
+    document.body.appendChild(login);
+
+    // Login form element handles (queried once).
+    const welcomeEl = login.querySelector<HTMLDivElement>('#login-welcome')!;
+    const formEl = login.querySelector<HTMLDivElement>('#login-form')!;
+    const nameInput = login.querySelector<HTMLInputElement>('#login-name')!;
+    const errorEl = login.querySelector<HTMLParagraphElement>('#login-error')!;
+    const pickerEl = login.querySelector<HTMLDivElement>('#species-picker')!;
+    const playBtn = login.querySelector<HTMLButtonElement>('#login-play')!;
+
+    // --- Species picker: one selectable card per @shared species ------------
+    // Default selection is filled in later (lastSpecies once stats are known,
+    // else a sensible default). Start on the first roster entry so Play always
+    // has a pick even before any stats arrive.
+    let selectedSpecies = SPECIES[0]?.key;
+    const cardByKey = new Map<string, HTMLElement>();
+
+    const highlight = (key: string | undefined): void => {
+      for (const [k, card] of cardByKey) {
+        const on = k === key;
+        card.classList.toggle('selected', on);
+        card.setAttribute('aria-selected', on ? 'true' : 'false');
+      }
+    };
+
+    for (const s of SPECIES) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'species-option';
+      card.setAttribute('role', 'option');
+      card.dataset.species = s.key;
+      card.title = `${s.label} — ${s.ability}`;
+      const sprite = createSpeciesSprite(s.key, { size: 48 });
+      const label = document.createElement('span');
+      label.className = 'species-option-label';
+      label.textContent = s.label;
+      card.appendChild(sprite);
+      card.appendChild(label);
+      card.addEventListener('click', () => {
+        selectedSpecies = s.key;
+        highlight(s.key);
+      });
+      pickerEl.appendChild(card);
+      cardByKey.set(s.key, card);
+    }
+    highlight(selectedSpecies);
+
+    // --- Shared teardown + resolve ------------------------------------------
+    let settled = false;
+    const finish = (result: MenuResult): void => {
+      if (settled) return;
+      settled = true;
+      splash.remove();
+      login.remove();
+      resolve(result);
+    };
+
+    // --- auth:result handler -------------------------------------------------
+    // The single place login outcomes are interpreted. Wired before we ever
+    // emit a login (auto-login may fire immediately on splash dismissal).
+    net.onAuthResult((msg: AuthResult) => {
+      if (msg.ok) {
+        // Persist the issued token + cache stats so the Stats tab can read them.
+        if (msg.username && msg.token) saveAuth({ username: msg.username, token: msg.token });
+        lastStats = msg.stats;
+        // Prefer the server's authoritative username; fall back to what we sent.
+        finish({ username: msg.username ?? nameInput.value.trim(), species: selectedSpecies });
+        return;
+      }
+      // Failure: surface the reason and keep (or re-open) the manual form.
+      switch (msg.reason) {
+        case 'name_taken':
+          showManualForm();
+          showError('That name is taken — try another.');
+          nameInput.focus();
+          nameInput.select();
+          break;
+        case 'bad_token':
+          // The stored token no longer matches — forget it and fall back to
+          // manual entry (do NOT auto-login again with the dead credential).
+          clearAuth();
+          showManualForm();
+          showError('Your saved session expired — sign in again.');
+          break;
+        case 'invalid':
+        default:
+          showManualForm();
+          showError('Enter a name.');
+          nameInput.focus();
+          break;
+      }
+    });
+
+    /** Show an inline error under the username field. */
+    const showError = (text: string): void => {
+      errorEl.textContent = text;
+      errorEl.hidden = false;
+    };
+    const clearError = (): void => {
+      errorEl.textContent = '';
+      errorEl.hidden = true;
+    };
+
+    /** Swap the login panel into the "welcome back, auto-logging-in" state. */
+    const showWelcome = (username: string): void => {
+      welcomeEl.textContent = `Welcome back, ${username}…`;
+      welcomeEl.hidden = false;
+      formEl.style.display = 'none';
+    };
+
+    /** Show the manual username-entry form (the default / fallback state). */
+    function showManualForm(): void {
+      welcomeEl.hidden = true;
+      formEl.style.display = '';
+      // Default the species pick to the returning player's last choice if known.
+      const last = lastStats?.lastSpecies;
+      if (last && cardByKey.has(last)) {
+        selectedSpecies = last;
+        highlight(last);
+      }
+    }
+
+    /** Validate + submit the manual login form. */
+    const submitManual = (): void => {
+      const username = nameInput.value.trim();
+      if (!username) {
+        showError('Enter a name.');
+        nameInput.focus();
+        return;
+      }
+      clearError();
+      // No token on a manual login — the server claims/validates the name.
+      net.login(username, undefined, selectedSpecies);
+    };
+
+    playBtn.addEventListener('click', submitManual);
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        submitManual();
+      }
+    });
+    nameInput.addEventListener('input', clearError);
+
+    /** Reveal the login overlay; attempt auto-login if a token is stored. */
+    const showLogin = (): void => {
+      login.style.display = '';
+      const saved = loadAuth();
+      if (saved) {
+        // Session restore: show the welcome state and auto-login by token. A
+        // bad_token reply falls back to the manual form (handled above).
+        showWelcome(saved.username);
+        net.login(saved.username, saved.token);
+      } else {
+        showManualForm();
+        nameInput.focus();
+      }
+    };
+
+    // --- Splash dismissal: the first gesture unlocks audio + shows login ----
+    // Any keydown or pointerdown dismisses the splash. This is also where audio
+    // is unlocked (browsers require a user gesture) — main.ts deliberately does
+    // NOT register its own unlock listeners, so this is the single unlock point.
+    const dismissSplash = (): void => {
+      window.removeEventListener('keydown', dismissSplash);
+      window.removeEventListener('pointerdown', dismissSplash);
+      unlockAudio();
+      splash.classList.add('leaving');
+      // Let the fade-out play, then hand off to login.
+      window.setTimeout(() => {
+        splash.style.display = 'none';
+        showLogin();
+      }, 280);
+    };
+    window.addEventListener('keydown', dismissSplash, { once: true });
+    window.addEventListener('pointerdown', dismissSplash, { once: true });
+  });
+}

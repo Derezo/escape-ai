@@ -33,21 +33,77 @@ body {
   height: 100% !important;
 }
 
-/* Latency + player-count overlay, pinned top-left, click-through. */
+/* Telemetry HUD: a designed panel pinned top-left, click-through. A title row
+   plus one styled row per live metric (built in main.ts). Rows that are only
+   conditionally relevant (lockdown, carrying) are hidden until `.active`. */
 #hud {
   position: fixed;
   top: 8px;
   left: 8px;
   z-index: 10;
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.55);
+  min-width: 180px;
+  padding: 8px 12px 9px;
+  border-radius: 8px;
+  background: rgba(11, 14, 20, 0.72);
+  border: 1px solid #2b3340;
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
   color: #cde7ff;
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre;
+  font-size: 12.5px;
+  line-height: 1.4;
   pointer-events: none;
   user-select: none;
+}
+
+#hud-title {
+  margin-bottom: 5px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #222a35;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #4cc9f0;
+  text-shadow: 0 0 8px rgba(76, 201, 240, 0.35);
+}
+
+.hud-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.hud-row .hud-key {
+  color: #6c7888;
+}
+
+.hud-row .hud-val {
+  color: #cde7ff;
+  white-space: pre; /* keep the ▓░ bars aligned */
+  text-align: right;
+}
+
+/* Conditional rows: hidden until main.ts toggles `.active`. */
+.hud-lockdown,
+.hud-carry {
+  display: none;
+}
+
+.hud-lockdown.active,
+.hud-carry.active {
+  display: flex;
+}
+
+/* The lockdown indicator row reads as the red alarm when shown. */
+.hud-lockdown.active .hud-key,
+.hud-lockdown.active .hud-val {
+  color: #ff5252;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-shadow: 0 0 6px rgba(255, 82, 82, 0.6);
+}
+
+/* The carrying row glows the win-green so the held disguise prop reads clearly. */
+.hud-carry.active .hud-val {
+  color: #06d6a0;
 }
 
 /* Full-screen lockdown overlay: a pulsing red vignette + banner shown only
@@ -144,8 +200,239 @@ body {
   }
 }
 
-/* --- In-game manual / help (toggle H or ?). Hidden until `.open`. --- */
-#manual-overlay {
+/* --- Animated species sprite (DOM/CSS; species-sprite.ts). Reused by the login
+   picker and the help Species tab. Pixel-art atlas → crisp scaling. The walk
+   keyframes are injected into a shared <style> by the component. --- */
+.species-sprite {
+  display: block;
+  flex: none;
+  image-rendering: pixelated;
+  background-repeat: no-repeat;
+  border-radius: 4px;
+}
+
+/* The coloured-block fallback (no atlas) keeps a faint edge so it reads as art. */
+.species-sprite:not(.species-sprite--loaded) {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* --- Splash overlay (#splash): the animated AI ESCAPE title. Sits above the
+   game + HUD. Any key/pointer dismisses it (menu.ts) → login. --- */
+#splash {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: radial-gradient(circle at 50% 40%, #131a26 0%, #0b0e14 70%);
+  user-select: none;
+  transition: opacity 0.28s ease;
+}
+
+#splash.leaving {
+  opacity: 0;
+}
+
+#splash-inner {
+  padding: 0 24px;
+}
+
+#splash-title {
+  margin: 0;
+  font-size: clamp(48px, 12vw, 120px);
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  /* A cyan→white gradient fill that pulses, with a soft drift. */
+  background: linear-gradient(100deg, #4cc9f0, #cde7ff, #4cc9f0);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: 0 0 38px rgba(76, 201, 240, 0.28);
+  animation: splash-glow 3.4s ease-in-out infinite, splash-drift 6s ease-in-out infinite;
+}
+
+@keyframes splash-glow {
+  0%, 100% {
+    background-position: 0% 50%;
+    filter: drop-shadow(0 0 10px rgba(76, 201, 240, 0.35));
+  }
+  50% {
+    background-position: 100% 50%;
+    filter: drop-shadow(0 0 26px rgba(76, 201, 240, 0.65));
+  }
+}
+
+@keyframes splash-drift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+#splash-tagline {
+  margin: 14px 0 0;
+  font-size: clamp(14px, 2.4vw, 20px);
+  color: #cde7ff;
+  letter-spacing: 0.04em;
+}
+
+#splash-prompt {
+  margin: 40px 0 0;
+  font-size: 14px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #6c7888;
+  animation: splash-prompt-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes splash-prompt-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; color: #4cc9f0; }
+}
+
+/* --- Login overlay (#login): username + species picker + Play. Above the
+   game/HUD, just under the splash's z-band. --- */
+#login {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.9);
+  user-select: none;
+}
+
+#login-panel {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 24px 28px 22px;
+  border-radius: 12px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  box-shadow: 0 0 40px rgba(76, 201, 240, 0.12);
+  color: #cde7ff;
+}
+
+#login-title {
+  margin: 0 0 14px;
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: #4cc9f0;
+}
+
+#login-welcome {
+  padding: 18px 4px;
+  font-size: 16px;
+  color: #e8eef6;
+}
+
+#login-name-label,
+#login-species-label {
+  display: block;
+  margin: 0 0 4px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #6c7888;
+}
+
+#login-species-label {
+  margin-top: 16px;
+}
+
+#login-name {
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 7px;
+  border: 1px solid #2b3340;
+  background: #0b0e14;
+  color: #cde7ff;
+  font-family: inherit;
+  font-size: 15px;
+}
+
+#login-name:focus {
+  outline: none;
+  border-color: #4cc9f0;
+  box-shadow: 0 0 0 2px rgba(76, 201, 240, 0.18);
+}
+
+.login-error {
+  margin: 6px 0 0;
+  color: #ff5252;
+  font-size: 12.5px;
+}
+
+/* The species picker: a scrollable grid of selectable cards. */
+#species-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  margin-bottom: 18px;
+  border-radius: 8px;
+  background: #0b0e14;
+  border: 1px solid #222a35;
+}
+
+.species-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 4px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #cde7ff;
+  font-family: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.species-option:hover {
+  background: rgba(76, 201, 240, 0.08);
+}
+
+.species-option.selected {
+  border-color: #4cc9f0;
+  background: rgba(76, 201, 240, 0.14);
+  box-shadow: 0 0 12px rgba(76, 201, 240, 0.22);
+}
+
+.species-option-label {
+  color: #cde7ff;
+}
+
+#login-play {
+  width: 100%;
+  padding: 11px;
+  border-radius: 8px;
+  border: 1px solid #4cc9f0;
+  background: rgba(76, 201, 240, 0.16);
+  color: #cde7ff;
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+#login-play:hover {
+  background: rgba(76, 201, 240, 0.3);
+}
+
+/* --- In-game help (toggle H or ?). Tabbed. Hidden until `.open`. --- */
+#help-overlay {
   position: fixed;
   inset: 0;
   z-index: 30;
@@ -154,21 +441,21 @@ body {
   justify-content: center;
   padding: 24px;
   background: rgba(4, 6, 10, 0.82);
-  overflow-y: auto;
   user-select: none;
 }
 
-#manual-overlay.open {
+#help-overlay.open {
   display: flex;
 }
 
-#manual-panel {
+#help-panel {
   position: relative;
-  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
   width: 100%;
   max-height: 90vh;
-  overflow-y: auto;
-  padding: 22px 28px 18px;
+  padding: 18px 24px 14px;
   border-radius: 12px;
   background: #11151d;
   border: 1px solid #2b3340;
@@ -178,56 +465,102 @@ body {
   line-height: 1.5;
 }
 
-#manual-panel h1 {
+#help-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 36px 12px 0; /* leave room for the × button */
+  border-bottom: 1px solid #222a35;
+}
+
+.help-tab {
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #6c7888;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.help-tab:hover {
+  color: #cde7ff;
+}
+
+.help-tab.active {
+  color: #4cc9f0;
+  border-bottom-color: #4cc9f0;
+}
+
+#help-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.help-pane {
+  display: none;
+}
+
+.help-pane.active {
+  display: block;
+}
+
+#help-panel h1 {
   margin: 0 0 4px;
   font-size: 24px;
   letter-spacing: 3px;
   color: #9aa3ad;
 }
 
-#manual-panel h2 {
-  margin: 18px 0 6px;
+#help-panel h2 {
+  margin: 14px 0 6px;
   font-size: 15px;
   color: #4cc9f0;
   border-bottom: 1px solid #222a35;
   padding-bottom: 3px;
 }
 
-#manual-panel .tagline {
+#help-panel h2:first-child {
+  margin-top: 0;
+}
+
+#help-panel .tagline {
   margin: 0 0 4px;
   color: #e8eef6;
 }
 
-#manual-panel .cite {
+#help-panel .cite {
   color: #6c7888;
   font-size: 12px;
   font-weight: 400;
   letter-spacing: 0;
 }
 
-#manual-panel ul,
-#manual-panel ol {
+#help-panel ul,
+#help-panel ol {
   margin: 4px 0;
   padding-left: 20px;
 }
 
-#manual-panel ul.cols {
+#help-panel ul.cols {
   columns: 2;
   list-style: none;
   padding-left: 0;
 }
 
-#manual-panel .laws li {
+#help-panel .laws li {
   margin-bottom: 7px;
 }
 
-#manual-panel .note {
+#help-panel .note {
   display: block;
   color: #8fd6a0;
   font-size: 12.5px;
 }
 
-#manual-panel .sutskever {
+#help-panel .sutskever {
   margin: 4px 0;
   padding: 8px 12px;
   border-left: 3px solid #e0a526;
@@ -235,32 +568,28 @@ body {
   border-radius: 0 6px 6px 0;
 }
 
-#manual-panel .species li {
-  margin-bottom: 4px;
-}
-
-#manual-panel .footer {
+#help-panel .footer {
   margin-top: 16px;
   color: #6c7888;
   font-size: 12px;
 }
 
-#manual-panel .footer .ref {
+#help-panel .footer .ref {
   color: #55617a;
   font-style: italic;
 }
 
-#manual-panel .footer-hint {
-  margin: 6px 0 0;
+.help-hint {
+  margin: 10px 0 0;
   text-align: center;
   color: #4cc9f0;
   font-size: 12px;
 }
 
-#manual-close {
+#help-close {
   position: absolute;
-  top: 10px;
-  right: 12px;
+  top: 12px;
+  right: 14px;
   width: 30px;
   height: 30px;
   border: 1px solid #2b3340;
@@ -270,8 +599,76 @@ body {
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
+  z-index: 1;
 }
 
-#manual-close:hover {
+#help-close:hover {
   background: #243040;
+}
+
+/* Species tab: a grid of animated cards (sprite + label + ability + blurb). */
+.species-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.species-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 12px 10px;
+  border-radius: 9px;
+  background: #0b0e14;
+  border: 1px solid #222a35;
+}
+
+.species-card-name {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e8eef6;
+}
+
+.species-card-ability {
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #4cc9f0;
+}
+
+.species-card-blurb {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #9aa3ad;
+}
+
+/* Stats tab: a two-column label/value grid + the last-species sprite. */
+.stats-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+  margin-top: 6px;
+}
+
+.stats-label {
+  color: #6c7888;
+}
+
+.stats-value {
+  color: #cde7ff;
+  font-weight: 700;
+}
+
+.stats-last-species {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  color: #9aa3ad;
+}
+
+.stats-empty {
+  color: #9aa3ad;
 }

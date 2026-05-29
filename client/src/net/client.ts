@@ -3,14 +3,18 @@
  * contract (shared/src/net.ts). Event names and payload shapes come from
  * `@shared/net`; nothing here hardcodes a wire string.
  *
- *   Client -> server: lobby:join {room,name}, input {seq,dx,dy}, ping {t}
- *   Server -> client: lobby:state {players}, snapshot {tick,entities,acks}, pong {t}
+ *   Client -> server: auth:login {username,token?,species?}, lobby:join {room,name,species?},
+ *                      input {seq,dx,dy}, ping {t}
+ *   Server -> client: auth:result {ok,...}, lobby:state {players},
+ *                      snapshot {tick,entities,acks}, pong {t}
  */
 
 import { io, type Socket } from 'socket.io-client';
 import {
   CLIENT_EVENTS,
   SERVER_EVENTS,
+  type AuthLogin,
+  type AuthResult,
   type LobbyJoin,
   type InputMsg,
   type Ping,
@@ -30,12 +34,20 @@ export class NetClient {
 
   private snapshotCb: (msg: SnapshotMsg) => void = () => {};
   private lobbyCb: (msg: LobbyState) => void = () => {};
+  private authCb: (msg: AuthResult) => void = () => {};
 
   /** Open the connection. Wires server->client handlers and starts the ping loop. */
   connect(url: string): void {
     this.socket = io(url, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
+    });
+
+    // Auth reply (the login flow's success/failure for auth:login). Registered
+    // here alongside the other server->client handlers; the cb defaults to a
+    // no-op until menu.ts registers via onAuthResult().
+    this.socket.on(SERVER_EVENTS.AUTH_RESULT, (msg: AuthResult) => {
+      this.authCb(msg);
     });
 
     this.socket.on(SERVER_EVENTS.SNAPSHOT, (msg: SnapshotMsg) => {
@@ -57,9 +69,30 @@ export class NetClient {
     this.socket.on('disconnect', () => this.stopPingLoop());
   }
 
-  /** Emit lobby:join {room, name}. */
-  join(room: string, name: string): void {
+  /**
+   * Emit auth:login {username, token?, species?}. The server replies with
+   * auth:result (register the handler via onAuthResult). Undefined fields are
+   * omitted so the wire payload stays minimal:
+   *   - token present   → session restore (auto-login on a returning player)
+   *   - token absent     → claim the username (server issues a fresh token)
+   *   - species present → the returning player's pick (drives spawn assignment)
+   */
+  login(username: string, token?: string, species?: string): void {
+    const payload: AuthLogin = { username };
+    if (token !== undefined) payload.token = token;
+    if (species !== undefined) payload.species = species;
+    this.socket?.emit(CLIENT_EVENTS.AUTH_LOGIN, payload);
+  }
+
+  /** Register the auth-result handler (login success/failure). */
+  onAuthResult(cb: (msg: AuthResult) => void): void {
+    this.authCb = cb;
+  }
+
+  /** Emit lobby:join {room, name, species?}. `species` rides along when chosen. */
+  join(room: string, name: string, species?: string): void {
     const payload: LobbyJoin = { room, name };
+    if (species !== undefined) payload.species = species;
     this.socket?.emit(CLIENT_EVENTS.LOBBY_JOIN, payload);
   }
 

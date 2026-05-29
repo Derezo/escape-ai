@@ -28,8 +28,9 @@ import { PhaserRenderer } from './render/phaser';
 
 import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
-import { preloadSfx, unlockAudio, playSfx, type SfxName } from './audio';
-import { createManual } from './manual';
+import { preloadSfx, playSfx, type SfxName } from './audio';
+import { createHelp } from './help';
+import { runMenu } from './menu';
 
 // The server integrates input without clamping (server/game/engine.js), so for
 // prediction we use effectively-unbounded bounds to match authority exactly and
@@ -51,10 +52,33 @@ async function main(): Promise<void> {
   if (!host) throw new Error('#game container missing from index.html');
   await renderer.init(host);
 
-  // --- HUD overlay (latency + player count) ---
+  // --- HUD overlay (structured telemetry, click-through) ---
+  // A small designed panel rather than a debug text dump: a title row + one
+  // styled row per live metric. We build the child spans ONCE here and update
+  // their textContent each frame (cheaper than rebuilding a big string, and it
+  // lets each row carry its own style). Rows that aren't always relevant
+  // (lockdown indicator, carrying) toggle a `hidden`/active class. The verbose
+  // lore lives in the help widget, not here.
   const hud = document.createElement('div');
   hud.id = 'hud';
+  hud.innerHTML = `
+    <div id="hud-title">AI ESCAPE</div>
+    <div class="hud-row"><span class="hud-key">latency</span><span class="hud-val" id="hud-latency">…</span></div>
+    <div class="hud-row"><span class="hud-key">players</span><span class="hud-val" id="hud-players">…</span></div>
+    <div class="hud-row"><span class="hud-key">panic</span><span class="hud-val" id="hud-panic">…</span></div>
+    <div class="hud-row hud-lockdown" id="hud-lockdown-row"><span class="hud-key">status</span><span class="hud-val" id="hud-lockdown">LOCKDOWN</span></div>
+    <div class="hud-row"><span class="hud-key">human-like</span><span class="hud-val" id="hud-human">…</span></div>
+    <div class="hud-row hud-carry" id="hud-carry-row"><span class="hud-key">carrying</span><span class="hud-val">prop</span></div>
+  `;
   document.body.appendChild(hud);
+
+  // HUD row element handles (queried once; updated each frame in frame()).
+  const hudLatency = hud.querySelector<HTMLElement>('#hud-latency')!;
+  const hudPlayers = hud.querySelector<HTMLElement>('#hud-players')!;
+  const hudPanic = hud.querySelector<HTMLElement>('#hud-panic')!;
+  const hudLockdownRow = hud.querySelector<HTMLElement>('#hud-lockdown-row')!;
+  const hudHuman = hud.querySelector<HTMLElement>('#hud-human')!;
+  const hudCarryRow = hud.querySelector<HTMLElement>('#hud-carry-row')!;
 
   // --- Lockdown overlay (full-screen, click-through) ---
   // A pulsing red vignette + banner shown only while world.lockdown is true.
@@ -75,25 +99,27 @@ async function main(): Promise<void> {
   winBanner.textContent = '🦊 ESCAPED!';
   document.body.appendChild(winBanner);
 
-  // --- In-game manual (H / ?). Opens on first load so the premise, controls,
-  // verbatim Three Laws and the double-edged-order callout are seen immediately. ---
-  createManual();
+  // --- In-game help (H / ?). Built hidden; the splash handles first-run intro
+  // now, so the help widget no longer opens on load. H or ? toggles it. ---
+  createHelp();
 
   // --- SFX. Preload the catalogue; the AudioContext starts suspended until a
-  // user gesture, so unlock it on the first key/pointer (browsers require this). ---
+  // user gesture. The splash's first-gesture handler (menu.ts) calls unlockAudio()
+  // — we deliberately do NOT register our own once-listeners here, so audio is
+  // unlocked exactly once (no double-unlock). ---
   preloadSfx();
-  const unlockOnce = () => unlockAudio();
-  window.addEventListener('keydown', unlockOnce, { once: true });
-  window.addEventListener('pointerdown', unlockOnce, { once: true });
 
-  // --- Identity: a random name so two tabs are distinguishable. The server
-  // assigns the authoritative entity id; we match "our" entity by this name. ---
-  const myName = prompt('Your name?')?.trim() || randomName();
-
-  // --- Net ---
+  // --- Net: connect, then run the splash → login flow. We do NOT join until the
+  // player has authenticated. runMenu resolves with the authoritative username
+  // (and chosen species) once auth:result returns ok. ---
   const net = new NetClient();
   net.connect(SERVER_URL);
-  net.join(DEFAULT_ROOM, myName);
+
+  const { username, species } = await runMenu(net);
+  // Identity: the authenticated username. The server assigns the authoritative
+  // entity id; we match "our" entity by this name (roster match below).
+  const myName = username;
+  net.join(DEFAULT_ROOM, myName, species);
 
   // --- Authoritative-ish world state, keyed by entity id ---
   // Snapshots are DELTAS (only changed entities) but lobby:state is the full
@@ -124,8 +150,6 @@ async function main(): Promise<void> {
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
-  // Highest input seq the server has acked for us (from snapshot.acks).
-  let lastAckedSeq = 0;
 
   net.onLobbyState((msg) => {
     playerCount = msg.players.length;
@@ -168,10 +192,6 @@ async function main(): Promise<void> {
     }
     // Capture the global panic/lockdown state for the HUD (display-only).
     if (msg.world) world = msg.world;
-    // Track how far the server has consumed our input stream.
-    if (myId && msg.acks[myId] !== undefined) {
-      lastAckedSeq = msg.acks[myId];
-    }
   });
 
   // --- Input capture (WASD + arrow keys) ---
@@ -203,7 +223,7 @@ async function main(): Promise<void> {
       }
       return;
     }
-    // The manual toggle keys are handled in manual.ts; don't let them leak into
+    // The help toggle keys are handled in help.ts; don't let them leak into
     // the movement key set (nothing reads them today, but it avoids stale state).
     if (key === 'h' || key === '?') return;
     keys.add(key);
@@ -300,15 +320,17 @@ async function main(): Promise<void> {
       playSfx(name, vol);
     }
 
-    const lat = net.latency >= 0 ? `${net.latency} ms` : '...';
-    // Panic/lockdown come from the snapshot's world state; show placeholders
-    // until the first snapshot that carries it. The panic meter renders as a
-    // 10-cell bar (reusing the HUD `bar()` helper) plus the raw fill, so the
-    // player can see the escape getting noisy long before it overflows.
-    const panic = world
+    // --- HUD row updates (structured panel; one styled row per metric) ---
+    hudLatency.textContent = net.latency >= 0 ? `${net.latency} ms` : '…';
+    hudPlayers.textContent = String(playerCount);
+    // Panic meter: a 10-cell bar (reusing `bar()`) plus the raw fill, so the
+    // player sees the escape getting noisy long before it overflows. Placeholder
+    // until the first snapshot that carries the world state.
+    hudPanic.textContent = world
       ? `${bar(world.panic / world.panicCapacity, 10)} ${Math.round(world.panic)}/${world.panicCapacity}`
-      : '...';
-    const lockdown = world ? (world.lockdown ? 'yes' : 'no') : '...';
+      : '…';
+    // Lockdown is a dedicated indicator row, shown only while the room is sealed.
+    hudLockdownRow.classList.toggle('active', world?.lockdown === true);
 
     // Edge-trigger the lockdown overlay: only touch the DOM when lockdown
     // actually flips, not every frame. The CSS `.active` class drives the
@@ -345,21 +367,11 @@ async function main(): Promise<void> {
       if (prevHumanLike > 0.25 && hl <= 0.02) playSfx('hit', 0.8);
       prevHumanLike = hl;
     }
-    const humanLike =
-      hl !== undefined
-        ? `human-like: ${bar(hl)} ${Math.round(hl * 100)}% (freeze ~60%)`
-        : `human-like: ...`;
-    // Show the disguise-prop state only when we actually carry it.
-    const carrying = me?.carrying === true ? `\ncarrying: prop` : '';
-
-    hud.textContent =
-      `TINS 2026\n` +
-      `latency: ${lat}\n` +
-      `players: ${playerCount}\n` +
-      `seq: ${seq}  acked: ${lastAckedSeq}\n` +
-      `panic: ${panic}\n` +
-      `lockdown: ${lockdown}\n` +
-      `${humanLike}${carrying}`;
+    // Human-likeness: a 5-cell bar + percent, with the ~60% freeze-threshold hint.
+    hudHuman.textContent =
+      hl !== undefined ? `${bar(hl)} ${Math.round(hl * 100)}% (freeze ~60%)` : '…';
+    // Carrying row: shown only while we actually hold the disguise prop.
+    hudCarryRow.classList.toggle('active', me?.carrying === true);
 
     requestAnimationFrame(frame);
   }
@@ -387,14 +399,6 @@ function sfxForFx(kind: string): SfxName | undefined {
     case 'stink': case 'shell': return 'select';
     default: return undefined;
   }
-}
-
-/** A short random handle so multiple tabs are visually distinct. */
-function randomName(): string {
-  const animals = ['fox', 'owl', 'cat', 'bee', 'elk', 'ram', 'jay', 'koi'];
-  const a = animals[Math.floor(Math.random() * animals.length)];
-  const n = Math.floor(Math.random() * 100);
-  return `${a}${n}`;
 }
 
 main().catch((err) => {
