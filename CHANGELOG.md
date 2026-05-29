@@ -4,6 +4,9 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.1
 
+- 0.1.1: Split third-party attributions out of `LICENSE` into
+  `THIRD_PARTY_NOTICES.md` so `LICENSE` is pure zlib text and GitHub detects the
+  license. README points at the new notices file.
 - 0.1.0: Initial game-agnostic starter kit scaffolded ahead of the jam.
   - **Client:** Vite + TypeScript + Phaser 3 with a swappable `IRenderer`
     (`PhaserRenderer` default), Socket.IO client wrapper with ping/pong latency,

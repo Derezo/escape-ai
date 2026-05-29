@@ -136,4 +136,4 @@ assets/   generated placeholder sprites + sfx
 ## License
 
 zlib. See [LICENSE](LICENSE). Third-party npm dependencies retain their own
-licenses, listed in `LICENSE`.
+licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
