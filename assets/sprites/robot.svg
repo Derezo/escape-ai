@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
   <rect width="64" height="64" fill="none"/>
-  <circle cx="32" cy="32" r="24.32" fill="#4cc9f0" stroke="#0b0c10" stroke-width="3" stroke-linejoin="round"/>
+  <polygon points="32.0,7.7 53.1,19.8 53.1,44.2 32.0,56.3 10.9,44.2 10.9,19.8" fill="#9aa3ad" stroke="#0b0c10" stroke-width="3" stroke-linejoin="round"/>
   <text x="32" y="32" font-family="monospace" font-size="18"
         font-weight="bold" fill="#0b0c10" text-anchor="middle"
-        dominant-baseline="central">P1</text>
+        dominant-baseline="central">BOT</text>
 </svg>

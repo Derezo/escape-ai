@@ -59,17 +59,27 @@ Output: assets/sprites/*.svg
 }
 
 // --- sprite catalogue -------------------------------------------------------
-// Game-agnostic shapes. Add/rename here at hour 0 to match the genre rule.
-// Each gets a distinct shape + colour + a short label so they're tellable apart
-// on screen before real art exists.
+// The Caves of Steel entities (see shared/src/types.ts EntityKind + animal
+// species). Each gets a distinct shape + colour + a short label so they're
+// tellable apart on screen before real art exists. The PhaserRenderer draws
+// these as shapes today (no image load); these SVGs are the committed art
+// reference and the drop-in target if/when the renderer loads sprites.
 
 const SPRITES = [
-  { name: 'player', shape: 'circle', fill: '#4cc9f0', label: 'P1' },
-  { name: 'player2', shape: 'circle', fill: '#f72585', label: 'P2' },
-  { name: 'enemy', shape: 'triangle', fill: '#e63946', label: 'E' },
-  { name: 'item', shape: 'diamond', fill: '#ffd166', label: '!' },
-  { name: 'wall', shape: 'square', fill: '#6c757d', label: '#' },
-  { name: 'goal', shape: 'star', fill: '#06d6a0', label: '*' },
+  // Animal species — the player-controlled escapees. Shape + base tint per
+  // species so they read at a glance (mirrors the renderer's species branch).
+  { name: 'ape', shape: 'circle', fill: '#8d6e4f', label: 'AP' },
+  { name: 'bird', shape: 'triangle', fill: '#4cc9f0', label: 'BD' },
+  { name: 'rat', shape: 'diamond', fill: '#9aa3ad', label: 'RT' },
+  { name: 'elephant', shape: 'square', fill: '#5a6b7a', label: 'EL' },
+  // Keeper-robot — a steel-gray mechanical hexagon (clearly not a creature).
+  { name: 'robot', shape: 'hexagon', fill: '#9aa3ad', label: 'BOT' },
+  // Static room furniture.
+  { name: 'pen', shape: 'square', fill: '#3a5a78', label: 'PEN' },
+  { name: 'terminal', shape: 'square', fill: '#32d296', label: 'T' },
+  { name: 'gate', shape: 'square', fill: '#e0a526', label: 'GATE' },
+  // The Clipboard — a pale carryable disguise prop (a document, not a creature).
+  { name: 'prop', shape: 'clipboard', fill: '#eef0f2', label: 'CLIP' },
 ];
 
 // --- shape path builders ----------------------------------------------------
@@ -110,9 +120,36 @@ function shapeFragment(shape, s, fill) {
     }
     case 'star':
       return `<polygon points="${starPoints(c, c, r, r * 0.45, 5)}" ${common}/>`;
+    case 'hexagon':
+      // Flat-top hexagon — reads "mechanical / robot", distinct from a creature.
+      return `<polygon points="${polyPoints(c, c, r, 6, -Math.PI / 2)}" ${common}/>`;
+    case 'clipboard': {
+      // A document/clipboard: a tall rounded rect with a clip tab at the top, so
+      // the carryable prop reads as an item rather than a creature.
+      const w = r * 1.5;
+      const h = r * 1.9;
+      const x = c - w / 2;
+      const y = c - h / 2;
+      const clipW = w * 0.34;
+      const clipH = h * 0.14;
+      return (
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="${(s * 0.06).toFixed(1)}" ${common}/>` +
+        `<rect x="${(c - clipW / 2).toFixed(1)}" y="${(y - clipH * 0.5).toFixed(1)}" width="${clipW.toFixed(1)}" height="${clipH.toFixed(1)}" rx="${(clipH * 0.4).toFixed(1)}" ${common}/>`
+      );
+    }
     default:
       return `<circle cx="${c}" cy="${c}" r="${r}" ${common}/>`;
   }
+}
+
+/** Points for a regular `n`-gon centred at (cx,cy), starting angle `start`. */
+function polyPoints(cx, cy, radius, n, start) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const ang = start + (i * 2 * Math.PI) / n;
+    pts.push(`${(cx + Math.cos(ang) * radius).toFixed(1)},${(cy + Math.sin(ang) * radius).toFixed(1)}`);
+  }
+  return pts.join(' ');
 }
 
 function starPoints(cx, cy, outer, inner, points) {

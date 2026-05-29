@@ -4,6 +4,13 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.6: **Phase 5b — themed sprites + per-species visuals.** The sprite generator's
+  `SPRITES` table now matches the real game (ape/bird/rat/elephant/robot/pen/terminal/
+  gate/prop; new hexagon + clipboard shapes); stale starter-kit SVGs removed. The
+  renderer gives `prop` a distinct pale-clipboard look and draws animals by species
+  (shape + per-species tint blended with the id colour), while preserving the Phase-2/3
+  stealth feedback. Still shape-based — boots with no image assets.
+
 - 0.2.5: **Phase 5a — playable loop: walk/sprint, world bounds, win condition.**
   - **Walk vs sprint (the key balance fix):** default movement now WALKS at
     `WALK_SPEED` (120, below the sprint threshold) so you can move *and* look human;

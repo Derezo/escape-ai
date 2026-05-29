@@ -21,6 +21,21 @@ const RECT_SIZE = 28;
 const PEN_SIZE = 120;
 /** Visual size of a static marker (terminal/gate), in pixels. */
 const MARKER_SIZE = 20;
+/** Size of the carryable Clipboard prop, in pixels (smaller than a creature). */
+const PROP_SIZE = 16;
+
+/**
+ * Per-species base tint for animals. The id still spins the hue (colorFor) so
+ * two apes are tellable apart, but a species' tint biases the body toward a
+ * recognisable family colour so a player can read ape/bird/rat/elephant at a
+ * glance. An unknown/absent species falls back to the pure id colour.
+ */
+const SPECIES_TINT: Record<string, number> = {
+  ape: 0x8d6e4f, // warm brown
+  bird: 0x4cc9f0, // cyan
+  rat: 0x9aa3ad, // gray
+  elephant: 0x5a6b7a, // slate
+};
 
 /**
  * Draw depths. Pens are the floor of the room, so they sit UNDER the mobile
@@ -242,17 +257,84 @@ class WorldScene extends Phaser.Scene {
             .setDepth(DEPTH_PROP),
         };
 
+      case 'prop':
+        // The Clipboard: a small pale document — a slim portrait rect, clearly
+        // an inert item, not a creature. Sits on the prop layer with terminals.
+        return {
+          kind,
+          body: this.add
+            .rectangle(e.x, e.y, PROP_SIZE * 0.8, PROP_SIZE, 0xeef0f2)
+            .setStrokeStyle(2, 0x6b7280, 0.9)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PROP),
+        };
+
       case 'animal':
       default: {
-        // Players + idle animals: a filled square colored by id, with a name
-        // label. `undefined` kind (bare starter point) falls through to here.
-        const body = this.add
-          .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, colorFor(e.id))
-          .setStrokeStyle(2, 0xffffff, 0.6)
-          .setOrigin(0.5)
-          .setDepth(DEPTH_MOBILE);
+        // Players + idle animals. The body shape varies by species so the four
+        // animals read apart at a glance; the fill blends the id colour (so two
+        // of a species still differ) with a species tint. `undefined` kind (the
+        // bare starter point) falls through here as a plain id-coloured square.
+        const body = this.makeAnimalBody(e);
         return { kind, body, label: this.makeLabel(e) };
       }
+    }
+  }
+
+  /**
+   * Build an animal's body, varying SHAPE by species (ape/bird/rat/elephant)
+   * and tinting the id colour toward the species' family colour. The body stays
+   * a generic Shape so `restyle()`'s humanLikeness outline applies uniformly,
+   * and so per-species shapes never leak into the rest of the lifecycle.
+   */
+  private makeAnimalBody(e: Entity): Phaser.GameObjects.Shape {
+    const species = typeof e.species === 'string' ? e.species : undefined;
+    const tint = species !== undefined ? SPECIES_TINT[species] : undefined;
+    // Blend toward the species tint when known so the family colour reads while
+    // each id still shifts the hue; unknown species keeps the pure id colour.
+    const fill = tint !== undefined ? blendColors(colorFor(e.id), tint, 0.55) : colorFor(e.id);
+    // restyle() overrides this outline per-frame from humanLikeness; this is the
+    // neutral default a freshly-spawned animal shows before any First-Law read.
+    const stroke = 0xffffff;
+    const alpha = 0.6;
+
+    switch (species) {
+      case 'bird': {
+        // Light + nimble (flies): an upward triangle.
+        const r = RECT_SIZE * 0.62;
+        return this.add
+          .triangle(e.x, e.y, 0, r, r, -r, -r, -r, fill)
+          .setStrokeStyle(2, stroke, alpha)
+          .setOrigin(0.5)
+          .setDepth(DEPTH_MOBILE);
+      }
+      case 'rat': {
+        // Small + squeezes through gaps: a compact diamond (rotated square).
+        const d = RECT_SIZE * 0.7;
+        return this.add
+          .rectangle(e.x, e.y, d, d, fill)
+          .setStrokeStyle(2, stroke, alpha)
+          .setOrigin(0.5)
+          .setAngle(45)
+          .setDepth(DEPTH_MOBILE);
+      }
+      case 'elephant': {
+        // Big + smashes: an oversized square so it reads as the heavy one.
+        const big = RECT_SIZE * 1.25;
+        return this.add
+          .rectangle(e.x, e.y, big, big, fill)
+          .setStrokeStyle(2, stroke, alpha)
+          .setOrigin(0.5)
+          .setDepth(DEPTH_MOBILE);
+      }
+      case 'ape':
+      default:
+        // Ape (climber) + the bare starter point: the baseline id-coloured square.
+        return this.add
+          .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, fill)
+          .setStrokeStyle(2, stroke, alpha)
+          .setOrigin(0.5)
+          .setDepth(DEPTH_MOBILE);
     }
   }
 
@@ -292,6 +374,18 @@ function colorFor(id: string): number {
   // Spread hue across the wheel; fixed-ish saturation/lightness via HSV->RGB.
   const hue = h % 360;
   return hsvToInt(hue, 0.55, 0.95);
+}
+
+/**
+ * Linearly blend two 0xRRGGBB colours: `t` of `b` mixed into `a` (t in 0..1).
+ * Used to bias an animal's per-id colour toward its species' family tint.
+ */
+function blendColors(a: number, b: number, t: number): number {
+  const lerp = (x: number, y: number) => Math.round(x + (y - x) * t);
+  const r = lerp((a >> 16) & 0xff, (b >> 16) & 0xff);
+  const g = lerp((a >> 8) & 0xff, (b >> 8) & 0xff);
+  const bl = lerp(a & 0xff, b & 0xff);
+  return (r << 16) | (g << 8) | bl;
 }
 
 function hsvToInt(h: number, s: number, v: number): number {
