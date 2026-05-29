@@ -74,6 +74,87 @@ export function dist2(a: { x: number; y: number }, b: { x: number; y: number }):
   return dx * dx + dy * dy;
 }
 
+// ---------------------------------------------------------------------------
+// Ambient NPC drift — deterministic patrol (robots) + wander (idle animals)
+//
+// Input-less NPCs (a robot with nothing to chase, an idle decoy animal) need to
+// MOVE so the zoo reads as alive and threatening — but the move must be pure and
+// deterministic (server-authoritative, reusable, testable). So instead of RNG we
+// derive a heading from a tiny integer hash of the entity id mixed with a slow
+// tick "bucket": the heading holds for HEADING_HOLD_TICKS, then re-rolls. Same
+// (id, tick) always yields the same vector — no Math.random, no wall clock.
+// ---------------------------------------------------------------------------
+
+/** Tunables for ambient NPC drift (robot patrol + idle-animal wander). */
+export const WANDER = {
+  /** Robot idle-patrol speed (units/sec). Slower than ROBOT_SPEED so a chase still reads. */
+  PATROL_SPEED: 60,
+  /** Idle decoy-animal drift speed (units/sec). Gentle ambient motion. */
+  ANIMAL_SPEED: 40,
+  /** Ticks a heading is held before it re-rolls (~2s at 20Hz). The "drift, then turn" rhythm. */
+  HEADING_HOLD_TICKS: 40,
+  /** Distance (units) from a bound at which a wanderer biases its heading back inward. */
+  EDGE_MARGIN: 40,
+} as const;
+
+/**
+ * Pure 32-bit FNV-1a hash of a string → unsigned int. Deterministic, no RNG.
+ * Kept in uint32 via {@link Math.imul} + `>>> 0` so it is bit-stable across V8
+ * (server) and any client that later mirrors this math.
+ */
+export function hash32(s: string): number {
+  let h = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0; // FNV prime, folded back into uint32
+  }
+  return h >>> 0;
+}
+
+/**
+ * A deterministic unit heading for entity `id` at integer `tick`, held constant
+ * for {@link WANDER.HEADING_HOLD_TICKS} ticks then re-rolled. Pure: the same
+ * `(id, tick)` always yields the same vector. De-correlated per id (the id hash
+ * differs) and time-varying (the bucket changes) without any RNG.
+ */
+export function wanderVec(id: string, tick: number): { dirX: number; dirY: number } {
+  const bucket = Math.floor(tick / WANDER.HEADING_HOLD_TICKS);
+  // Mix the id-hash with the bucket (another integer mix) → uint32 → [0, 2π).
+  const mixed = Math.imul(hash32(id) ^ bucket, 0x9e3779b1) >>> 0;
+  const angle = (mixed / 0x100000000) * Math.PI * 2;
+  return { dirX: Math.cos(angle), dirY: Math.sin(angle) };
+}
+
+/**
+ * Advance an ambient (input-less) entity one step along its deterministic wander
+ * heading at `speed`, clamped to `bounds`. Near an edge (within
+ * {@link WANDER.EDGE_MARGIN}) the heading is biased back inward so the entity
+ * turns away rather than pinning to the wall; the `clamp` is the hard backstop.
+ * Pure given `(entity, tick, dt)`. Returns the new `{x, y}` for the caller to
+ * write back (it does not mutate `entity`). Used by BOTH robot idle-patrol and
+ * idle-animal drift — one source of truth for ambient motion.
+ */
+export function wanderStep(
+  entity: { id: string; x: number; y: number },
+  tick: number,
+  dt: number,
+  speed: number,
+  bounds: Bounds = WORLD,
+): { x: number; y: number } {
+  let { dirX, dirY } = wanderVec(entity.id, tick);
+
+  // Turn inward near a bound (sign forced by position only, so it stays pure).
+  if (entity.x < bounds.minX + WANDER.EDGE_MARGIN) dirX = Math.abs(dirX);
+  else if (entity.x > bounds.maxX - WANDER.EDGE_MARGIN) dirX = -Math.abs(dirX);
+  if (entity.y < bounds.minY + WANDER.EDGE_MARGIN) dirY = Math.abs(dirY);
+  else if (entity.y > bounds.maxY - WANDER.EDGE_MARGIN) dirY = -Math.abs(dirY);
+
+  return {
+    x: clamp(entity.x + dirX * speed * dt, bounds.minX, bounds.maxX),
+    y: clamp(entity.y + dirY * speed * dt, bounds.minY, bounds.maxY),
+  };
+}
+
 /**
  * The effective First-Law freeze threshold for a robot given its suspicion. A
  * calm robot (suspicion 0) freezes at FREEZE_THRESHOLD; a suspicious one needs a
@@ -200,8 +281,14 @@ export function robotDecision(
 /** Tunables for the panic/overflow loop. Centralized for Phase-5 balancing. */
 export const PANIC = {
   /** Passive drain (points/sec) while nothing is actively escalating. */
-  DECAY_PER_SEC: 4,
-  /** Added per robot that is actively pursuing this tick (points/sec each). */
+  DECAY_PER_SEC: 5,
+  /**
+   * Added per *effective* pursuer this tick (points/sec each). The pursuit count
+   * is passed through a concave (sqrt) curve in {@link stepPanic}, so the first
+   * chaser matters a lot and a swarm has diminishing returns — a full pack can no
+   * longer pin the meter at capacity, and shedding pursuers (e.g. letting a robot
+   * peel off to chase a wandering decoy) tips the balance back toward recovery.
+   */
   RISE_PER_PURSUIT_PER_SEC: 3,
   /** One-shot spike when a player is caught by a robot. */
   RISE_PER_CATCH: 25,
@@ -235,8 +322,12 @@ export interface PanicEvents {
  * hysteretic recovery) is the single authoritative definition of the rule.
  */
 export function stepPanic(world: WorldState, events: PanicEvents, dt: number): WorldState {
+  // Concave pursuit term: a swarm can't out-rise decay (1→1, 4→2, 6→~2.45
+  // effective pursuers), but one chaser still moves the meter. Keeps "break
+  // contact to recover" as the skill, vs. a swarm pinning panic at capacity.
+  const pursuers = Math.sqrt(Math.max(0, events.pursuingRobots));
   const rise =
-    events.pursuingRobots * PANIC.RISE_PER_PURSUIT_PER_SEC * dt +
+    pursuers * PANIC.RISE_PER_PURSUIT_PER_SEC * dt +
     events.catches * PANIC.RISE_PER_CATCH +
     events.orders * PANIC.RISE_PER_ORDER;
   const fall = PANIC.DECAY_PER_SEC * dt;

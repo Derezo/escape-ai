@@ -34,6 +34,13 @@ module.exports = {
   // Players are clamped inside it so the perimeter gate is the only way out.
   WORLD_MAX: parseFloat(process.env.WORLD_MAX) || 1000,
 
+  // Ambient NPC drift speeds (mirror shared WANDER). A robot with nothing to
+  // chase PATROLS at PATROL_SPEED (slower than ROBOT_SPEED so a real chase still
+  // reads as faster); idle decoy animals drift at WANDER_ANIMAL_SPEED. Both ride
+  // the deterministic shared wanderStep — see shared/src/step.ts.
+  PATROL_SPEED: parseFloat(process.env.PATROL_SPEED) || 60,
+  WANDER_ANIMAL_SPEED: parseFloat(process.env.WANDER_ANIMAL_SPEED) || 40,
+
   // Species abilities (Phase 4). Each species has one edge-triggered power fired
   // by the 'ability' action; these are the server-orchestrated tunables. Timed
   // effects convert seconds -> ticks via TICK_RATE (deterministic, no wall clock).

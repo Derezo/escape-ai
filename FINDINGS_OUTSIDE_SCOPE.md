@@ -6,15 +6,18 @@ the audit trail).
 
 ## Open
 
-### Panic recovery is slow while any robot stays in contact
-- **Status:** open — balance feel, low priority.
-- **Surfaced:** Phase 3 (overflow + lockdown), 2026-05-29.
-- **Detail:** In lockdown every robot pursues the player (First Law dropped). While
-  even one robot is pursuing, panic rise (`RISE_PER_PURSUIT_PER_SEC` 3/sec) nearly
-  cancels decay (`DECAY_PER_SEC` 4/sec), so draining from 100 to the 30% recovery
-  watermark takes a long time unless the player fully breaks contact. Recovery is
-  correct ("punishing, recoverable") but may feel too slow in playtesting.
-- **Fix options:** tune `PANIC.DECAY_PER_SEC` / `RISE_PER_PURSUIT_PER_SEC` /
-  `RECOVERY_FRACTION`; or time-box lockdown instead of purely panic-gating it.
-- **Refs:** `shared/src/step.ts` (`PANIC`, `stepPanic`), `server/game/stealth.js` (`stepPanic`).
-- **Effort:** S (tunables).
+### Client dev-dependency advisory: esbuild ≤0.24.2 via Vite (2 moderate)
+- **Status:** open — pre-existing, out of scope, needs a human decision.
+- **Surfaced:** `/plan-validation-and-review` of the 0.2.9 gameplay-depth plan, 2026-05-29
+  (the plan touched no client dependencies; flagged by `npm audit` in `client/`).
+- **Detail:** `npm audit` in `client/` reports 2 moderate vulns — `esbuild <=0.24.2`
+  (GHSA-67mh-4wv8-2f99: a dev server can be coerced into sending requests / reading
+  responses) pulled in transitively by `vite <=6.4.1`. **Dev-only** (esbuild/Vite are
+  not in the shipped static bundle), so production exposure is nil; the risk is a
+  local dev machine on an untrusted network.
+- **Fix options:** the only `npm audit fix` path is `--force`, which installs
+  `vite@8` — a **breaking major bump**. Defer to a deliberate Vite upgrade pass
+  (re-verify the client build + Capacitor `base: './'` afterward), not an auto-fix.
+- **Refs:** `client/package.json` (Vite dev dependency); advisory
+  GHSA-67mh-4wv8-2f99.
+- **Effort:** M (major-version upgrade + build re-verification).

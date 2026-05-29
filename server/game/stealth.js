@@ -51,7 +51,7 @@ async function loadShared() {
   const mod = await import('../../shared/dist/step.js');
   const required = [
     'STEALTH', 'updateHumanLikeness', 'firstLawProtects',
-    'freezeThreshold', 'robotDecision', 'dist2'
+    'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -270,12 +270,47 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
           catches++;
         }
       }
+    } else if (decision.mode === 'idle') {
+      // PATROL: a robot with nothing to react to walks its rounds (deterministic
+      // wander) instead of standing dead-still, so it's a moving threat to route
+      // around. A decoy/player that drifts into perception flips it to 'pursue'
+      // next tick. Patrol is intentionally slower than a chase (config.PATROL_SPEED).
+      const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED);
+      robot.x = next.x;
+      robot.y = next.y;
     }
-    // 'idle' and 'frozen' robots hold position — frozen by the First Law (a
-    // convincing human nearby), idle when nothing is in range.
+    // 'frozen' robots hold position (frozen by the First Law — a convincing human
+    // is nearby and must not be disturbed); 'ordered' returned earlier in the loop.
   }
 
   return { pursuingRobots, catches };
+}
+
+/**
+ * Drift every idle world-animal in a room one step along its deterministic
+ * wander heading (shared.wanderStep). These decoys have no input; making them
+ * MOVE turns them into live cover + distractions — one that drifts within a
+ * robot's perception while looking like prey (humanLikeness 0) will be chased,
+ * peeling the robot off the players. Mutated in place in the world entity map,
+ * so they ride the engine's existing delta diff automatically.
+ *
+ * Called from engine.stepNpcs BEFORE stepRobots so robots perceive decoys at
+ * this tick's positions (no one-tick perception lag). Catching a decoy is
+ * impossible (the catch hook is player-only) and decoy-pursuit doesn't feed
+ * panic (the pursuingRobots tally is gated on isPlayer) — both intentional.
+ *
+ * @param {number} dt
+ * @param {string} roomName
+ * @param {number} currentTick
+ */
+function stepIdleAnimals(dt, roomName, currentTick) {
+  if (!shared) return;
+  for (const e of world.getWorldEntities(roomName)) {
+    if (e.kind !== 'animal') continue;
+    const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED);
+    e.x = next.x;
+    e.y = next.y;
+  }
 }
 
 /**
@@ -599,6 +634,7 @@ module.exports = {
   stepPlayerHumanLikeness,
   moveSpeed,
   stepRobots,
+  stepIdleAnimals,
   stepPanic,
   checkEscape,
   applyAction,

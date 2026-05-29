@@ -4,6 +4,34 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.9: **Gameplay depth — a living, threatening zoo.** The world was static
+  (robots stood dead-still until prey wandered into range; the 8 decoy animals never
+  moved), so a robot you could see was a robot you could walk past. Three reinforcing
+  changes, all built on one new deterministic primitive:
+  - **Ambient NPC drift (shared, once):** new `WANDER` tunables + pure `hash32` /
+    `wanderVec` / `wanderStep` in `@shared/step`. A heading is derived from an FNV-1a
+    hash of the entity id mixed with a slow tick "bucket" (re-rolls ~every 2s) — no
+    `Math.random`, no wall clock, so it's bit-deterministic and reusable/testable.
+    `wanderStep` biases inward near a bound and clamps to `WORLD`.
+  - **Robot patrol:** when `robotDecision` returns `idle`, the orchestrator now walks
+    the robot along its `wanderStep` at the slower `PATROL_SPEED` (frozen/ordered robots
+    still hold). Robots are a moving threat to route around, not scenery.
+  - **Wandering decoys:** new `stepIdleAnimals` drifts the idle world-animals with the
+    same `wanderStep` at `WANDER_ANIMAL_SPEED`, stepped *before* robots so they're
+    perceived at this tick's positions. A decoy that drifts into perception is chased —
+    peeling a robot off the players (emergent live distraction; catching a decoy is
+    impossible and decoy-pursuit doesn't feed panic, both as before).
+  - **Panic recovery fix (resolves the open `FINDINGS_OUTSIDE_SCOPE` item):** the pursuit
+    term in `stepPanic` is now concave (`sqrt` of the pursuer count) and `DECAY_PER_SEC`
+    is 4→5, so a swarm can no longer pin the meter at capacity. Net rates: 1 pursuer
+    −2/sec (recovers, ~35s full→30%), 4 +1/sec, 6 +2.35/sec — shedding pursuers (incl.
+    via a wandering decoy) now meaningfully accelerates the drain. The three features
+    reinforce each other.
+  - Verified: deterministic replay (identical NPC positions across two runs of the same
+    tick sequence), robots patrol + decoys wander + stay in-bounds, a robot chases a
+    decoy with no players present, shared builds/typechecks clean, server boots and
+    `loadShared` validates the new `wanderStep` export.
+
 - 0.2.8: **Validation remediation** (post `/plan-validation-and-review`). The review
   traced all 11 requirements as implemented + connected, found no architecture
   violations (shared math not duplicated), and gave ship-ready verdicts. Applied the

@@ -165,6 +165,9 @@ function stepNpcs(dt) {
 
   for (const [roomName, socketIds] of rooms) {
     if (!socketIds || socketIds.size === 0) continue;
+    // Drift the idle decoy animals first so robots perceive them at this tick's
+    // positions (no one-tick lag) when stepRobots runs its Three-Laws decision.
+    stealth.stepIdleAnimals(dt, roomName, currentTick);
     const robotEvents = stealth.stepRobots(dt, roomName, connectedPlayers, rooms, currentTick);
     const { enteredLockdown, liftedLockdown } = stealth.stepPanic(dt, roomName, robotEvents);
     // Lockdown transitions are rare and operationally interesting — log them.
