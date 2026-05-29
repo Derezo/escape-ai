@@ -17,9 +17,6 @@ export const SERVER_URL: string =
 /** Default lobby room everyone joins so two tabs meet without any UI. */
 export const DEFAULT_ROOM = 'default';
 
-/**
- * Movement speed (units/sec) used for CLIENT-SIDE PREDICTION. MUST match the
- * server's PLAYER_SPEED (server/config.js defaults to 200) or prediction will
- * disagree with authority and the rectangle will rubber-band.
- */
-export const PLAYER_SPEED = 200;
+// Movement speeds are NOT configured here: walk/sprint speeds live once in
+// `@shared/step` (WALK_SPEED / SPRINT_SPEED / moveSpeed) so client prediction and
+// server authority can never disagree. main.ts predicts via shared moveSpeed().

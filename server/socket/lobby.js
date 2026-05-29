@@ -146,8 +146,11 @@ function register(socket, deps) {
     const action = ACTIONS.has(payload.action) ? payload.action : null;
     if (action) player.pendingAction = action;
 
+    // Sprint (Shift): full speed but reads as fleeing prey. Default = walk.
+    const sprint = payload.sprint === true;
+
     player.inputSeq = seq;
-    player.input = { seq, dx, dy };
+    player.input = { seq, dx, dy, sprint };
   });
 }
 

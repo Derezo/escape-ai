@@ -107,6 +107,43 @@ body {
   }
 }
 
+/* Victory banner, centered, shown once the local player escapes. */
+#win-banner {
+  position: fixed;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.8);
+  z-index: 25;
+  display: none;
+  padding: 18px 40px;
+  border-radius: 12px;
+  background: rgba(6, 60, 30, 0.9);
+  border: 2px solid #06d6a0;
+  color: #d8fff0;
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  text-shadow: 0 0 12px rgba(6, 214, 160, 0.9);
+  pointer-events: none;
+  user-select: none;
+}
+
+#win-banner.active {
+  display: block;
+  animation: win-pop 0.5s ease-out forwards;
+}
+
+@keyframes win-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
 /* --- In-game manual / help (toggle H or ?). Hidden until `.open`. --- */
 #manual-overlay {
   position: fixed;

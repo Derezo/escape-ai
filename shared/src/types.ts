@@ -38,6 +38,8 @@ export interface Entity {
   humanLikeness?: number;
   /** For `robot`: 0..1 how convinced it is that a nearby "human" is faking it. */
   suspicion?: number;
+  /** For `animal` (player): true once it has reached the gate and escaped (win). */
+  escaped?: boolean;
   [key: string]: unknown;
 }
 

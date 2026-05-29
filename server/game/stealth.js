@@ -85,13 +85,20 @@ function stepPlayerHumanLikeness(player, dt) {
   const input = player.input || {};
   const dx = input.dx || 0;
   const dy = input.dy || 0;
-  const speed = Math.hypot(dx, dy) * config.PLAYER_SPEED;
+  // Speed must match the SAME walk/sprint speed integratePlayers moves at, or the
+  // disguise math would disagree with the motion the player sees.
+  const speed = Math.hypot(dx, dy) * shared.moveSpeed(input.sprint === true);
   player.humanLikeness = shared.updateHumanLikeness(
     player.humanLikeness || 0,
     speed,
     !!player.carrying,
     dt
   );
+}
+
+/** The per-frame movement speed for an input (walk vs sprint), from shared. */
+function moveSpeed(sprint) {
+  return shared ? shared.moveSpeed(sprint === true) : config.PLAYER_SPEED;
 }
 
 /**
@@ -121,6 +128,8 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, current
     for (const socketId of members) {
       const p = connectedPlayers.get(socketId);
       if (!p) continue;
+      // An escaped player has left the field — robots ignore it entirely.
+      if (p.escaped) continue;
       // RAT skitter: a skittering player is invisible to robots this tick.
       if ((p.skitterUntilTick || 0) > currentTick) continue;
       animals.push({
@@ -323,6 +332,25 @@ function catchPlayer(player) {
   // Soft respawn at the world's spawn origin (mirrors lobby's SPAWN_ORIGIN).
   player.x = 50;
   player.y = 50;
+}
+
+/**
+ * Win check: a player who reaches the perimeter gate has escaped. Sets a sticky
+ * `escaped` flag (idempotent — checked every tick but only flips once) so the
+ * client can show the victory state. An escaped player no longer feeds panic /
+ * gets caught because it has effectively left the play field.
+ * @param {object} player
+ * @param {string} roomName
+ */
+function checkEscape(player, roomName) {
+  if (!shared || player.escaped) return;
+  const gate = world.getWorldEntities(roomName).find((e) => e.kind === 'gate');
+  if (!gate) return;
+  // A generous reach so brushing the gate counts (it's the goal, not a trap).
+  const reach = config.RECT_SIZE * 1.5;
+  if (shared.dist2(player, gate) <= reach * reach) {
+    player.escaped = true;
+  }
 }
 
 /**
@@ -569,8 +597,10 @@ module.exports = {
   setRefs,
   isReady,
   stepPlayerHumanLikeness,
+  moveSpeed,
   stepRobots,
   stepPanic,
+  checkEscape,
   applyAction,
   // Exported for testing / future reuse.
   catchPlayer,

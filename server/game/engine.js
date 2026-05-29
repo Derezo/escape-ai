@@ -29,6 +29,11 @@ const config = require('../config');
 const world = require('./world');
 const stealth = require('./stealth');
 
+/** Clamp a coordinate into the zoo bounds [0, WORLD_MAX]. */
+function clampWorld(v) {
+  return v < 0 ? 0 : v > config.WORLD_MAX ? config.WORLD_MAX : v;
+}
+
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
 const FULL_REFRESH_INTERVAL = 100;
@@ -122,13 +127,21 @@ function integratePlayers(dt) {
     const dy = input.dy || 0;
 
     if (dx !== 0 || dy !== 0) {
-      player.x += dx * config.PLAYER_SPEED * dt;
-      player.y += dy * config.PLAYER_SPEED * dt;
+      const speed = stealth.moveSpeed(input.sprint);
+      player.x += dx * speed * dt;
+      player.y += dy * speed * dt;
+      // Keep players inside the zoo (0..WORLD_MAX). The gate is the only way out
+      // (see checkEscape); without this they could just walk off the map.
+      player.x = clampWorld(player.x);
+      player.y = clampWorld(player.y);
     }
 
     // Three-Laws stealth: how this tick's movement reads to a robot (still =
     // human, fleeing = prey). All math lives in shared; we just feed it speed.
     stealth.stepPlayerHumanLikeness(player, dt);
+
+    // Win check: a player who reaches the perimeter gate has escaped.
+    stealth.checkEscape(player, player.room);
 
     // Consume the latched one-shot action (order / interact / ability), if any.
     // Cleared immediately so it fires once per press; lobby.js latches it onto
@@ -175,7 +188,9 @@ function toEntity(player) {
     // Species rides along so the client can skin the avatar + label its ability.
     species: player.species,
     humanLikeness: player.humanLikeness || 0,
-    carrying: !!player.carrying
+    carrying: !!player.carrying,
+    // Sticky win flag — the client shows a victory state for escaped players.
+    escaped: !!player.escaped
   };
 }
 

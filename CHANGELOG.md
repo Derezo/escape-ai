@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.5: **Phase 5a — playable loop: walk/sprint, world bounds, win condition.**
+  - **Walk vs sprint (the key balance fix):** default movement now WALKS at
+    `WALK_SPEED` (120, below the sprint threshold) so you can move *and* look human;
+    holding **Shift** sprints at full speed but reads as fleeing prey. `WALK_SPEED`/
+    `SPRINT_SPEED`/`moveSpeed()` live once in `@shared/step`; server integration and
+    client prediction both call `moveSpeed` so they never disagree (the client's
+    duplicate `PLAYER_SPEED` constant was removed). `InputMsg` gained `sprint`.
+  - **World bounds:** players are clamped to the 1000×1000 zoo, so the perimeter gate
+    is the only way out (no more walking off the map).
+  - **Win condition:** reaching the gate sets a sticky `escaped` flag — the client
+    shows an "🦊 ESCAPED!" banner + chime; escaped players leave the field (robots
+    ignore them, they stop feeding panic).
+  - Verified live: walk holds humanLikeness at 1.0, sprint collapses it to 0, reaching
+    the gate flips `escaped`, movement stays in-bounds.
+  - Resolved two `FINDINGS_OUTSIDE_SCOPE` items (still-to-look-human, no world walls).
+
 - 0.2.4: **Phase 4 — Sutskever element, species roles, SFX & the in-game manual.**
   - **Species abilities (server + shared):** players are assigned ape/bird/rat/elephant
     by join order. `prop` added to the `EntityKind` union; a carryable disguise

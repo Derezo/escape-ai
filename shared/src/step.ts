@@ -31,7 +31,11 @@ export const STEALTH = {
   DECAY_PER_SEC: 0.8,
   /** Flat humanLikeness bonus while carrying the disguise prop (clipboard). */
   PROP_BONUS: 0.35,
-  /** Speed (units/sec) above which an animal reads as "fleeing prey", not human. */
+  /**
+   * Speed (units/sec) above which an animal reads as "fleeing prey", not human.
+   * Sits between WALK_SPEED and PLAYER_SPEED (see server/config.js, client
+   * config.ts): a walk stays human-ish, a sprint (Shift) reads as prey.
+   */
   SPRINT_THRESHOLD: 150,
   /** Base humanLikeness a robot needs to see before the First Law freezes it. */
   FREEZE_THRESHOLD: 0.6,
@@ -48,6 +52,20 @@ export const STEALTH = {
    */
   SUSPICION_THRESHOLD_GAIN: 0.4,
 } as const;
+
+/**
+ * Movement speeds (units/sec). Walking keeps you below SPRINT_THRESHOLD (so the
+ * human disguise holds while moving); sprinting (Shift) is faster but reads as
+ * fleeing prey. These are the single source of truth — server integration and
+ * client prediction both call {@link moveSpeed} so they never disagree.
+ */
+export const WALK_SPEED = 120;
+export const SPRINT_SPEED = 200;
+
+/** The movement speed for this frame given the sprint intent. */
+export function moveSpeed(sprint: boolean): number {
+  return sprint ? SPRINT_SPEED : WALK_SPEED;
+}
 
 /** Squared distance between two entities (cheaper than sqrt for radius checks). */
 export function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {

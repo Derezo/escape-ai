@@ -16,7 +16,7 @@ import './style.css';
 import type { IRenderer } from '@shared/renderer';
 import type { Entity, WorldState } from '@shared/types';
 import type { InputMsg, PlayerAction } from '@shared/net';
-import { applyInput, type Bounds } from '@shared/step';
+import { applyInput, moveSpeed, type Bounds } from '@shared/step';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -27,7 +27,7 @@ import { PhaserRenderer } from './render/phaser';
 // Everything below (net, input, prediction, reconciliation) is unchanged.
 
 import { NetClient } from './net/client';
-import { SERVER_URL, DEFAULT_ROOM, PLAYER_SPEED } from './config';
+import { SERVER_URL, DEFAULT_ROOM } from './config';
 import { preloadSfx, unlockAudio, playSfx } from './audio';
 import { createManual } from './manual';
 
@@ -69,6 +69,12 @@ async function main(): Promise<void> {
   lockdownOverlay.appendChild(lockdownBanner);
   document.body.appendChild(lockdownOverlay);
 
+  // --- Victory banner: shown once the local player reaches the gate (escaped). ---
+  const winBanner = document.createElement('div');
+  winBanner.id = 'win-banner';
+  winBanner.textContent = '🦊 ESCAPED!';
+  document.body.appendChild(winBanner);
+
   // --- In-game manual (H / ?). Opens on first load so the premise, controls,
   // verbatim Three Laws and the double-edged-order callout are seen immediately. ---
   createManual();
@@ -109,6 +115,8 @@ async function main(): Promise<void> {
   // Our humanLikeness last frame, to detect a "caught" event: a catch resets it
   // to 0 server-side, so a sharp high→~0 drop fires the hit SFX once.
   let prevHumanLike = 0;
+  // Whether we've already shown the victory banner (escaped is sticky server-side).
+  let shownWin = false;
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -201,27 +209,29 @@ async function main(): Promise<void> {
     actionHeld.clear();
   });
 
-  function inputVector(): { dx: number; dy: number } {
+  function inputVector(): { dx: number; dy: number; sprint: boolean } {
     let dx = 0;
     let dy = 0;
     if (keys.has('a') || keys.has('arrowleft')) dx -= 1;
     if (keys.has('d') || keys.has('arrowright')) dx += 1;
     if (keys.has('w') || keys.has('arrowup')) dy -= 1;
     if (keys.has('s') || keys.has('arrowdown')) dy += 1;
-    return { dx, dy };
+    // Shift = sprint: faster, but reads as fleeing prey (collapses the disguise).
+    const sprint = keys.has('shift');
+    return { dx, dy, sprint };
   }
 
   // --- Input send loop @ INPUT_SEND_MS: stamp seq, send, predict locally ---
   let seq = 0;
   let lastSendTime = performance.now();
   setInterval(() => {
-    const { dx, dy } = inputVector();
+    const { dx, dy, sprint } = inputVector();
     const now = performance.now();
     const dt = (now - lastSendTime) / 1000;
     lastSendTime = now;
 
     seq += 1;
-    const input: InputMsg = { seq, dx, dy };
+    const input: InputMsg = { seq, dx, dy, sprint };
     // Attach the one queued action (if any) to this single frame, then drain it
     // so it never fires twice. The server resolves it against nearby entities.
     if (queuedAction) {
@@ -235,11 +245,13 @@ async function main(): Promise<void> {
     net.sendInput(input);
 
     // Client-side prediction: advance OUR entity immediately so movement feels
-    // instant. The next snapshot reconciles any drift (server positions win).
+    // instant. Predict at the SAME walk/sprint speed the server integrates at
+    // (shared moveSpeed) so reconciliation doesn't rubber-band. The next snapshot
+    // reconciles any drift (server positions win).
     if (myId) {
       const me = entities.get(myId);
       if (me && (dx !== 0 || dy !== 0)) {
-        applyInput(me, input, dt, PLAYER_SPEED, PREDICTION_BOUNDS);
+        applyInput(me, input, dt, moveSpeed(sprint), PREDICTION_BOUNDS);
       }
     }
   }, INPUT_SEND_MS);
@@ -278,6 +290,14 @@ async function main(): Promise<void> {
     // mirror it. A text bar plus a hint of the ~60% freeze threshold tells the
     // player how close they are to looking human enough to freeze a robot.
     const me = myId ? entities.get(myId) : undefined;
+
+    // Victory: the server sets a sticky `escaped` flag when we reach the gate.
+    if (!shownWin && me?.escaped === true) {
+      shownWin = true;
+      winBanner.classList.add('active');
+      playSfx('confirm', 0.9);
+    }
+
     const hl = typeof me?.humanLikeness === 'number' ? me.humanLikeness : undefined;
     // Caught: the server zeroes humanLikeness on capture, so a sharp drop from a
     // meaningful level to ~0 means a robot just grabbed us — play the hit once.

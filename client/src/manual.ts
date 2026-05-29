@@ -24,12 +24,17 @@ const MANUAL_HTML = `
 
     <h2>Controls</h2>
     <ul class="cols">
-      <li><b>WASD / arrows</b> — move</li>
+      <li><b>WASD / arrows</b> — walk (stays human)</li>
+      <li><b>Shift</b> — sprint (fast, but reads as prey)</li>
       <li><b>E</b> — interact (terminal)</li>
       <li><b>Q</b> — order a robot (Second Law)</li>
       <li><b>Space</b> — your species ability</li>
       <li><b>H</b> or <b>?</b> — toggle this manual</li>
     </ul>
+
+    <h2>Goal</h2>
+    <p>Reach the <b>gate</b> at the far right edge to escape. Walk to stay human,
+      time your orders, and don't tip the zoo into lockdown.</p>
 
     <h2>The Three Laws of Robotics <span class="cite">— I, Robot (Asimov, 1950)</span></h2>
     <ol class="laws">

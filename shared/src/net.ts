@@ -51,6 +51,12 @@ export type PlayerAction = 'interact' | 'order' | 'ability';
  */
 export interface InputMsg extends Input {
   action?: PlayerAction;
+  /**
+   * Whether the player is sprinting this frame (Shift held). Sprinting moves at
+   * the full PLAYER_SPEED but reads as fleeing prey (collapses humanLikeness);
+   * the default walk is slower but keeps the human disguise. Absent = walk.
+   */
+  sprint?: boolean;
   [key: string]: unknown;
 }
 

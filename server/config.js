@@ -30,6 +30,9 @@ module.exports = {
   RECT_SIZE: parseFloat(process.env.RECT_SIZE) || 32,
   // How many seconds a robot stays stood-down after being ordered (Second Law).
   ORDER_DURATION_SECS: parseFloat(process.env.ORDER_DURATION_SECS) || 2,
+  // The square zoo spans [0, WORLD_MAX] on both axes (mirrors shared WORLD).
+  // Players are clamped inside it so the perimeter gate is the only way out.
+  WORLD_MAX: parseFloat(process.env.WORLD_MAX) || 1000,
 
   // Species abilities (Phase 4). Each species has one edge-triggered power fired
   // by the 'ability' action; these are the server-orchestrated tunables. Timed
