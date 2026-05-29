@@ -62,27 +62,33 @@ function head(parts, dir) {
   const { palette, headR, headY, beakLen } = parts;
   const cx = CENTER;
   const beak = parts.beakColor || palette.accent;
-  let s = t.circle(cx, headY, headR, palette.base);
+  const profile = dir === 'e' || dir === 'se' || dir === 'ne';
+  // In profile the head sits FORWARD over the breast (+x) so the bird reads as a
+  // side view; front/back keep it centred. The profile body is a horizontal egg
+  // (~bodyRy*1.05 wide), so offset the head over its leading edge.
+  const profileBrx = (parts.bodyRy || headR) * 1.05;
+  const hx = profile ? cx + profileBrx * 0.55 : cx;
+  let s = t.circle(hx, headY, headR, palette.base);
 
   if (parts.crest) {
     // a small upright tuft
     s = t.polygon(
-      [[cx - headR * 0.3, headY - headR], [cx, headY - headR * 1.9], [cx + headR * 0.3, headY - headR]],
+      [[hx - headR * 0.3, headY - headR], [hx, headY - headR * 1.9], [hx + headR * 0.3, headY - headR]],
       palette.accent,
     ) + s;
   }
 
   if (dir === 'n') return s; // back: no face
 
-  if (dir === 'e' || dir === 'se' || dir === 'ne') {
+  if (profile) {
     // profile beak to +x
     s += t.polygon(
-      [[cx + headR * 0.7, headY - headR * 0.2], [cx + headR * 0.7 + beakLen, headY], [cx + headR * 0.7, headY + headR * 0.2]],
+      [[hx + headR * 0.7, headY - headR * 0.2], [hx + headR * 0.7 + beakLen, headY], [hx + headR * 0.7, headY + headR * 0.2]],
       beak,
     );
     const er = parts.bigEyes ? headR * 0.45 : headR * 0.22;
-    s += t.circle(cx + headR * 0.2, headY - headR * 0.05, er, palette.white) +
-      t.circle(cx + headR * 0.28, headY - headR * 0.05, er * 0.55, palette.eye, { stroke: palette.eye });
+    s += t.circle(hx + headR * 0.2, headY - headR * 0.05, er, palette.white) +
+      t.circle(hx + headR * 0.28, headY - headR * 0.05, er * 0.55, palette.eye, { stroke: palette.eye });
     return s;
   }
 
@@ -118,15 +124,21 @@ function legs(parts, dir, state, frame) {
 function buildBird(parts, dir, state, frame) {
   const { palette, bodyRx, bodyRy, bodyY } = parts;
   const cx = CENTER;
+  const profile = dir === 'e' || dir === 'se' || dir === 'ne';
   const lift = state === 'walk' ? anim.bob(frame / 4) : anim.breathe(frame);
+  // In profile the body reads side-on: a horizontal egg (wider than tall) with a
+  // tail tapering back (-x). Front/back keep the upright egg.
+  const brx = profile ? bodyRy * 1.05 : bodyRx;
+  const bry = profile ? bodyRx * 0.95 : bodyRy;
   let body = '';
   if (parts.fanTail && dir !== 'n') {
-    body += t.ellipse(cx - bodyRx * 0.8, bodyY, bodyRx * 0.7, bodyRy * 1.3, palette.accent);
+    // The folded fan trails BEHIND (-x): a tapered plume off the rump.
+    body += t.ellipse(cx - brx * 0.85, bodyY, brx * 0.7, bry * 1.2, palette.accent);
   }
   body += legs(parts, dir, state, frame);
   body += wings(parts, dir, state, frame);
-  body += t.ellipse(cx, bodyY, bodyRx, bodyRy, palette.base);
-  body += t.ellipse(cx, bodyY - bodyRy * 0.5, bodyRx * 0.55, bodyRy * 0.2, palette.light);
+  body += t.ellipse(cx, bodyY, brx, bry, palette.base);
+  body += t.ellipse(profile ? cx + brx * 0.2 : cx, bodyY - bry * 0.5, brx * 0.5, bry * 0.2, palette.light);
   body += head(parts, dir);
   return t.group(body, lift ? `translate(0,${t.n1(lift)})` : undefined);
 }

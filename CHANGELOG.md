@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.14: **The whole zoo — 15 species spritesheets (Phase D of the visual-polish
+  plan).** With the contract locked and the ape proven, the 14 remaining species +
+  the keeper-robot were built in parallel (one focused builder file each), all against
+  the same archetypes/template/anim, so they cohere by construction:
+  - `scripts/sprites/species/{bird,rat,elephant,chameleon,peacock,skunk,mole,cheetah,
+    parrot,tortoise,kangaroo,owl,fox,robot}.js` — each a thin `parts` declaration
+    delegating to its archetype (quadruped/biped/bird/serpent/robot), reusing the
+    locked palette + frame-key contract. Distinctive silhouettes: elephant trunk +
+    tusks + big ears, tortoise dome shell, fox/rat ears + tails, owl big eyes, peacock
+    crest + fan, robot hexagonal chassis + optic eye + antenna.
+  - **Archetype polish (cross-cutting, benefits every species):** quadruped tail no
+    longer juts sideways in the front view (a small tail-tip peeks over the shoulder
+    instead; full plume in back; side-on curl in profile); bird body reads side-on in
+    profile (horizontal egg + head carried forward over the breast) instead of looking
+    front-facing.
+  - **Atlas:** all 15 species × 48 frames = **720 frames** packed into a single
+    1728×1728 atlas (under the 2048 WebView ceiling), `verify-atlas` green (every key
+    present, no orphans). Registry order matches `SPECIES_ROSTER` + the robot NPC.
+  - Verified: gen → build-atlas → verify-atlas clean; client builds and the 240 KB
+    atlas copies into `client/dist/sprites/`; contact-sheet inspection of all 15 in
+    front + profile confirms readable, symmetric, cohesive art.
+
 - 0.2.13: **Full playable zoo — 14 species, one ability each + ability FX state on
   the wire (Phase C of the visual-polish plan).** Only 4 species were playable and
   abilities had zero on-screen state. Now every species in the roster is playable

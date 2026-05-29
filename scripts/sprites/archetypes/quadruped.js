@@ -60,17 +60,26 @@ function legs(parts, dir, state, frame) {
   );
 }
 
-/** The tail as a curled capsule (profile/3-4 only shows it clearly). */
+/** The tail as a curled capsule. Side-on in profile/3-4; hidden-behind in front;
+ *  a centred plume in back. Never juts sideways in the front (s) view. */
 function tail(parts, dir) {
   if (!parts.tailLen) return '';
-  const { palette, bodyRx, bodyY, tailLen, tailThick, tailCurl } = parts;
+  const { palette, bodyRx, bodyRy, bodyY, tailLen, tailThick, tailCurl } = parts;
   const cx = CENTER;
-  const baseX = cx - bodyRx * 0.95;
   const curl = (tailCurl || 1) * tailLen * 0.4;
-  if (dir === 'n') {
-    // back view: tail points down the centre
-    return t.limb(cx, bodyY + 2, cx, bodyY + tailLen, palette.base, tailThick);
+
+  if (dir === 's') {
+    // Facing the camera: the tail is behind the body. Show just a small tip
+    // peeking up over one shoulder so the silhouette still reads (no sideways jut).
+    const tipY = bodyY - bodyRy * 0.9;
+    return t.limb(cx, bodyY, cx, tipY - tailThick, palette.shade, tailThick * 0.8);
   }
+  if (dir === 'n') {
+    // Back view: the tail points straight down the centre (we see its full length).
+    return t.limb(cx, bodyY, cx, bodyY + tailLen, palette.base, tailThick);
+  }
+  // Profile / 3-4: a side-on curled tail off the rump (toward -x; mirror handles +x).
+  const baseX = cx - bodyRx * 0.95;
   return t.limb(baseX, bodyY, baseX - tailLen * 0.5, bodyY - curl, palette.base, tailThick);
 }
 
