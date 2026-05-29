@@ -8,15 +8,35 @@
  */
 
 /**
- * The atomic thing the world is made of. The index signature lets the hour-0
- * gameplay rules bolt on arbitrary fields (hp, color, team, z, ...) without
- * editing this file or breaking serialization.
+ * What an entity *is* in The Caves of Steel. Plain string union so it stays
+ * serializable; the renderer and the deterministic step() branch on it.
+ *   - `animal`   a player-controlled escapee (also covers idle pen animals)
+ *   - `robot`    a Three-Laws keeper-robot (server-driven NPC)
+ *   - `pen`      an enclosure / holding area (static)
+ *   - `terminal` an interactable that issues Second-Law orders (static)
+ *   - `gate`     a perimeter or zone door (static, openable)
+ */
+export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate';
+
+/**
+ * The atomic thing the world is made of. The index signature lets gameplay
+ * rules bolt on arbitrary fields without breaking serialization; the named
+ * optional fields below are the ones The Caves of Steel reads on both sides, so
+ * they're typed (rather than hidden in the index signature) for safety.
  */
 export interface Entity {
   id: string;
   x: number;
   y: number;
   name?: string;
+  /** What this entity is. Absent on the bare starter-kit point; defaults to a player animal. */
+  kind?: EntityKind;
+  /** For `animal`: which species (drives the special ability). */
+  species?: string;
+  /** For `animal`: 0..1 how human this looks to robots right now (First-Law stealth). */
+  humanLikeness?: number;
+  /** For `robot`: 0..1 how convinced it is that a nearby "human" is faking it. */
+  suspicion?: number;
   [key: string]: unknown;
 }
 
@@ -43,10 +63,32 @@ export interface Input {
 }
 
 /**
+ * Global per-room state that isn't tied to a single entity — the "container"
+ * for the catastrophic-overflow rule. Lives alongside the entity list in every
+ * snapshot so all clients render the same meter and lockdown state.
+ */
+export interface WorldState {
+  /** Current fill of the zoo-wide alarm/panic meter (0..panicCapacity). */
+  panic: number;
+  /** Capacity of the panic meter; reaching it triggers overflow → lockdown. */
+  panicCapacity: number;
+  /** True once panic has overflowed: robots drop First-Law caution, doors seal. */
+  lockdown: boolean;
+}
+
+/** A freshly-initialized, calm world. */
+export const INITIAL_WORLD_STATE: WorldState = {
+  panic: 0,
+  panicCapacity: 100,
+  lockdown: false,
+};
+
+/**
  * Authoritative world state broadcast by the server each tick. The client
  * interpolates between snapshots and reconciles its prediction against them.
  */
 export interface Snapshot {
   tick: number;
   entities: Entity[];
+  world?: WorldState;
 }

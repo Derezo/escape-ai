@@ -2,9 +2,11 @@
  * PhaserRenderer — the default 2D implementation of the shared IRenderer.
  *
  * It knows nothing about netcode or input; the game loop hands it a flat list of
- * entities every frame and it makes the screen match. Each entity is drawn as a
- * colored rectangle with its name above it — no art assets required to boot, so
- * the kit runs the moment you `npm run dev`.
+ * entities every frame and it makes the screen match. Each entity is drawn by
+ * its `kind` (The Caves of Steel populates the room with pens, robots, animals,
+ * terminals and a gate) — no art assets required to boot, so the kit still runs
+ * the moment you `npm run dev`. An entity with no `kind` (the bare starter-kit
+ * point) is treated as an `animal`.
  *
  * The 3D swap (BabylonRenderer) implements this same interface; see
  * shared/BABYLON_FALLBACK.md.
@@ -13,18 +15,37 @@
 import Phaser from 'phaser';
 import type { IRenderer, Entity } from '@shared/renderer';
 
-/** Visual size of an entity rectangle, in pixels. */
+/** Visual size of a mobile entity (animal/robot), in pixels. */
 const RECT_SIZE = 28;
+/** Side length of a pen enclosure square, in pixels. */
+const PEN_SIZE = 120;
+/** Visual size of a static marker (terminal/gate), in pixels. */
+const MARKER_SIZE = 20;
 
-/** One entity's on-screen representation: a body rectangle + a name label. */
+/**
+ * Draw depths. Pens are the floor of the room, so they sit UNDER the mobile
+ * entities and static markers; everything else shares the default layer.
+ */
+const DEPTH_PEN = 0;
+const DEPTH_PROP = 1; // terminals / gates
+const DEPTH_MOBILE = 2; // animals / robots
+
+/**
+ * One entity's on-screen representation: a body shape + (optional) name label.
+ * `body` is a generic GameObject so the body can be a rectangle, triangle, etc.
+ * depending on `kind`; we only ever reposition it, never read its subtype back.
+ * `kind` is remembered so a kind change (rare) rebuilds the right visual.
+ */
 interface EntityView {
-  rect: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
+  body: Phaser.GameObjects.Shape;
+  label?: Phaser.GameObjects.Text;
+  kind: Entity['kind'];
 }
 
 /**
- * The single Scene. It owns the per-entity views and exposes `apply()` so the
- * renderer can push the latest entity list in from outside the Phaser lifecycle.
+ * The single Scene. It owns the per-entity views and exposes `setEntities()` so
+ * the renderer can push the latest entity list in from outside the Phaser
+ * lifecycle.
  */
 class WorldScene extends Phaser.Scene {
   private views = new Map<string, EntityView>();
@@ -55,36 +76,103 @@ class WorldScene extends Phaser.Scene {
       // World coords map 1:1 to screen pixels for the skeleton. The camera
       // origin is top-left, matching the server's (0,0) spawn.
       const view = this.views.get(e.id);
-      if (view) {
-        // Existing entity: just move it.
-        view.rect.setPosition(e.x, e.y);
-        view.label.setPosition(e.x, e.y - RECT_SIZE);
+      // Recreate the view if it's missing or its kind changed under it (so a
+      // server reclassification swaps the visual instead of leaving the wrong one).
+      if (view && view.kind === e.kind) {
+        view.body.setPosition(e.x, e.y);
+        view.label?.setPosition(e.x, e.y - RECT_SIZE);
       } else {
-        // New entity: create a rectangle + name label.
-        const color = colorFor(e.id);
-        const rect = this.add
-          .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, color)
-          .setStrokeStyle(2, 0xffffff, 0.6)
-          .setOrigin(0.5);
-        const label = this.add
-          .text(e.x, e.y - RECT_SIZE, e.name ?? e.id.slice(0, 6), {
-            fontFamily: 'monospace',
-            fontSize: '12px',
-            color: '#ffffff',
-          })
-          .setOrigin(0.5, 1);
-        this.views.set(e.id, { rect, label });
+        if (view) this.destroyView(view);
+        this.views.set(e.id, this.createView(e));
       }
     }
 
     // Destroy views for entities no longer present.
     for (const [id, view] of this.views) {
       if (!seen.has(id)) {
-        view.rect.destroy();
-        view.label.destroy();
+        this.destroyView(view);
         this.views.delete(id);
       }
     }
+  }
+
+  /** Build the per-kind visual for a freshly-seen entity. */
+  private createView(e: Entity): EntityView {
+    const kind = e.kind;
+    switch (kind) {
+      case 'pen':
+        // A large translucent enclosure outline, drawn UNDER the mobile entities.
+        return {
+          kind,
+          body: this.add
+            .rectangle(e.x, e.y, PEN_SIZE, PEN_SIZE, 0x3a5a78, 0.12)
+            .setStrokeStyle(2, 0x6fa8dc, 0.6)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PEN),
+        };
+
+      case 'robot': {
+        // A steel-gray diamond (rotated square) — clearly NOT an animal blob.
+        const body = this.add
+          .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, 0x9aa3ad)
+          .setStrokeStyle(2, 0x2b2f36, 0.9)
+          .setOrigin(0.5)
+          .setAngle(45)
+          .setDepth(DEPTH_MOBILE);
+        return { kind, body, label: this.makeLabel(e) };
+      }
+
+      case 'terminal':
+        // A small bright marker the player will later `interact` with.
+        return {
+          kind,
+          body: this.add
+            .rectangle(e.x, e.y, MARKER_SIZE, MARKER_SIZE, 0x32d296)
+            .setStrokeStyle(2, 0xffffff, 0.7)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PROP),
+        };
+
+      case 'gate':
+        // A distinct amber marker, drawn as a thin tall bar to read as a door.
+        return {
+          kind,
+          body: this.add
+            .rectangle(e.x, e.y, MARKER_SIZE * 0.5, MARKER_SIZE * 2, 0xe0a526)
+            .setStrokeStyle(2, 0xffffff, 0.7)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PROP),
+        };
+
+      case 'animal':
+      default: {
+        // Players + idle animals: a filled square colored by id, with a name
+        // label. `undefined` kind (bare starter point) falls through to here.
+        const body = this.add
+          .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, colorFor(e.id))
+          .setStrokeStyle(2, 0xffffff, 0.6)
+          .setOrigin(0.5)
+          .setDepth(DEPTH_MOBILE);
+        return { kind, body, label: this.makeLabel(e) };
+      }
+    }
+  }
+
+  /** A name label floating above a mobile entity. */
+  private makeLabel(e: Entity): Phaser.GameObjects.Text {
+    return this.add
+      .text(e.x, e.y - RECT_SIZE, e.name ?? e.id.slice(0, 6), {
+        fontFamily: 'monospace',
+        fontSize: '12px',
+        color: '#ffffff',
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(DEPTH_MOBILE);
+  }
+
+  private destroyView(view: EntityView): void {
+    view.body.destroy();
+    view.label?.destroy();
   }
 }
 

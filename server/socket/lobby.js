@@ -9,8 +9,31 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
+const world = require('../game/world');
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+// Per-room monotonic join counter, used to deterministically spread spawns so
+// that ~20 players don't all stack on the origin. Survives leaves (it only
+// climbs) so concurrent joiners never share a spawn slot.
+const joinCountByRoom = new Map();
+
+// Spawn players on a grid in the world's lower-left corner, stepping right then
+// wrapping down. Keeps them clear of the world props spawned by game/world.js.
+const SPAWN_ORIGIN_X = 50;
+const SPAWN_ORIGIN_Y = 50;
+const SPAWN_STEP = 40;
+const SPAWN_COLS = 5;
+
+/** Deterministic spawn position for the Nth joiner of a room. */
+function spawnPositionFor(joinIndex) {
+  const col = joinIndex % SPAWN_COLS;
+  const row = Math.floor(joinIndex / SPAWN_COLS);
+  return {
+    x: SPAWN_ORIGIN_X + col * SPAWN_STEP,
+    y: SPAWN_ORIGIN_Y + row * SPAWN_STEP
+  };
+}
 
 /**
  * @param {import('socket.io').Socket} socket
@@ -33,14 +56,24 @@ function register(socket, deps) {
       leaveRoom(socket, connectedPlayers, rooms, existing.room);
     }
 
-    // Create / reset the player as a fresh movable point at the origin.
+    // Ensure the room's world (static props + WorldState) exists before the
+    // first player starts receiving snapshots for it.
+    world.getOrCreateRoomWorld(room);
+
+    // Deterministically spread spawns so players don't all stack on the origin.
+    const joinIndex = joinCountByRoom.get(room) || 0;
+    joinCountByRoom.set(room, joinIndex + 1);
+    const spawn = spawnPositionFor(joinIndex);
+
+    // Create / reset the player as a fresh movable point at its spawn slot.
     const player = {
       id: uuidv4(),
       socketId: socket.id,
       room,
       name,
-      x: 0,
-      y: 0,
+      x: spawn.x,
+      y: spawn.y,
+      kind: 'animal',
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated
       input: { seq: 0, dx: 0, dy: 0 }

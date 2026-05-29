@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.1: **Phase 1 — multiplayer scale first.** Extended the world model and proved
+  the netcode syncs 20 players plus a populated world with no desync.
+  - **Shared:** `Entity` gained typed optional fields `kind`
+    (`animal|robot|pen|terminal|gate`), `species`, `humanLikeness`, `suspicion`; new
+    `WorldState` (`panic`/`panicCapacity`/`lockdown`) + `INITIAL_WORLD_STATE`; `Snapshot`
+    and `SnapshotMsg` now carry an optional `world`; `InputMsg` gained an optional
+    discrete `action` (`interact|order|ability`) for Phase 2.
+  - **Server:** new `server/game/world.js` owns per-room world entities and `WorldState`,
+    spawning a deterministic starter layout (4 pens, 6 robots, 8 idle animals, 3
+    terminals, 1 gate). The engine merges world props into the delta/full snapshot diff
+    (props ride only on full refreshes), tags players `kind:'animal'`, and attaches
+    `world` to every snapshot. Players now spawn spread out instead of stacked at origin.
+  - **Client:** Phaser renderer draws entities distinctly per `kind` (pens beneath
+    mobile entities); HUD shows the panic meter + lockdown flag; fixed a latent bug where
+    `lobby:state` pruning would have deleted world props (now prunes players only).
+  - **Tooling:** new `scripts/sim-clients.js` headless load harness (20 bots @ 20Hz).
+    Scale test result: 20/20 synced, 20Hz, 42 entities/full-snapshot, <3ms RTT,
+    ~67 KB/s/client — no desync, no bandwidth blowup.
+
 - 0.2.0: Rules dropped; committed to the game design. **The Caves of Steel** — a
   co-op (≤20 player) animal-escape game where Asimov's Three Laws of Robotics are the
   stealth mechanic and a global panic meter catastrophically overflows into lockdown.

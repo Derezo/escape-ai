@@ -1,0 +1,17 @@
+{
+  "name": "tins2026-scripts",
+  "version": "0.1.0",
+  "license": "Zlib",
+  "private": true,
+  "description": "Dev/ops scripts for the TINS 2026 starter kit. Only the load-test harness (sim-clients.js) needs a dependency; the asset generators are zero-dep.",
+  "type": "commonjs",
+  "scripts": {
+    "sim": "node sim-clients.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}

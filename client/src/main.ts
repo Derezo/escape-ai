@@ -14,7 +14,7 @@
 import './style.css';
 
 import type { IRenderer } from '@shared/renderer';
-import type { Entity } from '@shared/types';
+import type { Entity, WorldState } from '@shared/types';
 import type { InputMsg } from '@shared/net';
 import { applyInput, type Bounds } from '@shared/step';
 
@@ -67,7 +67,16 @@ async function main(): Promise<void> {
   // Snapshots are DELTAS (only changed entities) but lobby:state is the full
   // roster, so we update positions from snapshots and PRUNE from lobby:state.
   const entities = new Map<string, Entity>();
+  // Ids the lobby roster has called PLAYERS. Only these are subject to the
+  // lobby:state prune below; world props (robots/pens/...) live in `entities`
+  // too but are never in the roster, so we must NOT prune by roster alone.
+  const playerIds = new Set<string>();
   let playerCount = 0;
+
+  // Global panic/lockdown meter from the latest snapshot's `world` field
+  // (server-authoritative, display-only in Phase 1). Undefined until the first
+  // snapshot that carries it.
+  let world: WorldState | undefined;
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -83,22 +92,35 @@ async function main(): Promise<void> {
       if (mine) myId = mine.id;
     }
 
-    // Prune entities that left the room (roster is authoritative for presence).
+    // Prune PLAYERS that left the room. lobby:state is the roster of players
+    // ONLY — it never lists world props (robots/pens/terminals/gate), which the
+    // snapshot streams separately. So we must prune by player identity, not by
+    // "absent from roster": deleting every id missing from the roster would
+    // wrongly wipe every world prop on each lobby:state. We track which ids the
+    // roster has ever called players and only prune those.
     const present = new Set(msg.players.map((p) => p.id));
-    for (const id of entities.keys()) {
-      if (!present.has(id)) entities.delete(id);
+    for (const id of playerIds) {
+      if (!present.has(id)) {
+        entities.delete(id);
+        playerIds.delete(id);
+      }
     }
-    // Seed any roster members we haven't seen a snapshot for yet.
+    // Seed any roster members we haven't seen a snapshot for yet, and remember
+    // them as players so the prune above can later evict them.
     for (const p of msg.players) {
+      playerIds.add(p.id);
       if (!entities.has(p.id)) entities.set(p.id, { id: p.id, x: p.x, y: p.y, name: p.name });
     }
   });
 
   net.onSnapshot((msg) => {
-    // Merge the delta: server positions WIN (reconciliation).
+    // Merge the delta: server positions WIN (reconciliation). New fields (kind,
+    // species, ...) ride through the spread and reach the renderer untouched.
     for (const e of msg.entities) {
       entities.set(e.id, { ...entities.get(e.id), ...e });
     }
+    // Capture the global panic/lockdown state for the HUD (display-only).
+    if (msg.world) world = msg.world;
     // Track how far the server has consumed our input stream.
     if (myId && msg.acks[myId] !== undefined) {
       lastAckedSeq = msg.acks[myId];
@@ -150,11 +172,17 @@ async function main(): Promise<void> {
     renderer.syncEntities([...entities.values()]);
 
     const lat = net.latency >= 0 ? `${net.latency} ms` : '...';
+    // Panic/lockdown come from the snapshot's world state; show placeholders
+    // until the first snapshot that carries it.
+    const panic = world ? `${Math.round(world.panic)}/${world.panicCapacity}` : '...';
+    const lockdown = world ? (world.lockdown ? 'yes' : 'no') : '...';
     hud.textContent =
       `TINS 2026\n` +
       `latency: ${lat}\n` +
       `players: ${playerCount}\n` +
-      `seq: ${seq}  acked: ${lastAckedSeq}`;
+      `seq: ${seq}  acked: ${lastAckedSeq}\n` +
+      `panic: ${panic}\n` +
+      `lockdown: ${lockdown}`;
 
     requestAnimationFrame(frame);
   }

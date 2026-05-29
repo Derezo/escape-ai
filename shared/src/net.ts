@@ -7,7 +7,7 @@
  *   Server -> client: `lobby:state {players}`, `snapshot {tick, entities, acks}`, `pong {t}`
  */
 
-import type { Entity, Input, Player } from './types.js';
+import type { Entity, Input, Player, WorldState } from './types.js';
 
 /** Event names the CLIENT emits (server listens for these). */
 export const CLIENT_EVENTS = {
@@ -35,10 +35,22 @@ export interface LobbyJoin {
 }
 
 /**
- * Payload for `input`. Carries an Input plus whatever extra intent fields the
- * hour-0 rules add; the index signature keeps it forward-compatible.
+ * A discrete, non-movement action the player triggers this frame. Movement is
+ * the continuous dx/dy; this is the "press a button" intent layer. Resolved by
+ * the server against nearby entities (Phase 2+):
+ *   - `interact` use the nearest terminal / pick up the disguise prop
+ *   - `order`    issue a Second-Law order to the nearest robot
+ *   - `ability`  trigger this species' special (climb/fly/squeeze/smash)
+ */
+export type PlayerAction = 'interact' | 'order' | 'ability';
+
+/**
+ * Payload for `input`. Carries an Input plus an optional discrete action and a
+ * forward-compatible index signature. `action` is undefined on a pure-movement
+ * frame; it fires once on the frame the player presses the key.
  */
 export interface InputMsg extends Input {
+  action?: PlayerAction;
   [key: string]: unknown;
 }
 
@@ -57,11 +69,14 @@ export interface LobbyState {
 /**
  * Payload for `snapshot`. `acks` maps a player/socket id to the last input
  * `seq` the server has applied for that player, enabling client reconciliation.
+ * `world` carries the global panic/lockdown state (the overflow container); it
+ * is sent on full refreshes and whenever it changes.
  */
 export interface SnapshotMsg {
   tick: number;
   entities: Entity[];
   acks: Record<string, number>;
+  world?: WorldState;
 }
 
 /** Payload for `pong`. `t` is the original client stamp from `ping`. */
