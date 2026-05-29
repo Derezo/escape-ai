@@ -311,8 +311,8 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     if (decision.mode === 'pursue') {
       // Third Law: a robot won't chase INTO a hazard (skunk stink). If the step
       // would enter one it stalls at the edge this tick (still faces the target).
-      const nx = robot.x + decision.dirX * speed * dt;
-      const ny = robot.y + decision.dirY * speed * dt;
+      const nx = clampWorld(robot.x + decision.dirX * speed * dt);
+      const ny = clampWorld(robot.y + decision.dirY * speed * dt);
       if (!entersHazard(nx, ny, worldEntities)) {
         robot.x = nx;
         robot.y = ny;

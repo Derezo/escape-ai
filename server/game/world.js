@@ -55,6 +55,8 @@ function spawnStarterLayout() {
 
   // ~8 idle animals, species cycled through the full roster so the decoys show off
   // the whole zoo (they wander + animate but have no abilities). humanLikeness 0.
+  // MUST stay in sync with server/socket/lobby.js SPECIES_ROSTER and
+  // scripts/sprites/registry.js SPECIES (every species needs atlas art).
   const species = [
     'ape', 'bird', 'rat', 'elephant', 'chameleon', 'peacock', 'skunk',
     'mole', 'cheetah', 'parrot', 'tortoise', 'kangaroo', 'owl', 'fox'
@@ -157,12 +159,6 @@ function addWorldEntity(roomName, entity) {
   getOrCreateRoomWorld(roomName).entities.set(entity.id, entity);
 }
 
-/** Remove a world entity by id (e.g. an expired hazard). */
-function removeWorldEntity(roomName, entityId) {
-  const rw = roomWorlds.get(roomName);
-  if (rw) rw.entities.delete(entityId);
-}
-
 /**
  * Remove every world entity in a room whose `expireTick` has passed. Called each
  * tick from the engine so temporary effects (hazards, decoys) clean themselves up
@@ -198,7 +194,6 @@ module.exports = {
   getWorldState,
   removeRoom,
   addWorldEntity,
-  removeWorldEntity,
   pruneExpired,
   nextTempId,
   INITIAL_WORLD_STATE

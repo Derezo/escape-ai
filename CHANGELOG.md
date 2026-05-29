@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.17: **Validation remediation** (post `/plan-validation-and-review` of the
+  visual-polish plan). The review traced every requirement as implemented + connected
+  (14-species roster aligned across all 5 locations, facing + fx fully wired, all 14
+  ability handlers + renderer FX cases present) and surfaced a small set of in-scope
+  fixes, now applied:
+  - **FX glow leak (CRITICAL):** `phaser.ts updateFx` now clears a sustained glow from
+    a previous effect before a new activation fires, so a one-shot (e.g. flit) firing
+    while a sustained glow (e.g. cloak) is live no longer orphans the old Arc.
+  - **Unbounded map growth (CRITICAL):** `main.ts` now drops a disconnected player's
+    entry from the `fxSfxSeen` edge-memory map (alongside the existing entity/playerId
+    prune), so it can't grow across a session.
+  - **Robot pursuit unclamped (MINOR):** a chasing robot's step is now clamped to the
+    world bounds (it could previously drift a few units past the edge).
+  - **Dead code removed:** the unused `serpent` archetype (authored in Phase A for
+    snake/crocodile, which didn't make the final 14-species roster) and the never-called
+    `world.removeWorldEntity` export. Added a cross-reference comment tying the three
+    species-roster literals (lobby / world / registry) together.
+  - The pre-existing client esbuild/Vite dev-only advisory remains tracked in
+    `FINDINGS_OUTSIDE_SCOPE.md` (out of scope; needs a breaking Vite major bump).
+  - Re-verified: shared + client build/typecheck clean, atlas verify + check-facing
+    green, server boots + the 14-client ability wire-test still shows 11 fx kinds +
+    hazard/decoy spawn.
+
 - 0.2.16: **Docs + integration validation (Phase F of the visual-polish plan).**
   Updated `README.md` (Assets section → the animated-spritesheet pipeline +
   sharp/clean-clone note + shape fallback; How-to-play → the 14-species ability

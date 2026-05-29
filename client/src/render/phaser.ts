@@ -402,6 +402,11 @@ class WorldScene extends Phaser.Scene {
     }
     if (fx.startTick === view.fxStartTick) return; // already handled this activation
     view.fxStartTick = fx.startTick;
+    // Clear any sustained glow from a PREVIOUS effect before the new activation,
+    // so a one-shot (e.g. flit) firing while a sustained glow (e.g. cloak) is
+    // still live doesn't orphan the old Arc. fireFx re-creates a glow if the new
+    // effect is itself sustained.
+    if (view.fxGlow) { view.fxGlow.destroy(); view.fxGlow = undefined; }
     this.fireFx(view, fx.kind);
   }
 

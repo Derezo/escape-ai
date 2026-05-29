@@ -147,6 +147,9 @@ async function main(): Promise<void> {
       if (!present.has(id)) {
         entities.delete(id);
         playerIds.delete(id);
+        // Drop the per-entity fx-SFX edge memory too, so it can't grow unbounded
+        // across a session's worth of joins/leaves.
+        fxSfxSeen.delete(id);
       }
     }
     // Seed any roster members we haven't seen a snapshot for yet, and remember
