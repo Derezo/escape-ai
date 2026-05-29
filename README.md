@@ -13,12 +13,33 @@ TINS ("TINS Is Not SpeedHack") is a 72-hour jam where a handful of random
 Story, and Bonus — are announced at the start and every entry must satisfy them.
 Source code must be submitted, and entries are judged on Art / Genre / Tech.
 
-This repo is a deliberately **game-agnostic starter kit**: when the rules drop at
-hour 0 we decide the actual game and write *gameplay*, not boilerplate. The hour-0
-plan lives in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md).
+This repo began as a deliberately **game-agnostic starter kit** so that when the
+rules dropped at hour 0 we could write *gameplay*, not boilerplate (that hour-0 plan
+lives in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md)). The rules have now dropped — this is
+the game we are building.
 
-> **Game design TBD** — genre and theme are set when the competition rules are
-> announced.
+## The game — *The Caves of Steel*
+
+A **co-op multiplayer animal-escape** game for up to **20 players**. You are animals
+that have escaped your enclosures in a megazoo run by humaniform positronic
+**keeper-robots**, and you must reach the perimeter gate together. The robots obey
+**Asimov's Three Laws of Robotics** — so if you make yourself *look human enough*, the
+First Law forbids them from touching you. Issue orders they must obey (Second Law),
+bait them away from hazards (Third Law), and watch the zoo-wide **panic meter**: let
+it **overflow** and the zoo slams into **lockdown**.
+
+### Rule-O-Matic mapping
+
+| Rule | How we satisfy it | Where |
+|------|-------------------|-------|
+| **Genre #157 — "It's a Zoo!"** | Co-op breakout *from* a zoo; you play the animals. | gameplay |
+| **Artistic #84 — sci-fi author** | **Isaac Asimov**: the Three Laws *are* the stealth mechanic. | [`docs/ASIMOV_REFERENCE.md`](docs/ASIMOV_REFERENCE.md) |
+| **Technical #132 — catastrophic overflow** | Global **panic meter** → overflow flips a **lockdown** world state. | `shared/`, server tick |
+| ~~**Technical #116 — quicksave**~~ | **Replaced** via the Bonus rule below. | — |
+| **Bonus #31 — Act of Sutskever** | Invoked once; replaces #116 with an LLM-generated "double-edged element" rule, satisfied by the Second-Law order mechanic. | [`docs/ACT_OF_SUTSKEVER.md`](docs/ACT_OF_SUTSKEVER.md) |
+
+> The Act-of-Sutskever transcript and its screenshot ship in `docs/` as the bonus
+> rule requires.
 
 ## Architecture
 
@@ -134,7 +155,7 @@ client/   Vite + TS + Phaser app (entry: client/src/main.ts)
 server/   Node + Socket.IO authoritative server (entry: server/index.js)
 shared/   TS types, net contract, deterministic step(), renderer interface
 scripts/  asset/audio generators, deploy-server.sh, hooks/
-docs/     PLAYBOOK.md (hour-0 guide), ANDROID.md
+docs/     PLAYBOOK.md (hour-0 guide), ANDROID.md, ASIMOV_REFERENCE.md, ACT_OF_SUTSKEVER.md
 assets/   generated placeholder sprites + sfx
 ```
 

@@ -2,6 +2,18 @@
 
 All notable changes to TINS 2026. Update this file in every commit.
 
+## 0.2 — *The Caves of Steel* (jam build)
+
+- 0.2.0: Rules dropped; committed to the game design. **The Caves of Steel** — a
+  co-op (≤20 player) animal-escape game where Asimov's Three Laws of Robotics are the
+  stealth mechanic and a global panic meter catastrophically overflows into lockdown.
+  - **Bonus rule #31 (Act of Sutskever) invoked**, replacing the quicksave rule #116
+    with an LLM-generated "double-edged element" rule. Transcript in
+    `docs/ACT_OF_SUTSKEVER.md` (screenshot ships alongside before submission).
+  - **Docs:** added `docs/ASIMOV_REFERENCE.md` (verified Three-Laws wording + Easter
+    eggs) and `docs/ACT_OF_SUTSKEVER.md`; README now describes the game and maps each
+    Rule-O-Matic rule to where it is satisfied.
+
 ## 0.1
 
 - 0.1.2: Nicknamed the kit **KINS** ("KINS Is Not a Starter-kit") — a recursive
