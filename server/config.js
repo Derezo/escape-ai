@@ -35,6 +35,10 @@ module.exports = {
   RECT_SIZE: parseFloat(process.env.RECT_SIZE) || 32,
   // How many seconds a robot stays stood-down after being ordered (Second Law).
   ORDER_DURATION_SECS: parseFloat(process.env.ORDER_DURATION_SECS) || 2,
+  // After reaching the gate, how many seconds the player holds the "ESCAPED!"
+  // win state before respawning as a fresh animal (new species) back at spawn.
+  // The round-based loop: escape → brief celebration → new run.
+  ESCAPE_CELEBRATION_SECS: parseFloat(process.env.ESCAPE_CELEBRATION_SECS) || 4,
   // The square zoo spans [0, WORLD_MAX] on both axes (mirrors shared WORLD).
   // Players are clamped inside it so the perimeter gate is the only way out.
   WORLD_MAX: parseFloat(process.env.WORLD_MAX) || 1000,

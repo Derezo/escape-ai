@@ -16,6 +16,7 @@
 
 const config = require('../config');
 const world = require('./world');
+const speciesRoster = require('../socket/species-roster');
 
 // The cached shared module (resolved by loadShared() before the loop starts).
 let shared = null;
@@ -477,23 +478,71 @@ function catchPlayer(player) {
 }
 
 /**
- * Win check: a player who reaches the perimeter gate has escaped. Sets a sticky
- * `escaped` flag (idempotent — checked every tick but only flips once) so the
- * client can show the victory state. An escaped player no longer feeds panic /
- * gets caught because it has effectively left the play field.
+ * Respawn an escaped player into a fresh run: a NEW species, back at the spawn
+ * origin, disguise + ability timers wiped, `escaped` cleared. This is what makes
+ * the game a round-based loop — escape, brief celebration, play again as someone
+ * new — rather than a terminal win that strands the avatar at the gate forever.
+ *
+ * The new species is rolled from the ONE shared roster (species-roster.js); we
+ * avoid handing back the same species so a respawn visibly changes the animal.
+ * @param {object} player
+ */
+function respawnPlayer(player) {
+  const roster = speciesRoster.getKeys();
+  if (roster.length > 0) {
+    // Pick a species other than the current one when we can, so the respawn
+    // reads as a genuinely new animal. Deterministic (no Math.random): step to
+    // the next species in roster order, which also keeps the zoo varied.
+    const cur = roster.indexOf(player.species);
+    const next = cur >= 0 ? (cur + 1) % roster.length : 0;
+    player.species = roster[next];
+  }
+  player.escaped = false;
+  player.escapeUntilTick = 0;
+  player.humanLikeness = 0;
+  player.carrying = false;
+  player.flitUntilTick = 0;
+  player.skitterUntilTick = 0;
+  player.cloakUntilTick = 0;
+  player.dashUntilTick = 0;
+  player.shellUntilTick = 0;
+  player.abilityCdUntilTick = 0;
+  player.fx = null;
+  // Back to the world's spawn origin (mirrors lobby's SPAWN_ORIGIN / catchPlayer).
+  player.x = 50;
+  player.y = 50;
+}
+
+/**
+ * Win + respawn lifecycle. A player who reaches the perimeter gate ESCAPES: the
+ * `escaped` flag flips (the client shows the victory banner) and an
+ * `escapeUntilTick` deadline is stamped. While escaped the player has left the
+ * play field — robots ignore it, it can't be caught, it doesn't feed panic. Once
+ * the celebration window elapses the player RESPAWNS as a fresh animal, which
+ * also clears `escaped` so the client banner goes away and the round restarts.
  * @param {object} player
  * @param {string} roomName
+ * @param {number} currentTick
  */
-function checkEscape(player, roomName) {
-  if (!shared || player.escaped) return;
+function checkEscape(player, roomName, currentTick) {
+  if (!shared) return;
+
+  // Already escaped: hold the win state until the celebration window elapses,
+  // then respawn into a fresh run.
+  if (player.escaped) {
+    if (currentTick >= (player.escapeUntilTick || 0)) respawnPlayer(player);
+    return;
+  }
+
   const gate = world.getWorldEntities(roomName).find((e) => e.kind === 'gate');
   if (!gate) return;
   // A generous reach so brushing the gate counts (it's the goal, not a trap).
   const reach = config.RECT_SIZE * 1.5;
   if (shared.dist2(player, gate) <= reach * reach) {
     player.escaped = true;
-    // Persistent stat: this flips exactly once (guarded by `player.escaped` at
-    // the top), so the escape is counted once. Decoupled from the DB; the engine
+    player.escapeUntilTick = currentTick + secsToTicks(config.ESCAPE_CELEBRATION_SECS);
+    // Persistent stat: this flips exactly once per run (guarded by `player.escaped`
+    // above), so each escape is counted once. Decoupled from the DB; the engine
     // flushes the delta promptly on the escape edge tick.
     bumpStat(player, 'escapes');
   }

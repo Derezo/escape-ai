@@ -141,7 +141,8 @@ async function main(): Promise<void> {
   // Our humanLikeness last frame, to detect a "caught" event: a catch resets it
   // to 0 server-side, so a sharp high→~0 drop fires the hit SFX once.
   let prevHumanLike = 0;
-  // Whether we've already shown the victory banner (escaped is sticky server-side).
+  // Whether the victory banner is currently shown. Tracks the server's `escaped`
+  // edges: set true on escape, back to false when the server respawns us.
   let shownWin = false;
   // Per-entity last fx.startTick we played an SFX for, so an ability activation
   // (on ANY player/robot) fires its sound once — the audio twin of the renderer's
@@ -353,11 +354,18 @@ async function main(): Promise<void> {
     // player how close they are to looking human enough to freeze a robot.
     const me = myId ? entities.get(myId) : undefined;
 
-    // Victory: the server sets a sticky `escaped` flag when we reach the gate.
-    if (!shownWin && me?.escaped === true) {
+    // Victory: the server flips `escaped` when we reach the gate, holds it for a
+    // brief celebration, then respawns us as a fresh animal (escaped → false).
+    // Show the banner on the false→true edge, and CLEAR it on the true→false edge
+    // (respawn) so it doesn't linger forever — then re-arm for the next escape.
+    const escapedNow = me?.escaped === true;
+    if (escapedNow && !shownWin) {
       shownWin = true;
       winBanner.classList.add('active');
       playSfx('confirm', 0.9);
+    } else if (!escapedNow && shownWin) {
+      shownWin = false;
+      winBanner.classList.remove('active');
     }
 
     const hl = typeof me?.humanLikeness === 'number' ? me.humanLikeness : undefined;

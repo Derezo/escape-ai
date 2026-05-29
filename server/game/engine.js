@@ -157,8 +157,9 @@ function integratePlayers(dt) {
     // currentTick lets it honor timed effects (chameleon cloak, tortoise shell).
     stealth.stepPlayerHumanLikeness(player, dt, currentTick);
 
-    // Win check: a player who reaches the perimeter gate has escaped.
-    stealth.checkEscape(player, player.room);
+    // Win + respawn lifecycle: reaching the gate escapes (shows the banner);
+    // after a brief celebration the player respawns as a fresh animal.
+    stealth.checkEscape(player, player.room, currentTick);
 
     // Consume the latched one-shot action (order / interact / ability), if any.
     // Cleared immediately so it fires once per press; lobby.js latches it onto

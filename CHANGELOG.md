@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.23: **Fix — escaping was a dead end: "ESCAPED!" banner never cleared and the player
+  never respawned.** The `escaped` flag was permanently sticky server-side — once you reached
+  the gate the avatar left the field for good (robots ignore it, it can't be caught), the client
+  showed the win banner once and never removed it, and there was no respawn. Escape is now a
+  round-based loop:
+  - **Server** (`game/stealth.js` `checkEscape`, now passed `currentTick`): reaching the gate sets
+    `escaped` and stamps an `escapeUntilTick` deadline (`ESCAPE_CELEBRATION_SECS`, default 4s).
+    Once the window elapses, `respawnPlayer()` puts the player back at the spawn origin as a NEW
+    species (next in the shared roster), with disguise + ability timers wiped and `escaped` cleared.
+    The escape stat still counts exactly once per run.
+  - **Client** (`main.ts`): the win banner now tracks both edges of `escaped` — shown on
+    false→true (with the win SFX), and **cleared** on true→false (respawn), then re-armed for the
+    next escape, instead of latching forever.
+  - `config.js` + `.env.example` gain `ESCAPE_CELEBRATION_SECS`. Verified end-to-end: a client
+    driven to the gate flips escaped=true, then after the window respawns (escaped=false, species
+    ape→bird, position back to 50,50).
+
 - 0.2.22: **Fix — species-selector sprites rendered spliced (wrong atlas frames) + validation
   remediation.** Post-implementation review of the accounts plan.
   - **Species sprite splicing (CRITICAL, user-reported):** the login species selector (and the
