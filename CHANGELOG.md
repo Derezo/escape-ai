@@ -4,6 +4,14 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.8: **Validation remediation** (post `/plan-validation-and-review`). The review
+  traced all 11 requirements as implemented + connected, found no architecture
+  violations (shared math not duplicated), and gave ship-ready verdicts. Applied the
+  small in-scope fixes it surfaced: added `'ordered'` to the shared `RobotMode` type
+  (the server sets it; was flowing untyped via the index signature); removed a dead
+  `lerp` export and the vestigial `Snapshot` type from shared (the wire type is
+  `SnapshotMsg`); stopped the manual's H/? keys from leaking into the movement key set.
+
 - 0.2.7: **Phase 5c — clean-clone verification + README.** Verified the full build
   from a fresh `git clone` (shared build → server install → client build) and a
   runtime boot + 12-bot sync with no errors — the server's dynamic `shared/dist`

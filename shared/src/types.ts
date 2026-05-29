@@ -86,12 +86,6 @@ export const INITIAL_WORLD_STATE: WorldState = {
   lockdown: false,
 };
 
-/**
- * Authoritative world state broadcast by the server each tick. The client
- * interpolates between snapshots and reconciles its prediction against them.
- */
-export interface Snapshot {
-  tick: number;
-  entities: Entity[];
-  world?: WorldState;
-}
+// The authoritative per-tick wire payload is `SnapshotMsg` in net.ts (it also
+// carries input `acks` for reconciliation). There is no separate `Snapshot`
+// type — net.ts owns the contract so client and server import one shape.

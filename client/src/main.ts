@@ -196,6 +196,9 @@ async function main(): Promise<void> {
       }
       return;
     }
+    // The manual toggle keys are handled in manual.ts; don't let them leak into
+    // the movement key set (nothing reads them today, but it avoids stale state).
+    if (key === 'h' || key === '?') return;
     keys.add(key);
   });
   window.addEventListener('keyup', (e) => {

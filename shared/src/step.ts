@@ -125,8 +125,13 @@ export function firstLawProtects(robot: Entity, animal: Entity): boolean {
   return dist2(robot, animal) <= STEALTH.PERCEPTION_RADIUS * STEALTH.PERCEPTION_RADIUS;
 }
 
-/** A robot's possible dispositions for one tick. */
-export type RobotMode = 'idle' | 'frozen' | 'pursue';
+/**
+ * A robot's possible dispositions for one tick. `ordered` is a Second-Law
+ * standdown the server applies outside robotDecision (it isn't returned by
+ * robotDecision, but it IS a valid robot.mode the client renders), so it lives
+ * in the shared type for both sides to agree on.
+ */
+export type RobotMode = 'idle' | 'frozen' | 'pursue' | 'ordered';
 
 /** The outcome of a robot's Three-Laws reasoning for one tick. */
 export interface RobotDecision {
@@ -255,11 +260,6 @@ export function clamp(v: number, min: number, max: number): number {
   if (v < min) return min;
   if (v > max) return max;
   return v;
-}
-
-/** Linear interpolation from `a` to `b` by factor `t` (t is NOT clamped). */
-export function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
 }
 
 /**
