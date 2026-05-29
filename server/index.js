@@ -9,7 +9,12 @@ const { Server } = require('socket.io');
 
 const config = require('./config');
 const initSockets = require('./socket');
+const speciesRoster = require('./socket/species-roster');
 const engine = require('./game/engine');
+const db = require('./db');
+
+// --- Persistence: open the SQLite store once, before sockets can touch it. ---
+db.init();
 
 // --- HTTP + Socket.IO bootstrap ---
 const app = express();
@@ -24,8 +29,8 @@ const io = new Server(httpServer, {
 
 app.use(express.json());
 
-// --- Socket handlers + shared state ---
-const sockets = initSockets(io);
+// --- Socket handlers + shared state (db threaded in for auth + stats). ---
+const sockets = initSockets(io, db);
 
 // --- Health endpoint ---
 app.get('/health', (req, res) => {
@@ -42,7 +47,12 @@ app.get('/health', (req, res) => {
 // shared/dist/step.js and caches it. We MUST await that before start() so the
 // math is available on the very first synchronous tick. Listen only once the
 // engine is live so /health and snapshots never race the import.
-engine.init(io, sockets.connectedPlayers, sockets.rooms)
+Promise.all([
+  // Warm the shared species roster cache (used by lobby.js) before any client
+  // can connect, mirroring how the engine pre-loads the shared stealth math.
+  speciesRoster.load(),
+  engine.init(io, sockets.connectedPlayers, sockets.rooms, db)
+])
   .then(() => {
     engine.start();
 
@@ -63,6 +73,7 @@ engine.init(io, sockets.connectedPlayers, sockets.rooms)
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] uncaught exception:', err);
   engine.stop();
+  db.close();
   httpServer.close(() => process.exit(1));
   setTimeout(() => process.exit(1), 3000).unref();
 });
@@ -74,5 +85,6 @@ process.on('unhandledRejection', (reason) => {
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down...');
   engine.stop();
+  db.close();
   httpServer.close(() => process.exit(0));
 });

@@ -13,6 +13,11 @@ module.exports = {
   PORT: parseInt(process.env.PORT, 10) || 3000,
   HOST: process.env.HOST || '0.0.0.0',
 
+  // Persistence: SQLite file for username-only accounts + per-user stats. A
+  // relative path is resolved against the server dir (see db.js); the data/
+  // directory is created on boot and gitignored.
+  DB_PATH: process.env.DB_PATH || './data/aiescape.db',
+
   // Authoritative simulation
   // Tick rate in Hz; how many times per second the engine steps + broadcasts.
   TICK_RATE: parseInt(process.env.TICK_RATE, 10) || 20,

@@ -13,16 +13,18 @@
  * can read them.
  */
 
+const auth = require('./auth');
 const lobby = require('./lobby');
 const connection = require('./connection');
 
-module.exports = function initSockets(io) {
+module.exports = function initSockets(io, db) {
   // Shared, server-wide state.
   const connectedPlayers = new Map(); // socketId -> player
   const rooms = new Map();             // roomName -> Set<socketId>
 
   io.on('connection', (socket) => {
-    // Per-socket closure state. Handlers read/write {playerId, room, name}.
+    // Per-socket closure state. Handlers read/write {playerId, room, name} and,
+    // once authenticated, {userId, username, token, desiredSpecies, joinedAt}.
     const state = { playerId: null, room: null, name: null };
 
     const deps = {
@@ -30,10 +32,13 @@ module.exports = function initSockets(io) {
       socket,
       connectedPlayers,
       rooms,
-      state
+      state,
+      db
     };
 
-    // Register modular handlers.
+    // Register modular handlers. Auth first so an authenticated identity is on
+    // `state` before lobby:join arrives (the client auths before joining).
+    auth.register(socket, deps);
     lobby.register(socket, deps);
     connection.register(socket, deps);
   });

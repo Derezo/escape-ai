@@ -3,6 +3,10 @@ dist/
 .env
 .DS_Store
 
+# SQLite store for username-only accounts + per-user stats (server/db.js). The
+# DB file plus its WAL/SHM sidecars are runtime state, never committed.
+server/data/
+
 # Sprite staging: per-frame SVGs emitted by scripts/gen-sprites.js. Regenerable
 # from the species builders; only the packed assets/sprites/atlas.{png,json} are
 # the committed runtime artifact (a clean clone boots on the atlas, no sharp).

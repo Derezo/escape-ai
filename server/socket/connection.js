@@ -22,7 +22,7 @@ function register(socket, deps) {
   });
 
   socket.on('disconnect', () => {
-    cleanup(socket, { io, connectedPlayers, rooms, state });
+    cleanup(socket, { io, connectedPlayers, rooms, state, db: deps.db });
   });
 }
 
@@ -31,10 +31,28 @@ function register(socket, deps) {
  * room's lobby view. Safe to call even if the socket never joined a room.
  */
 function cleanup(socket, deps) {
-  const { io, connectedPlayers, rooms } = deps;
+  const { io, connectedPlayers, rooms, state, db } = deps;
 
   const player = connectedPlayers.get(socket.id);
   connectedPlayers.delete(socket.id);
+
+  // Persist this session's stats before dropping the player. Attribute play time
+  // (session length) plus any stat deltas the engine hadn't yet flushed this
+  // tick. Guarded: only an authenticated player (userId) has an account to
+  // credit, and db may be absent in a bare test harness.
+  if (db && player && player.userId) {
+    const joinedAt = (state && state.joinedAt) || Date.now();
+    const playSeconds = Math.max(0, Math.round((Date.now() - joinedAt) / 1000));
+    const delta = { playSeconds };
+    if (player.statsDelta) {
+      delta.escapes = player.statsDelta.escapes || 0;
+      delta.caught = player.statsDelta.caught || 0;
+      delta.ordersIssued = player.statsDelta.ordersIssued || 0;
+      delta.abilitiesUsed = player.statsDelta.abilitiesUsed || 0;
+      player.statsDelta = null;
+    }
+    db.incStats(player.userId, delta);
+  }
 
   if (player && player.room) {
     const members = rooms.get(player.room);

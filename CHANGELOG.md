@@ -4,6 +4,40 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.20: **Server — SQLite accounts, auth tokens, session restore, persistent stats**
+  (phase 2 of the accounts plan). The server was fully anonymous (a `prompt()` name → an
+  in-memory UUID, nothing persisted); it now has username-only accounts backed by SQLite.
+  - **`server/db.js`** (new, `better-sqlite3`, synchronous): a file DB at `DB_PATH`
+    (default `./data/aiescape.db`, WAL mode, `data/` created on boot and git-ignored).
+    `users(id, username UNIQUE NOCASE, token UNIQUE, created_at, last_seen, last_species)`
+    + `stats(user_id, games, escapes, caught, orders_issued, abilities_used, play_seconds)`.
+    `loginOrRegister({username, token})` implements **claim-on-first-use with uniqueness**:
+    a valid token restores its account (session restore, DB username authoritative); a free
+    username is claimed and issued a fresh random-UUID token; a taken username without a
+    matching token is rejected `name_taken`; an unknown token is `bad_token`; empty/over-long
+    is `invalid`. Plus `incStats`/`setLastSpecies`/`touchLastSeen`/`incGames`/`getStatsForUser`
+    (snake_case columns → camelCase `UserStats`). UNIQUE-violation races fold into `name_taken`.
+  - **`server/socket/auth.js`** (new): handles `auth:login` → `auth:result`, stashing
+    `{userId, username, token, desiredSpecies, joinedAt}` on the socket; bumps `games` and
+    `last_species` on success and returns the user's stats.
+  - **`server/socket/species-roster.js`** (new): bridges the ESM `shared/dist/species.js`
+    into the CJS server via the same dynamic-`import()`-and-cache pattern `stealth.js` uses
+    (warmed at boot before the engine starts), so `lobby.js`'s roster is the SINGLE shared
+    list (no more hardcoded `SPECIES_ROSTER` literal).
+  - **`lobby.js`**: `lobby:join` now uses the authenticated username (ignores `payload.name`
+    when authed), honors a valid chosen `species` (else join-index cycling), and tags the
+    player with `userId`. Legacy un-authed path preserved.
+  - **Stats hooks** (decoupled — no DB import in the game math): `stealth.js` accumulates onto
+    a lazy `player.statsDelta` via `bumpStat()` at four edge chokepoints — `caught`
+    (`catchPlayer`), `escapes` (`checkEscape` flip), `ordersIssued` (`orderNearestRobot` hit),
+    `abilitiesUsed` (`applyAbility` fired). The engine flushes a non-empty delta to the DB and
+    zeroes it (edge-driven → no per-tick DB write); `connection.js` flushes `play_seconds` on
+    disconnect.
+  - `index.js`/`socket/index.js` thread `db` through; `db.close()` on shutdown. `config.js` +
+    `.env.example` gain `DB_PATH`. Verified end-to-end over real sockets: fresh login issues a
+    token, authed name overrides payload, chosen species honored, `name_taken`/`bad_token`/
+    `invalid` all correct, token restore works and re-increments `games`.
+
 - 0.2.19: **"AI Escape" rebrand + shared auth/species foundation** (phase 1 + 2a/4d of
   the accounts plan). The product title is now **AI Escape** (`client/index.html` tab
   title, `client/capacitor.config.ts` `appName`); the in-world story name *The Caves of

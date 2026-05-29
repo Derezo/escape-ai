@@ -39,6 +39,21 @@ function setRefs(players, roomsMap) {
 }
 
 /**
+ * Bump a per-player persistent-stat counter. The game math stays decoupled from
+ * the DB: we only accumulate onto `player.statsDelta` (created lazily) and the
+ * engine flushes a non-empty delta to SQLite on the next tick (and connection.js
+ * on disconnect). No-op on a falsy player.
+ * @param {object} player
+ * @param {'escapes'|'caught'|'ordersIssued'|'abilitiesUsed'} key
+ * @param {number} [by=1]
+ */
+function bumpStat(player, key, by = 1) {
+  if (!player) return;
+  player.statsDelta ||= { escapes: 0, caught: 0, ordersIssued: 0, abilitiesUsed: 0 };
+  player.statsDelta[key] = (player.statsDelta[key] || 0) + by;
+}
+
+/**
  * Load + cache shared/dist/step.js. Call once during engine.init(), before the
  * tick loop runs, so the Three-Laws math is available synchronously in tick().
  * Throws if the expected exports are missing — fail loud rather than silently
@@ -442,6 +457,10 @@ function stepPanic(dt, roomName, robotEvents) {
  */
 function catchPlayer(player) {
   if (!player) return;
+  // Persistent stat: count this capture. The single capture chokepoint — an
+  // escaped player is never a catch target (gatherAnimals skips player.escaped),
+  // so this only credits real catches. Decoupled from the DB (see bumpStat).
+  if (!player.escaped) bumpStat(player, 'caught');
   player.humanLikeness = 0;
   player.carrying = false;
   // A respawn cancels every in-flight self-effect — the courier prop is freed by
@@ -473,6 +492,10 @@ function checkEscape(player, roomName) {
   const reach = config.RECT_SIZE * 1.5;
   if (shared.dist2(player, gate) <= reach * reach) {
     player.escaped = true;
+    // Persistent stat: this flips exactly once (guarded by `player.escaped` at
+    // the top), so the escape is counted once. Decoupled from the DB; the engine
+    // flushes the delta promptly on the escape edge tick.
+    bumpStat(player, 'escapes');
   }
 }
 
@@ -551,6 +574,9 @@ function applyAbility(player, roomName, currentTick) {
 
   if (fired) {
     player.abilityCdUntilTick = currentTick + secsToTicks(config.ABILITY.COOLDOWN_SECS);
+    // Persistent stat: only an ability that actually FIRED (not a no-op like an
+    // elephant shove with no robot in reach) counts. Decoupled from the DB.
+    bumpStat(player, 'abilitiesUsed');
   }
 }
 
@@ -929,6 +955,10 @@ function orderNearestRobot(player, roomName, currentTick) {
     }
   }
   if (!nearest) return;
+
+  // Persistent stat: an order actually landed (a robot was in range and stood
+  // down). Counted only here, past the no-target early-return. Decoupled from DB.
+  bumpStat(player, 'ordersIssued');
 
   // Stand the robot down for the ordered window.
   nearest.orderedUntilTick = currentTick + Math.round(config.ORDER_DURATION_SECS * config.TICK_RATE);

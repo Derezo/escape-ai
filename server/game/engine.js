@@ -42,6 +42,7 @@ const FULL_REFRESH_INTERVAL = 100;
 let io = null;
 let connectedPlayers = null; // Map<socketId, player>
 let rooms = null; // Map<roomName, Set<socketId>>
+let db = null; // persistence layer (may be null in a bare test harness)
 
 // --- loop state ---
 let running = false;
@@ -61,11 +62,13 @@ const lastSentByRoom = new Map();
  * @param {import('socket.io').Server} socketIo
  * @param {Map<string, object>} players  shared connectedPlayers map
  * @param {Map<string, Set<string>>} roomsMap  shared rooms map
+ * @param {object} [dbModule]  persistence layer (db.js); optional for tests.
  */
-async function init(socketIo, players, roomsMap) {
+async function init(socketIo, players, roomsMap, dbModule) {
   io = socketIo;
   connectedPlayers = players;
   rooms = roomsMap;
+  db = dbModule || null;
   // Hand the live player + room maps to the stealth orchestrator so its ability
   // hooks (e.g. the ape carry hand-off) can scan a room from applyAction.
   stealth.setRefs(players, roomsMap);
@@ -168,7 +171,41 @@ function integratePlayers(dt) {
     // Record the last input sequence we've now simulated, so the snapshot's
     // `acks` lets clients reconcile their prediction.
     player.lastProcessedSeq = input.seq;
+
+    // Persist any accumulated stat deltas (escapes/caught/orders/abilities) so a
+    // session's stats survive even without a disconnect, and an escape is
+    // recorded promptly. The deltas are zero on the vast majority of ticks (they
+    // only fill on the rare edge tick where an event fired), so this is naturally
+    // edge-driven — NO per-tick DB write in the common case. Guarded for tests.
+    flushStatsDelta(player);
   }
+}
+
+/** True if a stat-delta accumulator holds any non-zero count. */
+function anyNonZero(delta) {
+  return !!delta && (
+    (delta.escapes || 0) > 0 ||
+    (delta.caught || 0) > 0 ||
+    (delta.ordersIssued || 0) > 0 ||
+    (delta.abilitiesUsed || 0) > 0
+  );
+}
+
+/**
+ * Flush a player's pending stat delta to the DB and zero it. No-op unless the
+ * player has an account (userId), the DB is wired, and the delta is non-empty —
+ * so the hot path stays free of DB writes except on event-edge ticks.
+ * @param {object} player
+ */
+function flushStatsDelta(player) {
+  if (!db || !player.userId) return;
+  const delta = player.statsDelta;
+  if (!anyNonZero(delta)) return;
+  db.incStats(player.userId, delta);
+  delta.escapes = 0;
+  delta.caught = 0;
+  delta.ordersIssued = 0;
+  delta.abilitiesUsed = 0;
 }
 
 /** Step the NPC simulation (robots) + the panic/overflow meter for every active

@@ -10,6 +10,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const world = require('../game/world');
+const speciesRoster = require('./species-roster');
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -22,21 +23,20 @@ const ACTIONS = new Set(['interact', 'order', 'ability']);
 // climbs) so concurrent joiners never share a spawn slot.
 const joinCountByRoom = new Map();
 
-// The species roster. A joining player is assigned one by join index (cycling),
-// reusing the same monotonic counter that spreads spawns. Species drives the
-// player's edge-triggered 'ability' (see game/stealth.js applyAbility):
-//   ape → carry (disguise courier)     bird → flit (briefly uncatchable)
-//   rat → skitter (briefly unseen)     elephant → shove (stun + push a robot)
-//   chameleon → cloak (perfect disguise)   peacock → dazzle (AoE stand-down)
-//   skunk → stink (hazard zone)            mole → burrow (teleport + unseen)
-//   cheetah → dash (speed burst)           parrot → mimic (order, no suspicion)
-//   tortoise → shell (immovable+uncatch)   kangaroo → leap (long hop)
-//   owl → hush (drain panic)               fox → decoy (lure robots)
-// MUST match scripts/sprites/registry.js (every species needs atlas art).
-const SPECIES_ROSTER = [
-  'ape', 'bird', 'rat', 'elephant', 'chameleon', 'peacock', 'skunk',
-  'mole', 'cheetah', 'parrot', 'tortoise', 'kangaroo', 'owl', 'fox'
-];
+// The species roster is the ONE source of truth in shared/src/species.ts; the
+// server reads the cached keys via ./species-roster (loaded at boot). A joining
+// player WITHOUT an explicit species pick is assigned one by join index
+// (cycling), reusing the same monotonic counter that spreads spawns. Species
+// drives the player's edge-triggered 'ability' (see game/stealth.js applyAbility
+// and the per-species blurbs in shared/src/species.ts). Fallback list is used
+// only on the (impossible-in-practice) chance the roster cache hasn't warmed.
+const SPECIES_FALLBACK = ['ape'];
+
+/** The roster keys in cycle order — shared cache, with a 1-element fallback. */
+function speciesRosterKeys() {
+  const keys = speciesRoster.getKeys();
+  return keys.length ? keys : SPECIES_FALLBACK;
+}
 
 // Spawn players on a grid in the world's lower-left corner, stepping right then
 // wrapping down. Keeps them clear of the world props spawned by game/world.js.
@@ -66,9 +66,16 @@ function register(socket, deps) {
     const room = typeof payload.room === 'string' && payload.room.trim()
       ? payload.room.trim()
       : 'default';
-    const name = typeof payload.name === 'string' && payload.name.trim()
-      ? payload.name.trim().slice(0, 32)
-      : 'anon';
+
+    // Identity: an authenticated socket's username (set by auth.js on auth:login)
+    // is authoritative — it overrides whatever name the payload carries. An
+    // un-authed client (legacy / never sent auth:login) falls back to the payload
+    // name so nothing breaks. The real client always auths first.
+    const name = state.username
+      ? state.username
+      : (typeof payload.name === 'string' && payload.name.trim()
+        ? payload.name.trim().slice(0, 32)
+        : 'anon');
 
     // If this socket was already in a room, leave it first.
     const existing = connectedPlayers.get(socket.id);
@@ -80,12 +87,19 @@ function register(socket, deps) {
     // first player starts receiving snapshots for it.
     world.getOrCreateRoomWorld(room);
 
-    // Deterministically spread spawns so players don't all stack on the origin,
-    // and assign a species off the same join index so the roster cycles evenly.
+    // Deterministically spread spawns so players don't all stack on the origin.
     const joinIndex = joinCountByRoom.get(room) || 0;
     joinCountByRoom.set(room, joinIndex + 1);
     const spawn = spawnPositionFor(joinIndex);
-    const species = SPECIES_ROSTER[joinIndex % SPECIES_ROSTER.length];
+
+    // Species: honor the player's pick (payload.species, or the one stashed at
+    // auth time) when it's a valid playable species; otherwise assign one off the
+    // join index so the shared roster cycles evenly.
+    const roster = speciesRosterKeys();
+    const pick = typeof payload.species === 'string' ? payload.species : state.desiredSpecies;
+    const species = speciesRoster.isPlayableSpecies(pick)
+      ? pick
+      : roster[joinIndex % roster.length];
 
     // Create / reset the player as a fresh movable point at its spawn slot.
     const player = {
@@ -98,6 +112,13 @@ function register(socket, deps) {
       kind: 'animal',
       // Which species this player is — drives the edge-triggered 'ability'.
       species,
+      // The authenticated account this player belongs to (null if un-authed), so
+      // the engine / disconnect can attribute persistent stats. See db.js.
+      userId: state.userId || null,
+      // Per-player stat-delta accumulator (escapes/caught/orders/abilities). The
+      // game math (stealth.js) bumps these on the rare edge ticks; the engine
+      // flushes a non-empty delta to the DB and zeroes it. Created lazily there.
+      statsDelta: null,
       // Three-Laws stealth state (Phase 2). humanLikeness rises while behaving
       // human (slow/still) and drops while fleeing; carrying the disguise prop
       // floors it. Both start blank — a fresh "animal" reads as pure prey.
