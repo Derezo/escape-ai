@@ -90,6 +90,13 @@ function spawnStarterLayout() {
   // 1 gate, near the right edge of the world.
   add({ id: 'gate-1', x: 980, y: 500, name: 'Gate', kind: 'gate' });
 
+  // 1 disguise prop (the Clipboard), parked beside the lower-left pens. The ape
+  // species can pick it up to floor its human-likeness (STEALTH.PROP_BONUS) and
+  // courier it / hand it off. carrierId is null while it sits on the ground;
+  // when a player carries it, stealth.js moves the prop to that carrier each
+  // tick so it follows visually. Position lives near pen-1 / pen-3.
+  add({ id: 'prop-1', x: 250, y: 250, name: 'Clipboard', kind: 'prop', carrierId: null });
+
   return entities;
 }
 

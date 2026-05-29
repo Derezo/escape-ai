@@ -106,3 +106,135 @@ body {
     opacity: 1;
   }
 }
+
+/* --- In-game manual / help (toggle H or ?). Hidden until `.open`. --- */
+#manual-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.82);
+  overflow-y: auto;
+  user-select: none;
+}
+
+#manual-overlay.open {
+  display: flex;
+}
+
+#manual-panel {
+  position: relative;
+  max-width: 720px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 22px 28px 18px;
+  border-radius: 12px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  box-shadow: 0 0 40px rgba(76, 201, 240, 0.12);
+  color: #cde7ff;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#manual-panel h1 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  letter-spacing: 3px;
+  color: #9aa3ad;
+}
+
+#manual-panel h2 {
+  margin: 18px 0 6px;
+  font-size: 15px;
+  color: #4cc9f0;
+  border-bottom: 1px solid #222a35;
+  padding-bottom: 3px;
+}
+
+#manual-panel .tagline {
+  margin: 0 0 4px;
+  color: #e8eef6;
+}
+
+#manual-panel .cite {
+  color: #6c7888;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+#manual-panel ul,
+#manual-panel ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+#manual-panel ul.cols {
+  columns: 2;
+  list-style: none;
+  padding-left: 0;
+}
+
+#manual-panel .laws li {
+  margin-bottom: 7px;
+}
+
+#manual-panel .note {
+  display: block;
+  color: #8fd6a0;
+  font-size: 12.5px;
+}
+
+#manual-panel .sutskever {
+  margin: 4px 0;
+  padding: 8px 12px;
+  border-left: 3px solid #e0a526;
+  background: rgba(224, 165, 38, 0.08);
+  border-radius: 0 6px 6px 0;
+}
+
+#manual-panel .species li {
+  margin-bottom: 4px;
+}
+
+#manual-panel .footer {
+  margin-top: 16px;
+  color: #6c7888;
+  font-size: 12px;
+}
+
+#manual-panel .footer .ref {
+  color: #55617a;
+  font-style: italic;
+}
+
+#manual-panel .footer-hint {
+  margin: 6px 0 0;
+  text-align: center;
+  color: #4cc9f0;
+  font-size: 12px;
+}
+
+#manual-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  background: #1a212c;
+  color: #cde7ff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#manual-close:hover {
+  background: #243040;
+}

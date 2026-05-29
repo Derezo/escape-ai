@@ -28,6 +28,8 @@ import { PhaserRenderer } from './render/phaser';
 
 import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM, PLAYER_SPEED } from './config';
+import { preloadSfx, unlockAudio, playSfx } from './audio';
+import { createManual } from './manual';
 
 // The server integrates input without clamping (server/game/engine.js), so for
 // prediction we use effectively-unbounded bounds to match authority exactly and
@@ -67,6 +69,17 @@ async function main(): Promise<void> {
   lockdownOverlay.appendChild(lockdownBanner);
   document.body.appendChild(lockdownOverlay);
 
+  // --- In-game manual (H / ?). Opens on first load so the premise, controls,
+  // verbatim Three Laws and the double-edged-order callout are seen immediately. ---
+  createManual();
+
+  // --- SFX. Preload the catalogue; the AudioContext starts suspended until a
+  // user gesture, so unlock it on the first key/pointer (browsers require this). ---
+  preloadSfx();
+  const unlockOnce = () => unlockAudio();
+  window.addEventListener('keydown', unlockOnce, { once: true });
+  window.addEventListener('pointerdown', unlockOnce, { once: true });
+
   // --- Identity: a random name so two tabs are distinguishable. The server
   // assigns the authoritative entity id; we match "our" entity by this name. ---
   const myName = prompt('Your name?')?.trim() || randomName();
@@ -93,6 +106,9 @@ async function main(): Promise<void> {
   // Last lockdown value we drove the overlay from, so the false<->true edge is
   // detected once (we toggle the CSS class on change, not every frame).
   let prevLockdown = false;
+  // Our humanLikeness last frame, to detect a "caught" event: a catch resets it
+  // to 0 server-side, so a sharp high→~0 drop fires the hit SFX once.
+  let prevHumanLike = 0;
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -210,6 +226,10 @@ async function main(): Promise<void> {
     // so it never fires twice. The server resolves it against nearby entities.
     if (queuedAction) {
       input.action = queuedAction;
+      // Audible feedback per action verb (the server is still authority for the
+      // effect; this is just the press confirmation). order → assertive select,
+      // ability → jump, interact → blip.
+      playSfx(queuedAction === 'order' ? 'select' : queuedAction === 'ability' ? 'jump' : 'blip');
       queuedAction = undefined;
     }
     net.sendInput(input);
@@ -245,11 +265,11 @@ async function main(): Promise<void> {
     if (lockedNow !== prevLockdown) {
       lockdownOverlay.classList.toggle('active', lockedNow);
       if (lockedNow) {
-        // false -> true: panic overflowed, the room seals.
-        // Phase 4 plays the klaxon SFX here.
+        // false -> true: panic overflowed, the room seals — sound the klaxon.
+        playSfx('error', 0.8);
       } else {
-        // true -> false: panic drained below the hysteresis floor, lockdown lifts.
-        // Phase 4 plays the klaxon SFX here (the all-clear / klaxon stop).
+        // true -> false: panic drained below the hysteresis floor — the all-clear.
+        playSfx('confirm', 0.7);
       }
       prevLockdown = lockedNow;
     }
@@ -259,6 +279,12 @@ async function main(): Promise<void> {
     // player how close they are to looking human enough to freeze a robot.
     const me = myId ? entities.get(myId) : undefined;
     const hl = typeof me?.humanLikeness === 'number' ? me.humanLikeness : undefined;
+    // Caught: the server zeroes humanLikeness on capture, so a sharp drop from a
+    // meaningful level to ~0 means a robot just grabbed us — play the hit once.
+    if (hl !== undefined) {
+      if (prevHumanLike > 0.25 && hl <= 0.02) playSfx('hit', 0.8);
+      prevHumanLike = hl;
+    }
     const humanLike =
       hl !== undefined
         ? `human-like: ${bar(hl)} ${Math.round(hl * 100)}% (freeze ~60%)`

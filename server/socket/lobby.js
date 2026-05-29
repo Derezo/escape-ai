@@ -22,6 +22,13 @@ const ACTIONS = new Set(['interact', 'order', 'ability']);
 // climbs) so concurrent joiners never share a spawn slot.
 const joinCountByRoom = new Map();
 
+// The species roster. A joining player is assigned one by join index (cycling),
+// reusing the same monotonic counter that spreads spawns. Species drives the
+// player's edge-triggered 'ability' (see game/stealth.js applyAction):
+//   ape → carry (disguise courier)   bird → flit (briefly uncatchable)
+//   rat → skitter (briefly unseen)    elephant → shove (stun + push a robot)
+const SPECIES_ROSTER = ['ape', 'bird', 'rat', 'elephant'];
+
 // Spawn players on a grid in the world's lower-left corner, stepping right then
 // wrapping down. Keeps them clear of the world props spawned by game/world.js.
 const SPAWN_ORIGIN_X = 50;
@@ -64,10 +71,12 @@ function register(socket, deps) {
     // first player starts receiving snapshots for it.
     world.getOrCreateRoomWorld(room);
 
-    // Deterministically spread spawns so players don't all stack on the origin.
+    // Deterministically spread spawns so players don't all stack on the origin,
+    // and assign a species off the same join index so the roster cycles evenly.
     const joinIndex = joinCountByRoom.get(room) || 0;
     joinCountByRoom.set(room, joinIndex + 1);
     const spawn = spawnPositionFor(joinIndex);
+    const species = SPECIES_ROSTER[joinIndex % SPECIES_ROSTER.length];
 
     // Create / reset the player as a fresh movable point at its spawn slot.
     const player = {
@@ -78,11 +87,17 @@ function register(socket, deps) {
       x: spawn.x,
       y: spawn.y,
       kind: 'animal',
+      // Which species this player is — drives the edge-triggered 'ability'.
+      species,
       // Three-Laws stealth state (Phase 2). humanLikeness rises while behaving
       // human (slow/still) and drops while fleeing; carrying the disguise prop
       // floors it. Both start blank — a fresh "animal" reads as pure prey.
       humanLikeness: 0,
       carrying: false,
+      // Species-ability timers (Phase 4). Each is a tick deadline; an effect is
+      // active while currentTick < the field. Read with `|| 0` so unset = off.
+      flitUntilTick: 0,       // bird: briefly uncatchable
+      skitterUntilTick: 0,    // rat: briefly invisible to robot perception
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated
       input: { seq: 0, dx: 0, dy: 0 },

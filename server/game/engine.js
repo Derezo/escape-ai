@@ -61,6 +61,9 @@ async function init(socketIo, players, roomsMap) {
   io = socketIo;
   connectedPlayers = players;
   rooms = roomsMap;
+  // Hand the live player + room maps to the stealth orchestrator so its ability
+  // hooks (e.g. the ape carry hand-off) can scan a room from applyAction.
+  stealth.setRefs(players, roomsMap);
   // Load + cache the shared stealth math once, before the loop runs.
   await stealth.loadShared();
 }
@@ -169,6 +172,8 @@ function toEntity(player) {
     y: player.y,
     name: player.name,
     kind: 'animal',
+    // Species rides along so the client can skin the avatar + label its ability.
+    species: player.species,
     humanLikeness: player.humanLikeness || 0,
     carrying: !!player.carrying
   };

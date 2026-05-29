@@ -9,6 +9,14 @@ import { fileURLToPath, URL } from 'node:url';
 // paths are the only thing that works in both a browser and a WebView.
 export default defineConfig({
   base: './',
+  // Serve & bundle the repo-root `assets/` (generated sprites + sfx) as static
+  // files. Vite copies the *contents* of publicDir into dist/ at its root, so the
+  // client loads them at `./sfx/hit.wav` / `./sprites/player.svg` (with `base:
+  // './'`, relative — works in both a browser and the Android WebView). Keeps the
+  // single `assets/` source of truth (the generators write there) rather than
+  // duplicating into client/public. Vite's own hashed bundles live under
+  // dist/assets/<name>-<hash>.js, so there's no collision with these statics.
+  publicDir: fileURLToPath(new URL('../assets', import.meta.url)),
   resolve: {
     alias: {
       // The shared module is ESM/NodeNext and uses `.js` import specifiers, but

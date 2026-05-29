@@ -20,6 +20,24 @@ const world = require('./world');
 // The cached shared module (resolved by loadShared() before the loop starts).
 let shared = null;
 
+// Cached references to the engine's live player + room maps. Most per-tick
+// functions receive these as args, but the ape "carry" hand-off needs to scan a
+// room's players from inside applyAction (which only gets the acting player), so
+// the engine hands them over once at init via setRefs().
+let connectedPlayers = null; // Map<socketId, player>
+let rooms = null;            // Map<roomName, Set<socketId>>
+
+/**
+ * Cache the engine's live player + room maps so applyAction's ability hooks can
+ * scan a room. Called once from engine.init(), before the loop starts.
+ * @param {Map<string, object>} players
+ * @param {Map<string, Set<string>>} roomsMap
+ */
+function setRefs(players, roomsMap) {
+  connectedPlayers = players;
+  rooms = roomsMap;
+}
+
 /**
  * Load + cache shared/dist/step.js. Call once during engine.init(), before the
  * tick loop runs, so the Three-Laws math is available synchronously in tick().
@@ -82,13 +100,18 @@ function stepPlayerHumanLikeness(player, dt) {
  * entities are shaped to the {id,x,y,humanLikeness} the shared math reads, and
  * tagged isPlayer so the catch hook can tell players from idle props.
  *
+ * A RAT mid-"skitter" (skitterUntilTick still in the future) is omitted entirely:
+ * it's invisible to robot perception this tick, so robotDecision can neither
+ * freeze on it nor pursue it — the squeeze-through-a-gap escape.
+ *
  * @param {string} roomName
  * @param {Map<string, object>} connectedPlayers
  * @param {Map<string, Set<string>>} rooms
  * @param {object[]} worldEntities  the room's world props (already fetched)
+ * @param {number} currentTick  for evaluating timed effects (rat skitter)
  * @returns {object[]} candidate animals for robotDecision
  */
-function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities) {
+function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, currentTick) {
   const animals = [];
 
   // Player-animals: the real quarry. Reference the live player so the catch
@@ -98,6 +121,8 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities) {
     for (const socketId of members) {
       const p = connectedPlayers.get(socketId);
       if (!p) continue;
+      // RAT skitter: a skittering player is invisible to robots this tick.
+      if ((p.skitterUntilTick || 0) > currentTick) continue;
       animals.push({
         id: p.id,
         x: p.x,
@@ -126,6 +151,24 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities) {
 }
 
 /**
+ * Find a connected player by its game id within a room. Used by the prop-follow
+ * step to resolve a prop's carrierId back to the live player object.
+ * @param {string} roomName
+ * @param {string} playerId
+ * @returns {object|null}
+ */
+function findPlayerById(roomName, playerId) {
+  if (!connectedPlayers || !rooms) return null;
+  const members = rooms.get(roomName);
+  if (!members) return null;
+  for (const socketId of members) {
+    const p = connectedPlayers.get(socketId);
+    if (p && p.id === playerId) return p;
+  }
+  return null;
+}
+
+/**
  * Step every robot in one room for this tick: run the shared Three-Laws
  * decision, move pursuers, decay suspicion, honor Second-Law orders, and fire
  * the catch hook. Robot objects are mutated in place inside the world's entity
@@ -145,7 +188,24 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   const worldState = world.getWorldState(roomName);
   const lockdown = !!worldState.lockdown;
 
-  const animals = gatherAnimals(roomName, connectedPlayers, rooms, worldEntities);
+  // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
+  // snap it to that player's position so it visually rides along (the ape
+  // courier). If the carrier has vanished (disconnect), free the prop in place.
+  const prop = worldEntities.find((e) => e.kind === 'prop');
+  if (prop && prop.carrierId) {
+    const carrier = findPlayerById(roomName, prop.carrierId);
+    if (carrier && carrier.carrying) {
+      // Still held: ride along with the carrier.
+      prop.x = carrier.x;
+      prop.y = carrier.y;
+    } else {
+      // Carrier disconnected, or was caught (catchPlayer cleared its carrying):
+      // free the prop. It stays wherever it was last placed.
+      prop.carrierId = null;
+    }
+  }
+
+  const animals = gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, currentTick);
   const touchR2 = config.RECT_SIZE * config.RECT_SIZE;
   const speed = config.ROBOT_SPEED * (lockdown ? config.ROBOT_LOCKDOWN_SPEED_MULT : 1);
 
@@ -192,7 +252,11 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
         // respawn (reset disguise + teleport to spawn). A catch is the biggest
         // single jolt to the panic meter (see stepPanic), so a botched bluff that
         // gets someone caught visibly pushes the whole room toward lockdown.
-        if (shared.dist2(robot, target) <= touchR2) {
+        //
+        // BIRD flit: a flitting player is briefly UNCATCHABLE (it flew over a
+        // wall, out of reach), so a touching robot can't grab it this tick.
+        const flitting = target.ref && (target.ref.flitUntilTick || 0) > currentTick;
+        if (!flitting && shared.dist2(robot, target) <= touchR2) {
           catchPlayer(target.ref);
           catches++;
         }
@@ -252,6 +316,10 @@ function catchPlayer(player) {
   if (!player) return;
   player.humanLikeness = 0;
   player.carrying = false;
+  // A respawn cancels any in-flight species effect (flit / skitter) — the
+  // courier prop is freed by the prop-follow step once carrying drops.
+  player.flitUntilTick = 0;
+  player.skitterUntilTick = 0;
   // Soft respawn at the world's spawn origin (mirrors lobby's SPAWN_ORIGIN).
   player.x = 50;
   player.y = 50;
@@ -283,12 +351,170 @@ function applyAction(player, action, roomName, currentTick) {
       }
       break;
     case 'ability':
-      // Phase 4 stub: species-specific abilities (ape climb, bird flit, rat
-      // squeeze, elephant shove) land here. No-op for now — intentionally.
+      // Phase 4: species-specific powers. Edge-triggered (the engine clears
+      // pendingAction after this call), so each fires once per press. The
+      // orchestration — timers, target picking, mutating entities — lives here;
+      // the deterministic math (likeness, perception, Laws) stays in shared.
+      applyAbility(player, roomName, currentTick);
       break;
     default:
       break;
   }
+}
+
+/**
+ * Dispatch a player's species ability. Branches on player.species:
+ *   - ape      "carry"    pick up / hand off / drop the disguise prop
+ *   - bird     "flit"     a short uncatchable burst (flies over a wall)
+ *   - rat      "skitter"  a short burst invisible to robot perception
+ *   - elephant "shove"    stun + push the nearest robot (loud → feeds panic)
+ * Unknown/absent species is a no-op (the bare starter point has no species).
+ *
+ * @param {object} player
+ * @param {string} roomName
+ * @param {number} currentTick
+ */
+function applyAbility(player, roomName, currentTick) {
+  switch (player.species) {
+    case 'ape':
+      apeCarry(player, roomName);
+      break;
+    case 'bird':
+      birdFlit(player, currentTick);
+      break;
+    case 'rat':
+      ratSkitter(player, currentTick);
+      break;
+    case 'elephant':
+      elephantShove(player, roomName, currentTick);
+      break;
+    default:
+      break;
+  }
+}
+
+/**
+ * APE "carry": be the disguise courier. Three states, edge-triggered:
+ *   - NOT carrying + within RECT_SIZE of the prop (and it has no carrier):
+ *       pick it up — player.carrying=true, prop.carrierId=player.id.
+ *   - carrying + another PLAYER animal within RECT_SIZE: HAND OFF to them
+ *       (transfer carrying + carrierId).
+ *   - carrying + nobody to hand to: DROP — player.carrying=false,
+ *       prop.carrierId=null, and the prop is left at the player's position.
+ * The prop floors human-likeness at STEALTH.PROP_BONUS (updateHumanLikeness
+ * honors `carrying`), so whoever holds it reads as plausibly human while moving.
+ * The prop's per-tick "follow the carrier" move lives in stepRobots().
+ *
+ * @param {object} player
+ * @param {string} roomName
+ */
+function apeCarry(player, roomName) {
+  const r2 = config.RECT_SIZE * config.RECT_SIZE;
+  const entities = world.getWorldEntities(roomName);
+  const prop = entities.find((e) => e.kind === 'prop');
+  if (!prop) return;
+
+  if (!player.carrying) {
+    // Pick up — only if the prop is free and in reach.
+    if (prop.carrierId) return;
+    if (shared.dist2(player, prop) > r2) return;
+    player.carrying = true;
+    prop.carrierId = player.id;
+    return;
+  }
+
+  // Already carrying: prefer a hand-off to a nearby teammate, else drop.
+  let recipient = null;
+  for (const socketId of (rooms.get(roomName) || [])) {
+    const other = connectedPlayers.get(socketId);
+    if (!other || other.id === player.id || other.carrying) continue;
+    if (shared.dist2(player, other) <= r2) { recipient = other; break; }
+  }
+
+  if (recipient) {
+    // HAND OFF: transfer the disguise to the teammate in reach.
+    player.carrying = false;
+    recipient.carrying = true;
+    prop.carrierId = recipient.id;
+  } else {
+    // DROP: leave the prop where the player is standing.
+    player.carrying = false;
+    prop.carrierId = null;
+    prop.x = player.x;
+    prop.y = player.y;
+  }
+}
+
+/**
+ * BIRD "flit": a short burst during which the bird is UNCATCHABLE — it flits up
+ * and over a wall, briefly out of a robot's reach. Implemented as a tick
+ * deadline; the catch hook in stepRobots skips a player whose flit is active.
+ *
+ * @param {object} player
+ * @param {number} currentTick
+ */
+function birdFlit(player, currentTick) {
+  player.flitUntilTick = currentTick + Math.round(config.ABILITY.BIRD_FLIT_SECS * config.TICK_RATE);
+}
+
+/**
+ * RAT "skitter": a short burst during which the rat is INVISIBLE to robot
+ * perception — it squeezes through a gap / behind cover, so robots can't lock
+ * onto or chase it. Implemented as a tick deadline; gatherAnimals excludes a
+ * skittering player from the list handed to robotDecision while it's active.
+ *
+ * @param {object} player
+ * @param {number} currentTick
+ */
+function ratSkitter(player, currentTick) {
+  player.skitterUntilTick = currentTick + Math.round(config.ABILITY.RAT_SKITTER_SECS * config.TICK_RATE);
+}
+
+/**
+ * ELEPHANT "shove": stun + knock back the nearest robot within
+ * RECT_SIZE * ELEPHANT_REACH_MULT. The robot is stood down (we reuse
+ * orderedUntilTick, which stepRobots already honors) for ELEPHANT_STUN_SECS and
+ * pushed a few units directly away from the elephant.
+ *
+ * DOUBLE-EDGED, like a Second-Law order: a shove is LOUD. It bumps the zoo-wide
+ * panic meter (latched on worldState.pendingOrders, consumed by stepPanic), so
+ * it clears a robot now but feeds the overflow container that ends the run.
+ *
+ * @param {object} player
+ * @param {string} roomName
+ * @param {number} currentTick
+ */
+function elephantShove(player, roomName, currentTick) {
+  const reach = config.RECT_SIZE * config.ABILITY.ELEPHANT_REACH_MULT;
+  const reachR2 = reach * reach;
+
+  let nearest = null;
+  let nearestD2 = Infinity;
+  for (const e of world.getWorldEntities(roomName)) {
+    if (e.kind !== 'robot') continue;
+    const d2 = shared.dist2(player, e);
+    if (d2 <= reachR2 && d2 < nearestD2) {
+      nearestD2 = d2;
+      nearest = e;
+    }
+  }
+  if (!nearest) return;
+
+  // Stun: stand the robot down for the shove window (same field stepRobots reads
+  // for ordered standdown).
+  nearest.orderedUntilTick = currentTick + Math.round(config.ABILITY.ELEPHANT_STUN_SECS * config.TICK_RATE);
+
+  // Push: knock the robot directly away from the elephant a few units.
+  const dx = nearest.x - player.x;
+  const dy = nearest.y - player.y;
+  const len = Math.hypot(dx, dy) || 1;
+  nearest.x += (dx / len) * config.ABILITY.ELEPHANT_PUSH_UNITS;
+  nearest.y += (dy / len) * config.ABILITY.ELEPHANT_PUSH_UNITS;
+
+  // Loud: a shove feeds the panic meter just like an order. Latched here,
+  // consumed in stepPanic — the double-edged cost of brute force.
+  const worldState = world.getWorldState(roomName);
+  worldState.pendingOrders = (worldState.pendingOrders || 0) + 1;
 }
 
 /** True if the player is within RECT_SIZE of any terminal in its room. */
@@ -340,6 +566,7 @@ function orderNearestRobot(player, roomName, currentTick) {
 
 module.exports = {
   loadShared,
+  setRefs,
   isReady,
   stepPlayerHumanLikeness,
   stepRobots,

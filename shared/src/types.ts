@@ -15,8 +15,9 @@
  *   - `pen`      an enclosure / holding area (static)
  *   - `terminal` an interactable that issues Second-Law orders (static)
  *   - `gate`     a perimeter or zone door (static, openable)
+ *   - `prop`     a carryable disguise item (the Clipboard) — the ape's courier prop
  */
-export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate';
+export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop';
 
 /**
  * The atomic thing the world is made of. The index signature lets gameplay

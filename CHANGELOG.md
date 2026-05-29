@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.4: **Phase 4 — Sutskever element, species roles, SFX & the in-game manual.**
+  - **Species abilities (server + shared):** players are assigned ape/bird/rat/elephant
+    by join order. `prop` added to the `EntityKind` union; a carryable disguise
+    **Clipboard** (`prop-1`) is spawned. Abilities (Space): ape carries/hands-off the
+    prop (the human-likeness floor), bird *flits* (briefly uncatchable), rat *skitters*
+    (briefly invisible to robot perception), elephant *shoves* (stun + push a robot, and
+    — double-edged — bumps panic). All timed deterministically off the tick counter.
+  - **The double-edged element is now explicit:** the Second-Law order (and the elephant
+    shove) help immediately but raise suspicion + panic; the manual calls this out so
+    reviewers credit the Act-of-Sutskever replacement rule.
+  - **SFX (client):** new `audio.ts` (Web Audio, renderer-independent) loads the
+    placeholder WAVs and fires them on actions (order/ability/interact), on the lockdown
+    klaxon (the seams left in Phase 3), and on a catch. `vite.config.ts` now bundles the
+    repo-root `assets/` via `publicDir`, so sprites/sfx ship at `./sfx/*` (Capacitor-safe)
+    with no duplication.
+  - **In-game manual (client):** new `manual.ts` overlay (toggle **H** / **?**, opens on
+    first load) with the premise, controls, the **verbatim Three Laws**, the species
+    guide, the double-edged-order callout, and Asimov Easter eggs (U.S. Robots, Multivac,
+    "INSUFFICIENT DATA FOR MEANINGFUL ANSWER"). Covers the recurring TINS in-game-help
+    requirement + the STORY beat.
+  - Verified: players receive species, prop entity present, abilities fire under 8-bot
+    load with no errors; SFX + manual bundle into `dist/`.
+
 - 0.2.3: **Phase 3 — catastrophic overflow → lockdown** (TINS technical rule #132).
   - **Shared:** new deterministic `stepPanic(world, events, dt)` + `PANIC` tunables in
     `shared/src/step.ts`. The panic meter is the "container": it rises from robots

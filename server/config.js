@@ -31,6 +31,23 @@ module.exports = {
   // How many seconds a robot stays stood-down after being ordered (Second Law).
   ORDER_DURATION_SECS: parseFloat(process.env.ORDER_DURATION_SECS) || 2,
 
+  // Species abilities (Phase 4). Each species has one edge-triggered power fired
+  // by the 'ability' action; these are the server-orchestrated tunables. Timed
+  // effects convert seconds -> ticks via TICK_RATE (deterministic, no wall clock).
+  ABILITY: {
+    // BIRD "flit": seconds the bird is briefly uncatchable (flying over a wall).
+    BIRD_FLIT_SECS: parseFloat(process.env.BIRD_FLIT_SECS) || 1.5,
+    // RAT "skitter": seconds the rat is invisible to robot perception (squeezing
+    // through a gap / behind cover).
+    RAT_SKITTER_SECS: parseFloat(process.env.RAT_SKITTER_SECS) || 2,
+    // ELEPHANT "shove": seconds a shoved robot stays stunned (honored like an
+    // order standdown), plus the reach (multiple of RECT_SIZE) and how far the
+    // robot is knocked back (world units).
+    ELEPHANT_STUN_SECS: parseFloat(process.env.ELEPHANT_STUN_SECS) || 2,
+    ELEPHANT_REACH_MULT: parseFloat(process.env.ELEPHANT_REACH_MULT) || 2,
+    ELEPHANT_PUSH_UNITS: parseFloat(process.env.ELEPHANT_PUSH_UNITS) || 24
+  },
+
   // Environment helpers
   NODE_ENV,
   isProduction: NODE_ENV === 'production',
