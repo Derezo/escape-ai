@@ -4,6 +4,9 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.1
 
+- 0.1.2: Nicknamed the kit **KINS** ("KINS Is Not a Starter-kit") — a recursive
+  backronym in the TINS tradition. Added as a README tagline and the GitHub repo
+  description; repo name and package names unchanged.
 - 0.1.1: Split third-party attributions out of `LICENSE` into
   `THIRD_PARTY_NOTICES.md` so `LICENSE` is pure zlib text and GitHub detects the
   license. README points at the new notices file.

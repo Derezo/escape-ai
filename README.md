@@ -1,5 +1,10 @@
 # TINS 2026
 
+### KINS — *KINS Is Not a Starter-kit*
+
+> (It is, though. In the grand recursive tradition of TINS Is Not SpeedHack,
+> the name denies what the repo plainly is.)
+
 A multiplayer browser game built for the [TINS 2026](https://tins.amarillion.org/2026/)
 72-hour game jam. Browser-first, with an Android build via Capacitor.
 
