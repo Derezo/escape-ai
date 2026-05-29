@@ -28,7 +28,7 @@ import { PhaserRenderer } from './render/phaser';
 
 import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
-import { preloadSfx, unlockAudio, playSfx } from './audio';
+import { preloadSfx, unlockAudio, playSfx, type SfxName } from './audio';
 import { createManual } from './manual';
 
 // The server integrates input without clamping (server/game/engine.js), so for
@@ -117,6 +117,10 @@ async function main(): Promise<void> {
   let prevHumanLike = 0;
   // Whether we've already shown the victory banner (escaped is sticky server-side).
   let shownWin = false;
+  // Per-entity last fx.startTick we played an SFX for, so an ability activation
+  // (on ANY player/robot) fires its sound once — the audio twin of the renderer's
+  // visual fx edge. Distance-scaled so 20 players don't make a cacophony.
+  const fxSfxSeen = new Map<string, number>();
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -274,6 +278,25 @@ async function main(): Promise<void> {
     for (const e of list) e._local = myId !== undefined && e.id === myId;
     renderer.syncEntities(list);
 
+    // Ability SFX for ANY entity, on the fx.startTick rising edge (mirrors the
+    // renderer's visual fx edge). Volume falls off with distance to the local
+    // player so a busy room doesn't turn into a wall of sound.
+    const meEnt = myId ? entities.get(myId) : undefined;
+    for (const e of list) {
+      const fx = e.fx;
+      if (!fx || typeof fx.startTick !== 'number') continue;
+      if (fxSfxSeen.get(e.id) === fx.startTick) continue;
+      fxSfxSeen.set(e.id, fx.startTick);
+      const name = sfxForFx(fx.kind as string);
+      if (!name) continue;
+      let vol = 0.6;
+      if (meEnt && typeof meEnt.x === 'number' && typeof e.x === 'number') {
+        const d = Math.hypot((e.x as number) - (meEnt.x as number), (e.y as number) - (meEnt.y as number));
+        vol = Math.max(0.08, 0.6 * (1 - Math.min(1, d / 400)));
+      }
+      playSfx(name, vol);
+    }
+
     const lat = net.latency >= 0 ? `${net.latency} ms` : '...';
     // Panic/lockdown come from the snapshot's world state; show placeholders
     // until the first snapshot that carries it. The panic meter renders as a
@@ -347,6 +370,20 @@ async function main(): Promise<void> {
 function bar(value: number, cells = 5): string {
   const filled = Math.max(0, Math.min(cells, Math.round(value * cells)));
   return '▓'.repeat(filled) + '░'.repeat(cells - filled);
+}
+
+/** Map an ability fx kind to its SFX name (undefined → no sound). */
+function sfxForFx(kind: string): SfxName | undefined {
+  switch (kind) {
+    case 'flit': case 'leap': case 'burrow': case 'dash': return 'whoosh';
+    case 'shove': return 'thud';
+    case 'cloak': case 'hush': return 'sparkle2';
+    case 'dazzle': return 'dazzle';
+    case 'skitter': case 'mimic': return 'blip';
+    case 'carry': case 'decoy': return 'pickup';
+    case 'stink': case 'shell': return 'select';
+    default: return undefined;
+  }
 }
 
 /** A short random handle so multiple tabs are visually distinct. */

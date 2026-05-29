@@ -73,6 +73,12 @@ const SFX = [
   { name: 'hit', wave: 'square', freq: 200, ms: 110, sweep: 90 }, // thud down
   { name: 'error', wave: 'sawtooth', freq: 160, ms: 220 }, // harsh buzz
   { name: 'jump', wave: 'sine', freq: 392, ms: 160, sweep: 880 }, // boing up
+  // Ability FX sounds (Phase E). Map: flit/leap/burrow → whoosh, dash → whoosh,
+  // shove → thud, cloak/hush → sparkle2 (calm), peacock dazzle → dazzle (bright).
+  { name: 'whoosh', wave: 'sine', freq: 300, ms: 200, sweep: 1200 }, // airy rising whoosh
+  { name: 'thud', wave: 'square', freq: 140, ms: 160, sweep: 60 }, // heavy impact down
+  { name: 'sparkle2', wave: 'triangle', freq: 1175, ms: 220, sweep: 1568 }, // soft chime up
+  { name: 'dazzle', wave: 'sine', freq: 660, ms: 260, sweep: 1760 }, // bright flourish up
 ];
 
 // --- oscillators ------------------------------------------------------------

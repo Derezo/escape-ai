@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.15: **Spectacular ability FX (Phase E of the visual-polish plan).** Abilities
+  fired with no visual feedback; now every activation throws a polished, ability-tuned
+  effect that any client sees for any player:
+  - **Renderer FX layer (`phaser.ts`):** a `DEPTH_FX` layer + a generated soft-dot
+    particle texture + a `fireFx` dispatcher driven by the `fx.startTick` rising edge
+    (each activation fires once). Per-ability bursts: elephant **shove** shockwave
+    ring + particle blast + camera shake; peacock **dazzle** radial burst + screen
+    flash; bird **flit** / kangaroo **leap** scale-pop + feather/dust puff; chameleon
+    **cloak** / skunk **stink** / tortoise **shell** / ape **carry** sustained glow;
+    cheetah **dash** speed-streak; parrot **mimic** green sound-wave rings; owl **hush**
+    calming blue wave; mole **burrow** dirt spray; rat **skitter** dust; fox **decoy**
+    puff. Sustained glows follow the entity and clear when the effect ends.
+  - **Perf guards:** small particle counts (≤16) + short lifespans (≤600ms), emitters
+    auto-destroyed, camera shake/flash **coalesced to one per frame** (strongest shake
+    wins) so a burst of simultaneous abilities can't stack into nausea.
+  - **Remote ability SFX (`main.ts` + `audio.ts`):** four new placeholder sounds
+    (whoosh/thud/sparkle2/dazzle via the zero-dep SFX generator); the render loop fires
+    an ability's SFX for ANY entity on the same `fx.startTick` edge, volume scaled by
+    distance to the local player so a busy room doesn't become a wall of sound.
+  - Verified: shared + client build/typecheck clean; a headless-Chrome load confirms
+    Phaser boots with no runtime errors (and gracefully uses the Canvas renderer +
+    halo fallback when WebGL/preFX is unavailable). Fixed an init bug found by that
+    test (resolve on the game READY event, not the not-yet-wired scene emitter).
+
 - 0.2.14: **The whole zoo — 15 species spritesheets (Phase D of the visual-polish
   plan).** With the contract locked and the ape proven, the 14 remaining species +
   the keeper-robot were built in parallel (one focused builder file each), all against

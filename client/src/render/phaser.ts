@@ -55,6 +55,10 @@ const SPECIES_TINT: Record<string, number> = {
 const DEPTH_PEN = 0;
 const DEPTH_PROP = 1; // terminals / gates / hazards
 const DEPTH_MOBILE = 2; // animals / robots
+const DEPTH_FX = 3; // ability effects, glows, particles (above everything)
+
+/** A soft round particle texture key, generated once in create(). */
+const DOT_KEY = '__fxdot';
 
 /** A robot's behavioural mode, mirrored from the snapshot for visual feedback. */
 type RobotMode = 'idle' | 'frozen' | 'pursue' | 'ordered';
@@ -87,6 +91,10 @@ interface EntityView {
   humanLikeness?: number;
   mode?: RobotMode;
   suspicion?: number;
+  /** The fx.startTick we last fired a burst for, so each activation fires once. */
+  fxStartTick?: number;
+  /** A sustained glow/overlay (cloak/carry/shell/stink), cleared when fx ends. */
+  fxGlow?: Phaser.GameObjects.Arc;
 }
 
 /** humanLikeness at/above this reads as "human" — mirrors the server freeze threshold. */
@@ -105,6 +113,10 @@ class WorldScene extends Phaser.Scene {
   private atlasReady = false;
   /** Species that have a full set of atlas frames (so anims exist for them). */
   private animatedSpecies = new Set<string>();
+  /** Strongest camera-shake requested this frame (coalesced so shakes don't stack). */
+  private pendingShake = 0;
+  /** Whether a screen flash was requested this frame (coalesced to one). */
+  private pendingFlash = false;
 
   constructor() {
     super('world');
@@ -123,6 +135,17 @@ class WorldScene extends Phaser.Scene {
   create(): void {
     this.atlasReady = this.textures.exists(ATLAS_KEY);
     if (this.atlasReady) this.buildAnimations();
+    this.makeDotTexture();
+  }
+
+  /** Generate a soft round particle texture once (a radial-ish white dot). */
+  private makeDotTexture(): void {
+    if (this.textures.exists(DOT_KEY)) return;
+    const g = this.add.graphics();
+    g.fillStyle(0xffffff, 1).fillCircle(8, 8, 8);
+    g.fillStyle(0xffffff, 0.5).fillCircle(8, 8, 5);
+    g.generateTexture(DOT_KEY, 16, 16);
+    g.destroy();
   }
 
   /**
@@ -185,6 +208,16 @@ class WorldScene extends Phaser.Scene {
   update(_time: number, delta: number): void {
     this.upsert(this.pending);
     this.interpolate(delta / 1000);
+    // Apply the coalesced camera FX once per frame (strongest shake wins; one
+    // flash) so a burst of simultaneous abilities can't stack into nausea.
+    if (this.pendingShake > 0) {
+      this.cameras.main.shake(180, this.pendingShake);
+      this.pendingShake = 0;
+    }
+    if (this.pendingFlash) {
+      this.cameras.main.flash(150, 255, 255, 255, false);
+      this.pendingFlash = false;
+    }
   }
 
   /** Upsert (create/move) present entities, destroy vanished ones. */
@@ -205,11 +238,13 @@ class WorldScene extends Phaser.Scene {
         }
         this.updateAnimation(view, e);
         this.restyle(view, e);
+        this.updateFx(view, e);
       } else {
         if (view) this.destroyView(view);
         const created = this.createView(e);
         this.updateAnimation(created, e);
         this.restyle(created, e);
+        this.updateFx(created, e);
         this.views.set(e.id, created);
       }
     }
@@ -235,6 +270,7 @@ class WorldScene extends Phaser.Scene {
       view.label?.setPosition(x, y - SPRITE_SIZE * 0.55);
       view.ring?.setPosition(x, y);
       view.halo?.setPosition(x, y);
+      view.fxGlow?.setPosition(x, y);
     }
   }
 
@@ -350,6 +386,150 @@ class WorldScene extends Phaser.Scene {
         .setDepth(DEPTH_MOBILE);
     }
     view.ring.setStrokeStyle(2, 0xffa500, 0.3 + 0.7 * Math.min(1, suspicion)).setVisible(true);
+  }
+
+  /**
+   * Detect a NEW ability activation (the fx.startTick rising edge) and fire a
+   * one-shot burst; manage sustained glows (cloak/carry/shell/stink) that last
+   * for the effect's duration. Cheap no-op when fx is absent/unchanged.
+   */
+  private updateFx(view: EntityView, e: Entity): void {
+    const fx = e.fx;
+    if (!fx || typeof fx.startTick !== 'number') {
+      // Effect cleared: drop any sustained glow.
+      if (view.fxGlow) { view.fxGlow.destroy(); view.fxGlow = undefined; }
+      return;
+    }
+    if (fx.startTick === view.fxStartTick) return; // already handled this activation
+    view.fxStartTick = fx.startTick;
+    this.fireFx(view, fx.kind);
+  }
+
+  /** A short-lived particle burst at a view, using the soft dot texture. */
+  private burst(
+    view: EntityView,
+    color: number,
+    opts: { count?: number; speed?: number; life?: number; scale?: number; gravityY?: number } = {},
+  ): void {
+    const { count = 12, speed = 70, life = 380, scale = 0.6, gravityY = 0 } = opts;
+    const emitter = this.add.particles(view.renderX, view.renderY, DOT_KEY, {
+      lifespan: life,
+      speed: { min: speed * 0.4, max: speed },
+      scale: { start: scale, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      tint: color,
+      gravityY,
+      quantity: count,
+      emitting: false,
+    });
+    emitter.setDepth(DEPTH_FX);
+    emitter.explode(count);
+    // Auto-clean after the longest particle dies.
+    this.time.delayedCall(life + 60, () => emitter.destroy());
+  }
+
+  /** An expanding ring (shockwave / sound-wave / calm-wave) tween. */
+  private ring(view: EntityView, color: number, opts: { r0?: number; r1?: number; life?: number; width?: number } = {}): void {
+    const { r0 = 8, r1 = 70, life = 260, width = 3 } = opts;
+    const arc = this.add
+      .circle(view.renderX, view.renderY, r0)
+      .setStrokeStyle(width, color, 1)
+      .setFillStyle(0, 0)
+      .setDepth(DEPTH_FX);
+    this.tweens.add({
+      targets: arc,
+      radius: r1,
+      alpha: 0,
+      duration: life,
+      ease: 'Cubic.easeOut',
+      onComplete: () => arc.destroy(),
+    });
+  }
+
+  /** A sustained glow ring around a view for the effect's duration (cloak/carry/shell). */
+  private sustainGlow(view: EntityView, color: number): void {
+    if (!view.fxGlow) {
+      view.fxGlow = this.add
+        .circle(view.renderX, view.renderY, SPRITE_SIZE * 0.5)
+        .setStrokeStyle(3, color, 0.8)
+        .setFillStyle(0, 0)
+        .setDepth(DEPTH_FX);
+    } else {
+      view.fxGlow.setStrokeStyle(3, color, 0.8);
+    }
+  }
+
+  /** A quick scale-pop tween on the body (flit/leap). */
+  private pop(view: EntityView): void {
+    const target = view.body;
+    this.tweens.add({ targets: target, scaleY: 1.3, scaleX: 0.9, duration: 110, yoyo: true, ease: 'Sine.easeOut' });
+  }
+
+  /**
+   * Fire the spectacular one-shot FX for an ability activation. Each is tuned to
+   * its ability's flavour + colour; perf-guarded (small particle counts, short
+   * lifespans, coalesced camera shake/flash). Sustained effects also set a glow.
+   */
+  private fireFx(view: EntityView, kind: string): void {
+    switch (kind) {
+      case 'carry': // ape: warm gold sustained glow + tiny sparkle
+        this.sustainGlow(view, 0xffd700);
+        this.burst(view, 0xffd700, { count: 8, speed: 40, life: 300, gravityY: -30 });
+        break;
+      case 'flit': // bird: cyan scale-pop + upward feather puff
+        this.pop(view);
+        this.burst(view, 0x4cc9f0, { count: 12, speed: 80, life: 420, gravityY: -60 });
+        break;
+      case 'skitter': // rat: gray dust puff at the feet
+        this.burst(view, 0x9aa3ad, { count: 10, speed: 50, life: 300, gravityY: 40 });
+        break;
+      case 'shove': // elephant: shockwave ring + particle blast + camera shake
+        this.ring(view, 0x5a6b7a, { r0: 10, r1: 85, life: 280, width: 4 });
+        this.burst(view, 0xbfc6cf, { count: 16, speed: 110, life: 360 });
+        this.pendingShake = Math.max(this.pendingShake, 0.012);
+        break;
+      case 'cloak': // chameleon: green sustained shimmer + soft burst
+        this.sustainGlow(view, 0x6fcf97);
+        this.burst(view, 0x6fcf97, { count: 10, speed: 50, life: 400 });
+        break;
+      case 'dazzle': // peacock: bright radial burst + flash + small shake
+        this.ring(view, 0x2e6fd6, { r0: 8, r1: 100, life: 320, width: 3 });
+        this.burst(view, 0x1f8a8a, { count: 16, speed: 120, life: 420 });
+        this.pendingFlash = true;
+        this.pendingShake = Math.max(this.pendingShake, 0.006);
+        break;
+      case 'stink': // skunk: sustained green/brown gas cloud
+        this.sustainGlow(view, 0x9bb04a);
+        this.burst(view, 0x6b7d3a, { count: 14, speed: 30, life: 600, gravityY: -20 });
+        break;
+      case 'burrow': // mole: brown dirt spray (the dig-down)
+        this.burst(view, 0x6b4f2a, { count: 14, speed: 90, life: 360, gravityY: 60 });
+        break;
+      case 'dash': // cheetah: hot-yellow speed streak + small shake
+        this.burst(view, 0xffd24a, { count: 12, speed: 130, life: 300 });
+        this.pendingShake = Math.max(this.pendingShake, 0.004);
+        break;
+      case 'mimic': // parrot: green sound-wave rings (no red — distinct from order)
+        this.ring(view, 0x3aa84a, { r0: 6, r1: 70, life: 320, width: 2 });
+        this.ring(view, 0x3aa84a, { r0: 6, r1: 50, life: 220, width: 2 });
+        break;
+      case 'shell': // tortoise: stone-gray sustained glow + dust ring
+        this.sustainGlow(view, 0x9a8a5a);
+        this.ring(view, 0x7a6a3a, { r0: 8, r1: 40, life: 240, width: 3 });
+        break;
+      case 'leap': // kangaroo: pop + dust + sandy puff
+        this.pop(view);
+        this.burst(view, 0xc9925b, { count: 10, speed: 70, life: 360, gravityY: 50 });
+        break;
+      case 'hush': // owl: calming blue wave (the anti-lockdown colour)
+        this.ring(view, 0x6aa0e0, { r0: 10, r1: 120, life: 600, width: 4 });
+        break;
+      case 'decoy': // fox: orange spawn puff
+        this.burst(view, 0xd2691e, { count: 12, speed: 80, life: 360 });
+        break;
+      default:
+        break;
+    }
   }
 
   /** Build the per-kind visual for a freshly-seen entity. */
@@ -520,6 +700,7 @@ class WorldScene extends Phaser.Scene {
     view.label?.destroy();
     view.ring?.destroy();
     view.halo?.destroy();
+    view.fxGlow?.destroy();
   }
 }
 
@@ -595,10 +776,12 @@ export class PhaserRenderer implements IRenderer {
       scene: this.scene,
     });
 
-    // Resolve once the scene's create() has run (after the loader completes), so
-    // the atlas + animations are ready before the first entity is drawn.
+    // Resolve once Phaser has booted. The boot sequence runs the scene's
+    // preload (atlas load) → create (anims + dot texture) BEFORE firing the
+    // game READY event, so by the time this resolves the atlas + animations are
+    // ready and the first syncEntities is safe.
     await new Promise<void>((resolve) => {
-      this.scene!.events.once(Phaser.Scenes.Events.CREATE, () => resolve());
+      this.game!.events.once(Phaser.Core.Events.READY, () => resolve());
     });
   }
 

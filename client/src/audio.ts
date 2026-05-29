@@ -20,6 +20,11 @@ const SFX_FILES = {
   hit: './sfx/hit.wav',
   error: './sfx/error.wav',
   jump: './sfx/jump.wav',
+  // Ability FX sounds (Phase E).
+  whoosh: './sfx/whoosh.wav',
+  thud: './sfx/thud.wav',
+  sparkle2: './sfx/sparkle2.wav',
+  dazzle: './sfx/dazzle.wav',
 } as const;
 
 export type SfxName = keyof typeof SFX_FILES;
