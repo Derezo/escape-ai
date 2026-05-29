@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.16: **Docs + integration validation (Phase F of the visual-polish plan).**
+  Updated `README.md` (Assets section → the animated-spritesheet pipeline +
+  sharp/clean-clone note + shape fallback; How-to-play → the 14-species ability
+  roster) and `docs/PLAYBOOK.md` (GRAPHICS quick-commands → gen-sprites/build-atlas/
+  verify-atlas/check-facing). Full-library consistency review (all 15 species × 8
+  directions) confirmed correct mirroring, hidden-face back views, and cohesive
+  stroke/shading/anchoring. Integration validation: shared + client build/typecheck
+  clean, check-facing + verify-atlas green, the client still builds + runs with the
+  atlas removed (shape fallback), and a headless-Chrome full-stack load boots Phaser
+  with no runtime errors against a live server.
+
 - 0.2.15: **Spectacular ability FX (Phase E of the visual-polish plan).** Abilities
   fired with no visual feedback; now every activation throws a polished, ability-tuned
   effect that any client sees for any player:

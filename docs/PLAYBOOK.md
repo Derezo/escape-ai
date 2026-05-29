@@ -108,10 +108,18 @@ contract, `shared/`, server, and entity shapes are unchanged.
 ## Appendix — generator & deploy quick commands
 
 ```bash
-node scripts/gen-placeholder-sprites.js          # SVG placeholders -> assets/sprites/
-node scripts/gen-placeholder-sprites.js --force  # overwrite after editing SPRITES
+# Animated 8-dir sprite atlas (the zoo). gen + verify are zero-dep; build needs sharp.
+node scripts/gen-sprites.js                       # vector SVG frames -> assets/sprites/frames/
+node scripts/build-atlas.js                       # pack -> assets/sprites/atlas.{png,json}
+node scripts/verify-atlas.js                      # headless gate (all keys present)
+cd scripts && npm run sprites                      # all three (force regen)
+node scripts/check-facing.js                      # facingFromVec determinism check (build shared first)
+
+node scripts/gen-placeholder-sprites.js          # legacy static single-shape SVGs (fallback)
 node scripts/gen-placeholder-sfx.js              # WAV blips -> assets/sfx/
 ./scripts/deploy-server.sh                       # rsync+pm2 deploy (EDIT HOST/REMOTE_PATH first)
 ```
-Both generators are **zero-dependency** (pure Node + `fs`) so they run on a clean
-clone. The deploy script needs `HOST`/`REMOTE_PATH` filled in at its top.
+The frame generator + SFX generator + verifiers are **zero-dependency** (pure Node +
+`fs`); only `build-atlas.js` needs `sharp` (a `scripts/` dev dep). The committed
+`assets/sprites/atlas.{png,json}` means a clean clone runs without sharp. The deploy
+script needs `HOST`/`REMOTE_PATH` filled in at its top.

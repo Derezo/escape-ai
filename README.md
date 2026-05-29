@@ -100,6 +100,13 @@ room as an escaped animal. The manual opens on first load (toggle with **H**/**?
 reach the **gate** on the right edge to escape. The HUD shows latency, the panic
 meter, your human-likeness, and the lockdown state.
 
+You're assigned one of **14 playable species** (cycling by join order), each with a
+distinct, Three-Laws-tied **Space** ability — disguise (ape carry, chameleon cloak,
+tortoise shell), evasion (bird flit, rat skitter, mole burrow, kangaroo leap, cheetah
+dash), robot-control (elephant shove, peacock dazzle, parrot mimic, skunk stink), and
+panic-meta (owl hush, fox decoy). Each fires a spectacular on-screen effect every
+player can see.
+
 > Build `shared/` first (step 1) — the server loads its compiled `dist/` at boot.
 
 Point the client at another server with `VITE_SERVER_URL`:
@@ -132,16 +139,33 @@ npx cap open android        # then Build > Build APK in Android Studio
 
 ## Assets
 
-Placeholder art and audio generate with zero external dependencies:
+**Animated sprite library (the zoo).** Creatures render as 8-directional animated
+sprites from a packed atlas, generated programmatically from vector SVG — a reusable
+template system (`scripts/sprites/`) where each species declares geometry against a
+shared body archetype (quadruped / biped / bird / serpent / robot) so all 15 creatures
+stay cohesive and symmetric. The pipeline:
 
 ```bash
-node scripts/gen-placeholder-sprites.js   # → assets/sprites/*.svg
+node scripts/gen-sprites.js              # vector SVG frames → assets/sprites/frames/ (zero-dep)
+node scripts/build-atlas.js              # rasterise + pack → assets/sprites/atlas.{png,json} (needs sharp)
+node scripts/verify-atlas.js             # headless gate: every frame key present, no orphans
+# or all three:  cd scripts && npm run sprites
+```
+
+`sharp` is a `scripts/`-only dev dependency; the **committed** `atlas.{png,json}` means a
+clean clone runs without it. If the atlas is missing, the renderer falls back to the
+original geometric shapes (the kit still boots with zero art). Edit a species in
+`scripts/sprites/species/<name>.js` (or add one + a `registry.js` line) and rerun.
+
+Audio (placeholder, zero deps):
+
+```bash
 node scripts/gen-placeholder-sfx.js       # → assets/sfx/*.wav
 ```
 
-Swap in real assets at hour 0 per the Graphics/Sound rules; heavier
-Modia-derived generators (sharp / ElevenLabs / Suno) are documented in the
-playbook and installed only if a rule calls for them.
+`scripts/gen-placeholder-sprites.js` still emits the simple static single-shape SVGs as
+a fallback reference. Heavier Modia-derived generators (ElevenLabs / Suno) are
+documented in the playbook and installed only if a rule calls for them.
 
 ## Development workflow
 
