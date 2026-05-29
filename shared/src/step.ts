@@ -418,3 +418,96 @@ export function applyInput(
   entity.y = clamp(entity.y + input.dy * speed * dt, bounds.minY, bounds.maxY);
   return entity;
 }
+
+// ---------------------------------------------------------------------------
+// Collision-aware movement against a tile solidity grid (both sides, identical)
+//
+// The tilemap world (shared/src/world.ts) gives every cell a solid flag. Movement
+// must stop at walls/fences/trunks/water and SLIDE along them. This lives here, in
+// the deterministic core, so the server (authority) and the client (prediction)
+// integrate movement bit-identically — the same guarantee applyInput gives, now
+// with collision. Kept dependency-free (no world.ts import) to avoid a cycle:
+// step.ts is the lowest-level module. The collision grid + dims + tile size are
+// passed in; the world edge is treated as solid (out-of-bounds → solid) so a
+// player can only leave through the gate gap.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the cell at tile (tx, ty) is solid. Out-of-bounds is SOLID (the world
+ * edge is a wall). Mirrors world.ts `tileSolid` but inlined here to keep step.ts
+ * free of any world.ts import (which would create step→world→rng→step).
+ */
+function cellSolid(collision: Uint8Array, mapW: number, mapH: number, tx: number, ty: number): boolean {
+  if (tx < 0 || ty < 0 || tx >= mapW || ty >= mapH) return true;
+  return collision[ty * mapW + tx] === 1;
+}
+
+/**
+ * Whether an axis-aligned box centered at (cx, cy) with half-extent `radius`
+ * overlaps any solid tile. Samples every tile cell the box's extent touches.
+ */
+function boxHitsSolid(
+  cx: number,
+  cy: number,
+  radius: number,
+  collision: Uint8Array,
+  mapW: number,
+  mapH: number,
+  tile: number,
+): boolean {
+  const minTx = Math.floor((cx - radius) / tile);
+  const maxTx = Math.floor((cx + radius) / tile);
+  const minTy = Math.floor((cy - radius) / tile);
+  const maxTy = Math.floor((cy + radius) / tile);
+  for (let ty = minTy; ty <= maxTy; ty++) {
+    for (let tx = minTx; tx <= maxTx; tx++) {
+      if (cellSolid(collision, mapW, mapH, tx, ty)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Advance an entity one step with axis-separated sliding collision, IN PLACE.
+ *
+ * The entity is treated as an AABB of half-extent `radius`. We try the X move
+ * first: if the box at the new X (current Y) overlaps a solid tile we reject the X
+ * move (keep x), else commit it. Then we try Y independently with the committed X.
+ * Axis separation is what produces SLIDING — pushing into a wall diagonally keeps
+ * the clear axis. The world edge is solid, so positions are implicitly clamped to
+ * [radius, mapW*tile - radius] without a separate clamp call.
+ *
+ * PURE + DETERMINISTIC given its args: server and client call this with the same
+ * collision grid (regenerated from the same seed), radius, and dt, so prediction
+ * and authority agree and there is no rubber-banding.
+ *
+ * @param entity     mutated in place ({x, y})
+ * @param dx,dy      input axes (typically in [-1, 1])
+ * @param dt         seconds this step
+ * @param speed      world units/sec at full axis deflection
+ * @param collision  solidity grid (1 = solid), length mapW*mapH, row-major
+ * @param mapW,mapH  grid size in tiles
+ * @param tile       tile size in world units
+ * @param radius     entity half-extent in world units
+ */
+export function moveWithCollision(
+  entity: { x: number; y: number },
+  dx: number,
+  dy: number,
+  dt: number,
+  speed: number,
+  collision: Uint8Array,
+  mapW: number,
+  mapH: number,
+  tile: number,
+  radius: number,
+): void {
+  const nx = entity.x + dx * speed * dt;
+  if (!boxHitsSolid(nx, entity.y, radius, collision, mapW, mapH, tile)) {
+    entity.x = nx;
+  }
+  const ny = entity.y + dy * speed * dt;
+  if (!boxHitsSolid(entity.x, ny, radius, collision, mapW, mapH, tile)) {
+    entity.y = ny;
+  }
+}

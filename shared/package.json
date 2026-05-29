@@ -27,7 +27,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/world.test.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
     "clean": "rm -rf dist"
   },
   "devDependencies": {

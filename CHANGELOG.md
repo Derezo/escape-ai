@@ -4,6 +4,24 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.27: **Collision-aware movement + the `map` net event (Phases 2 & 3).** The two pieces
+  that let the tilemap world actually block movement and reach the client.
+  - **`shared/src/step.ts` — `moveWithCollision(entity, dx, dy, dt, speed, collision, w, h,
+    tile, radius)`.** Axis-separated sliding collision against a solidity grid: try X (reject if
+    the entity's AABB hits a solid tile, else commit), then Y independently — so pushing into a
+    wall diagonally keeps the clear axis (you slide). Out-of-bounds is solid, so the world edge
+    is a wall and positions are implicitly clamped (you leave only via the gate). Pure +
+    deterministic, kept dependency-free (no world.ts import → no cycle), so server authority and
+    client prediction integrate identically. `applyInput` stays for now (removed in cleanup once
+    nothing imports it).
+  - **`shared/src/net.ts` — `SERVER_EVENTS.MAP='map'` + `MapMsg {seed, version, tile, w, h}`.**
+    Seed-only map transfer: the server sends just the seed (a few bytes); the client regenerates
+    the identical `WorldMap` via `generateWorld`. The 16k-tile map never rides the per-tick
+    snapshot. Added to `ServerToClientEvents`.
+  - **New `shared/test/collision.test.mjs`**: stops-at-wall-face, slides-along-wall,
+    can't-leave-the-world (against a real `generateWorld` map), and free-movement-equals-speed*dt.
+    `shared` test script now globs `test/*.test.mjs` (10/10 pass). `client` build green.
+
 - 0.2.26: **Full deterministic zoo generator (Phase 1).** `generateWorld(seed)` in
   `shared/src/world.ts` is now the real plot/zone layout (was a placeholder grass field):
   a grass field inside a walled perimeter with one escape gate, a PAVED avenue skeleton that

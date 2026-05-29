@@ -23,6 +23,7 @@ export const SERVER_EVENTS = {
   LOBBY_STATE: 'lobby:state',
   SNAPSHOT: 'snapshot',
   PONG: 'pong',
+  MAP: 'map',
 } as const;
 
 export type ClientEvent = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
@@ -152,6 +153,28 @@ export interface Pong {
 }
 
 /**
+ * Payload for `map` — sent ONCE per join (and on room change), never per tick.
+ *
+ * SEED-ONLY transfer: the 128×128 tilemap (16,384 tiles × 3 layers) would be
+ * megabytes on the wire and must never ride the per-tick snapshot. Instead the
+ * server sends just the seed it generated the room's world from; each client runs
+ * the IDENTICAL deterministic `generateWorld(seed)` (shared/src/world.ts) to
+ * reconstruct the same `WorldMap` for rendering AND collision-aware prediction.
+ * `version` lets the client assert generator parity (it must equal the shared
+ * `WORLD_GEN_VERSION`); `tile`/`w`/`h` let it size its tilemap before generating.
+ * Gameplay entities derived from the map (gate, terminals, housing decoys, quest
+ * objects) are still server-owned and arrive via `snapshot` — the client never
+ * invents them; it only regenerates the static tiles.
+ */
+export interface MapMsg {
+  seed: number;
+  version: number;
+  tile: number;
+  w: number;
+  h: number;
+}
+
+/**
  * Optional typed maps for socket.io's generic ServerToClientEvents /
  * ClientToServerEvents. Importing these is not required but documents the wire.
  */
@@ -167,4 +190,5 @@ export interface ServerToClientEvents {
   [SERVER_EVENTS.LOBBY_STATE]: (payload: LobbyState) => void;
   [SERVER_EVENTS.SNAPSHOT]: (payload: SnapshotMsg) => void;
   [SERVER_EVENTS.PONG]: (payload: Pong) => void;
+  [SERVER_EVENTS.MAP]: (payload: MapMsg) => void;
 }
