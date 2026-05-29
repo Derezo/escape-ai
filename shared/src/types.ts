@@ -17,7 +17,7 @@
  *   - `gate`     a perimeter or zone door (static, openable)
  *   - `prop`     a carryable disguise item (the Clipboard) — the ape's courier prop
  */
-export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop' | 'hazard';
+export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop' | 'hazard' | 'questObject';
 
 /**
  * The 8 facing directions in screen space (y-down), used to pick the right

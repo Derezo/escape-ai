@@ -29,11 +29,6 @@ const config = require('../config');
 const world = require('./world');
 const stealth = require('./stealth');
 
-/** Clamp a coordinate into the zoo bounds [0, WORLD_MAX]. */
-function clampWorld(v) {
-  return v < 0 ? 0 : v > config.WORLD_MAX ? config.WORLD_MAX : v;
-}
-
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
 const FULL_REFRESH_INTERVAL = 100;
@@ -74,6 +69,9 @@ async function init(socketIo, players, roomsMap, dbModule) {
   stealth.setRefs(players, roomsMap);
   // Load + cache the shared stealth math once, before the loop runs.
   await stealth.loadShared();
+  // Load + cache the shared world generator once, before any room is created —
+  // getOrCreateRoomWorld throws if a room is requested before this resolves.
+  await world.loadSharedWorld();
 }
 
 function start() {
@@ -138,12 +136,12 @@ function integratePlayers(dt) {
       // edge, applied by stepPlayerHumanLikeness via the shared curve).
       const dashing = (player.dashUntilTick || 0) > currentTick;
       const speed = stealth.moveSpeed(input.sprint) * (dashing ? config.ABILITY.CHEETAH_SPEED_MULT : 1);
-      player.x += dx * speed * dt;
-      player.y += dy * speed * dt;
-      // Keep players inside the zoo (0..WORLD_MAX). The gate is the only way out
-      // (see checkEscape); without this they could just walk off the map.
-      player.x = clampWorld(player.x);
-      player.y = clampWorld(player.y);
+      // Collision-aware integration: axis-separated sliding against the room's
+      // tile collision grid (OOB is solid, so the perimeter wall keeps players
+      // in — the gate is the only non-solid gap, see checkEscape). The shared
+      // moveWithCollision math lives in step.js; stealth.js owns the cached
+      // module + the room-map lookup, so we go through its wrapper.
+      stealth.movePlayerWithCollision(player, dx, dy, dt, speed, player.room);
     }
 
     // Directional facing for sprite animation. Derived from the same authoritative

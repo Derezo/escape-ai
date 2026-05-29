@@ -38,23 +38,6 @@ function speciesRosterKeys() {
   return keys.length ? keys : SPECIES_FALLBACK;
 }
 
-// Spawn players on a grid in the world's lower-left corner, stepping right then
-// wrapping down. Keeps them clear of the world props spawned by game/world.js.
-const SPAWN_ORIGIN_X = 50;
-const SPAWN_ORIGIN_Y = 50;
-const SPAWN_STEP = 40;
-const SPAWN_COLS = 5;
-
-/** Deterministic spawn position for the Nth joiner of a room. */
-function spawnPositionFor(joinIndex) {
-  const col = joinIndex % SPAWN_COLS;
-  const row = Math.floor(joinIndex / SPAWN_COLS);
-  return {
-    x: SPAWN_ORIGIN_X + col * SPAWN_STEP,
-    y: SPAWN_ORIGIN_Y + row * SPAWN_STEP
-  };
-}
-
 /**
  * @param {import('socket.io').Socket} socket
  * @param {object} deps  shared dependencies (see socket/index.js)
@@ -83,14 +66,20 @@ function register(socket, deps) {
       leaveRoom(socket, connectedPlayers, rooms, existing.room);
     }
 
-    // Ensure the room's world (static props + WorldState) exists before the
-    // first player starts receiving snapshots for it.
+    // Ensure the room's world (generated map + entities + WorldState) exists
+    // before the first player starts receiving snapshots for it.
     world.getOrCreateRoomWorld(room);
 
-    // Deterministically spread spawns so players don't all stack on the origin.
+    // Deterministically spread spawns over the MAP's spawn points (just inside
+    // the gate) so players don't all stack on one tile. The per-room join counter
+    // (climbs across leaves) keeps concurrent joiners off the same slot; we cycle
+    // through the spawns list by join index.
     const joinIndex = joinCountByRoom.get(room) || 0;
     joinCountByRoom.set(room, joinIndex + 1);
-    const spawn = spawnPositionFor(joinIndex);
+    const rm = world.getRoomMap(room);
+    const spawn = rm.spawns.length
+      ? rm.spawns[joinIndex % rm.spawns.length]
+      : { x: 50, y: 50 };
 
     // Species: honor the player's pick (payload.species, or the one stashed at
     // auth time) when it's a valid playable species; otherwise assign one off the
@@ -159,6 +148,15 @@ function register(socket, deps) {
     state.room = room;
     state.playerId = player.id;
     state.name = name;
+
+    // Ship the room's map SEED (not the tiles) to the joining socket only, so it
+    // regenerates the identical tilemap via the shared generateWorld(seed) for
+    // rendering AND collision-aware prediction. The server owns the seed
+    // (seedFromString(room)); the client never computes it, so there's no parity
+    // risk on the seed itself. The event name is the literal 'map' (matches
+    // SERVER_EVENTS.MAP in shared/src/net.ts; the server is CJS so we don't import
+    // the ESM net module). Payload shape mirrors MapMsg {seed, version, tile, w, h}.
+    socket.emit('map', world.getMapMeta(room));
 
     broadcastLobbyState(io, connectedPlayers, rooms, room);
   });

@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.28: **Server runs on the generated world: map-derived entities, real collision,
+  seed-on-join (Phase 4).** The hardcoded starter layout is gone — the authoritative server
+  now generates each room's world from a per-room seed and plays on it.
+  - **`server/game/world.js`:** dynamic-loads `shared/dist/world.js`+`rng.js` (mirrors the
+    stealth loader, awaited in `engine.init`), seeds each room with `seedFromString(roomName)`,
+    and **`spawnFromMap(map)`** replaces `spawnStarterLayout` — it materializes `entitySpecs`
+    into entities (gate, terminals, the Clipboard prop, 6 robots, 14 per-species decoy animals
+    in their enclosures, 14 quest objects with `meta`). New accessors `getRoomMap`
+    (collision+dims+tile+spawns), `getMapMeta` (the map-event payload), `isSolidAtRoom`.
+  - **Collision is enforced authoritatively.** `engine.integratePlayers` moves players via a new
+    `stealth.movePlayerWithCollision` (the shared axis-separated `moveWithCollision` against the
+    room's grid, radius `RECT_SIZE*0.4`). Robots pursue/patrol and idle decoys are collision-aware
+    too — they hold at walls/fences instead of tunnelling (still honoring the Third-Law hazard
+    check). Mole/kangaroo teleports cancel if the destination tile is solid. Catch/respawn now
+    return players to the map's spawn point, not the old (50,50).
+  - **`server/socket/lobby.js`:** spawns players from `map.spawns[...]` and `emit('map', …)` to the
+    joining socket (seed-only). **`server/config.js`:** `WORLD_MAX` default 1000→4096 (= MAP_W·TILE).
+    **`shared/src/types.ts`:** `EntityKind += 'questObject'`.
+  - Verified independently: server boots clean; a headless socket client gets `map
+    {seed, version:2, tile:32, w:128, h:128}` + a steady snapshot stream; a player driven hard
+    into a corner is blocked by collision (ends mid-map, never at the origin); `sim-clients` runs
+    clean; shared 10/10 tests still pass. No dead code (old spawn constants removed).
+
 - 0.2.27: **Collision-aware movement + the `map` net event (Phases 2 & 3).** The two pieces
   that let the tilemap world actually block movement and reach the client.
   - **`shared/src/step.ts` — `moveWithCollision(entity, dx, dy, dt, speed, collision, w, h,

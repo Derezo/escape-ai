@@ -21,6 +21,12 @@ const speciesRoster = require('../socket/species-roster');
 // The cached shared module (resolved by loadShared() before the loop starts).
 let shared = null;
 
+// Collision half-extent for moving entities. Players, robots and idle decoys all
+// share roughly one entity rect; 0.4×RECT_SIZE keeps them clear of walls without
+// snagging on tile corners. Mirrors the radius engine.integratePlayers passes via
+// movePlayerWithCollision (config.RECT_SIZE * 0.4).
+const ROBOT_RADIUS = config.RECT_SIZE * 0.4;
+
 // Cached references to the engine's live player + room maps. Most per-tick
 // functions receive these as args, but the ape "carry" hand-off needs to scan a
 // room's players from inside applyAction (which only gets the acting player), so
@@ -67,7 +73,9 @@ async function loadShared() {
   const mod = await import('../../shared/dist/step.js');
   const required = [
     'STEALTH', 'updateHumanLikeness', 'firstLawProtects',
-    'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep', 'facingFromVec'
+    'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep', 'facingFromVec',
+    // Phase 4: collision-aware movement for players AND robots/idle animals.
+    'moveWithCollision'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -131,6 +139,29 @@ function stepPlayerHumanLikeness(player, dt, currentTick) {
 /** The per-frame movement speed for an input (walk vs sprint), from shared. */
 function moveSpeed(sprint) {
   return shared ? shared.moveSpeed(sprint === true) : config.PLAYER_SPEED;
+}
+
+/**
+ * Collision-aware player movement (called by engine.integratePlayers). The
+ * engine doesn't hold the shared module — stealth does — so it routes the move
+ * through here: we look up the room's collision grid and run the shared
+ * axis-separated sliding integrator (OOB is solid, so the perimeter wall keeps
+ * players in; the gate gap is the only non-solid way out). Mutates player.x/y in
+ * place. No-op (holds position) until the shared module has loaded.
+ * @param {object} player  mutated in place
+ * @param {number} dx
+ * @param {number} dy
+ * @param {number} dt
+ * @param {number} speed   world units/sec at full axis deflection
+ * @param {string} roomName
+ */
+function movePlayerWithCollision(player, dx, dy, dt, speed, roomName) {
+  if (!shared) return;
+  const rm = world.getRoomMap(roomName);
+  shared.moveWithCollision(
+    player, dx, dy, dt, speed,
+    rm.collision, rm.w, rm.h, rm.tile, config.RECT_SIZE * 0.4
+  );
 }
 
 /** Map a movement vector to a Dir8 facing, from shared (held facing if zero). */
@@ -272,6 +303,11 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   const worldState = world.getWorldState(roomName);
   const lockdown = !!worldState.lockdown;
 
+  // The room's collision grid, fetched ONCE per call (not per robot) for perf.
+  // Robots respect walls just like players: a pursuit step that would tunnel
+  // through a wall is blocked, and a patrol step into a wall is held.
+  const rm = world.getRoomMap(roomName);
+
   // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
   // snap it to that player's position so it visually rides along (the ape
   // courier). If the carrier has vanished (disconnect), free the prop in place.
@@ -325,13 +361,21 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     robot.targetId = decision.targetId;
 
     if (decision.mode === 'pursue') {
-      // Third Law: a robot won't chase INTO a hazard (skunk stink). If the step
-      // would enter one it stalls at the edge this tick (still faces the target).
-      const nx = clampWorld(robot.x + decision.dirX * speed * dt);
-      const ny = clampWorld(robot.y + decision.dirY * speed * dt);
-      if (!entersHazard(nx, ny, worldEntities)) {
-        robot.x = nx;
-        robot.y = ny;
+      // Wall + hazard avoidance, both honored before committing the chase step:
+      //   - WALLS: the shared moveWithCollision integrator slides the robot along
+      //     walls and refuses to tunnel through one (OOB is solid too). Run it on
+      //     a COPY first so we can also veto on the Third Law before committing.
+      //   - Third Law (HAZARD): a robot won't chase INTO a skunk stink. If the
+      //     wall-resolved destination still lands in a hazard, it stalls this tick
+      //     (still faces the target).
+      const trial = { x: robot.x, y: robot.y };
+      shared.moveWithCollision(
+        trial, decision.dirX, decision.dirY, dt, speed,
+        rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
+      );
+      if (!entersHazard(trial.x, trial.y, worldEntities)) {
+        robot.x = trial.x;
+        robot.y = trial.y;
       }
       // Face the chase direction (for the directional sprite).
       robot.facing = shared.facingFromVec(decision.dirX, decision.dirY, robot.facing || 's');
@@ -359,7 +403,7 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
           (ref.shellUntilTick || 0) > currentTick
         );
         if (!uncatchable && shared.dist2(robot, target) <= touchR2) {
-          catchPlayer(target.ref);
+          catchPlayer(target.ref, firstSpawn(rm));
           catches++;
         }
       }
@@ -371,8 +415,9 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED);
       // Face the patrol heading (derive from the actual position delta).
       robot.facing = shared.facingFromVec(next.x - robot.x, next.y - robot.y, robot.facing || 's');
-      // Don't patrol into a hazard either (Third Law); hold position if it would.
-      if (!entersHazard(next.x, next.y, worldEntities)) {
+      // Don't patrol into a WALL (collision) or a HAZARD (Third Law); hold
+      // position if either would — robots shouldn't wander into their own walls.
+      if (!world.isSolidAtRoom(roomName, next.x, next.y) && !entersHazard(next.x, next.y, worldEntities)) {
         robot.x = next.x;
         robot.y = next.y;
       }
@@ -408,6 +453,9 @@ function stepIdleAnimals(dt, roomName, currentTick) {
     const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED);
     // Face the drift direction so the decoy's walk animation reads correctly.
     e.facing = shared.facingFromVec(next.x - e.x, next.y - e.y, e.facing || 's');
+    // Hold position if the drift would carry the decoy onto a solid tile, so it
+    // doesn't walk through its own enclosure fence.
+    if (world.isSolidAtRoom(roomName, next.x, next.y)) continue;
     e.x = next.x;
     e.y = next.y;
   }
@@ -452,11 +500,28 @@ function stepPanic(dt, roomName, robotEvents) {
 }
 
 /**
+ * The first spawn point of a room map, or a safe fallback. The map always
+ * produces spawn points just inside the gate; the fallback only fires in the
+ * impossible case of an empty spawns list (map center, then (50,50)).
+ * @param {{ spawns?: {x:number,y:number}[], w?:number, h?:number, tile?:number }} rm  a getRoomMap() result
+ * @returns {{ x: number, y: number }}
+ */
+function firstSpawn(rm) {
+  if (rm && Array.isArray(rm.spawns) && rm.spawns.length > 0) return rm.spawns[0];
+  if (rm && rm.w && rm.h && rm.tile) {
+    return { x: (rm.w * rm.tile) / 2, y: (rm.h * rm.tile) / 2 };
+  }
+  return { x: 50, y: 50 };
+}
+
+/**
  * Soft catch (Phase 2): the player loses its built-up disguise and is teleported
  * back to a spawn point. Phase 3 escalates this (lockdown / elimination).
  * @param {object} player
+ * @param {{x:number,y:number}} spawn  the room's spawn point to reset to (caller
+ *   resolves it from world.getRoomMap(roomName).spawns[0]).
  */
-function catchPlayer(player) {
+function catchPlayer(player, spawn) {
   if (!player) return;
   // Persistent stat: count this capture. The single capture chokepoint — an
   // escaped player is never a catch target (gatherAnimals skips player.escaped),
@@ -472,9 +537,10 @@ function catchPlayer(player) {
   player.dashUntilTick = 0;
   player.shellUntilTick = 0;
   player.fx = null;
-  // Soft respawn at the world's spawn origin (mirrors lobby's SPAWN_ORIGIN).
-  player.x = 50;
-  player.y = 50;
+  // Soft respawn at the room's first map spawn point (just inside the gate).
+  const at = spawn || { x: 50, y: 50 };
+  player.x = at.x;
+  player.y = at.y;
 }
 
 /**
@@ -486,8 +552,10 @@ function catchPlayer(player) {
  * The new species is rolled from the ONE shared roster (species-roster.js); we
  * avoid handing back the same species so a respawn visibly changes the animal.
  * @param {object} player
+ * @param {{x:number,y:number}} spawn  the room's spawn point to reset to (caller
+ *   resolves it from world.getRoomMap(roomName).spawns[0]).
  */
-function respawnPlayer(player) {
+function respawnPlayer(player, spawn) {
   const roster = speciesRoster.getKeys();
   if (roster.length > 0) {
     // Pick a species other than the current one when we can, so the respawn
@@ -508,9 +576,10 @@ function respawnPlayer(player) {
   player.shellUntilTick = 0;
   player.abilityCdUntilTick = 0;
   player.fx = null;
-  // Back to the world's spawn origin (mirrors lobby's SPAWN_ORIGIN / catchPlayer).
-  player.x = 50;
-  player.y = 50;
+  // Back to the room's first map spawn point (mirrors catchPlayer).
+  const at = spawn || { x: 50, y: 50 };
+  player.x = at.x;
+  player.y = at.y;
 }
 
 /**
@@ -528,9 +597,11 @@ function checkEscape(player, roomName, currentTick) {
   if (!shared) return;
 
   // Already escaped: hold the win state until the celebration window elapses,
-  // then respawn into a fresh run.
+  // then respawn into a fresh run at the room's first map spawn point.
   if (player.escaped) {
-    if (currentTick >= (player.escapeUntilTick || 0)) respawnPlayer(player);
+    if (currentTick >= (player.escapeUntilTick || 0)) {
+      respawnPlayer(player, firstSpawn(world.getRoomMap(roomName)));
+    }
     return;
   }
 
@@ -611,11 +682,11 @@ function applyAbility(player, roomName, currentTick) {
     case 'chameleon': fired = chameleonCloak(player, roomName, currentTick); break;
     case 'peacock': fired = peacockDazzle(player, roomName, currentTick); break;
     case 'skunk': fired = skunkStink(player, roomName, currentTick); break;
-    case 'mole': fired = moleBurrow(player, currentTick); break;
+    case 'mole': fired = moleBurrow(player, roomName, currentTick); break;
     case 'cheetah': fired = cheetahDash(player, currentTick); break;
     case 'parrot': fired = parrotMimic(player, roomName, currentTick); break;
     case 'tortoise': fired = tortoiseShell(player, currentTick); break;
-    case 'kangaroo': fired = kangarooLeap(player, currentTick); break;
+    case 'kangaroo': fired = kangarooLeap(player, roomName, currentTick); break;
     case 'owl': fired = owlHush(player, roomName, currentTick); break;
     case 'fox': fired = foxDecoy(player, roomName, currentTick); break;
     default: break;
@@ -845,11 +916,18 @@ function skunkStink(player, roomName, currentTick) {
 /**
  * MOLE "burrow": dig a short distance along the facing direction (a teleport,
  * clamped to the world) and resurface briefly unseen (reuses skitterUntilTick).
+ * The teleport is collision-checked at the destination: if it would land in a
+ * wall the mole stays put (only the unseen window applies) so a burrow can't dump
+ * the player inside solid tiles. The unseen effect still fires either way.
  */
-function moleBurrow(player, currentTick) {
+function moleBurrow(player, roomName, currentTick) {
   const dir = unitFromFacing(player.facing);
-  player.x = clampWorld(player.x + dir.x * config.ABILITY.MOLE_BURROW_DIST);
-  player.y = clampWorld(player.y + dir.y * config.ABILITY.MOLE_BURROW_DIST);
+  const nx = clampWorld(player.x + dir.x * config.ABILITY.MOLE_BURROW_DIST);
+  const ny = clampWorld(player.y + dir.y * config.ABILITY.MOLE_BURROW_DIST);
+  if (!world.isSolidAtRoom(roomName, nx, ny)) {
+    player.x = nx;
+    player.y = ny;
+  }
   player.skitterUntilTick = currentTick + secsToTicks(config.ABILITY.MOLE_UNSEEN_SECS);
   setFx(player, 'burrow', currentTick, secsToTicks(0.5));
   return true;
@@ -900,12 +978,19 @@ function tortoiseShell(player, currentTick) {
 
 /**
  * KANGAROO "leap": a long directional hop along facing (clamped to the world),
- * briefly uncatchable mid-air (reuses flitUntilTick).
+ * briefly uncatchable mid-air (reuses flitUntilTick). Collision-checked at the
+ * landing tile: a hop that would land in a wall is cancelled (the player holds
+ * position) so a leap can't deposit the player inside solid tiles. The mid-air
+ * uncatchable window still applies.
  */
-function kangarooLeap(player, currentTick) {
+function kangarooLeap(player, roomName, currentTick) {
   const dir = unitFromFacing(player.facing);
-  player.x = clampWorld(player.x + dir.x * config.ABILITY.KANGAROO_LEAP_DIST);
-  player.y = clampWorld(player.y + dir.y * config.ABILITY.KANGAROO_LEAP_DIST);
+  const nx = clampWorld(player.x + dir.x * config.ABILITY.KANGAROO_LEAP_DIST);
+  const ny = clampWorld(player.y + dir.y * config.ABILITY.KANGAROO_LEAP_DIST);
+  if (!world.isSolidAtRoom(roomName, nx, ny)) {
+    player.x = nx;
+    player.y = ny;
+  }
   player.flitUntilTick = currentTick + secsToTicks(config.ABILITY.KANGAROO_AIR_SECS);
   setFx(player, 'leap', currentTick, secsToTicks(0.6));
   return true;
@@ -964,7 +1049,13 @@ function unitFromFacing(facing) {
   }
 }
 
-/** Clamp a coordinate into the world bounds (mirrors engine.clampWorld). */
+/**
+ * Clamp a coordinate into the world bounds. Used only as a backstop for the
+ * mole/kangaroo teleports (WORLD_MAX is now 4096 = MAP_W*TILE). The authoritative
+ * movement bound is the collision grid (OOB is solid); these teleports also
+ * collision-check their destination tile, so this just keeps the raw coordinate
+ * sane before that check.
+ */
 function clampWorld(v) {
   return Math.max(0, Math.min(config.WORLD_MAX, v));
 }
@@ -1026,6 +1117,7 @@ module.exports = {
   isReady,
   stepPlayerHumanLikeness,
   moveSpeed,
+  movePlayerWithCollision,
   facingFromVec,
   stepRobots,
   stepIdleAnimals,

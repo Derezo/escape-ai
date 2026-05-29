@@ -39,9 +39,12 @@ module.exports = {
   // win state before respawning as a fresh animal (new species) back at spawn.
   // The round-based loop: escape → brief celebration → new run.
   ESCAPE_CELEBRATION_SECS: parseFloat(process.env.ESCAPE_CELEBRATION_SECS) || 4,
-  // The square zoo spans [0, WORLD_MAX] on both axes (mirrors shared WORLD).
-  // Players are clamped inside it so the perimeter gate is the only way out.
-  WORLD_MAX: parseFloat(process.env.WORLD_MAX) || 1000,
+  // The square zoo spans [0, WORLD_MAX] on both axes. This mirrors the shared
+  // generator's MAP_W * TILE = 128 * 32 = 4096 world units. It's only a backstop
+  // for the mole/kangaroo teleport clamps — the AUTHORITATIVE movement bound is
+  // the per-room collision grid (out-of-bounds is solid), so players are walled
+  // in regardless of this value. Overridable by env for tuning/tests.
+  WORLD_MAX: parseFloat(process.env.WORLD_MAX) || 4096,
 
   // Ambient NPC drift speeds (mirror shared WANDER). A robot with nothing to
   // chase PATROLS at PATROL_SPEED (slower than ROBOT_SPEED so a real chase still
