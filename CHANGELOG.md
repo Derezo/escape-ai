@@ -4,6 +4,26 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.25: **Tile-map world foundations (Phase 0 of the big-world plan).** Lays the shared,
+  deterministic groundwork for a large procedurally-generated zoo — no behavior change yet,
+  nothing consumes it on the hot path. Three new shared modules, all pure + seeded (same
+  determinism rules as `step.ts`, so client and server will generate bit-identical maps):
+  - **`shared/src/rng.ts`** — a `mulberry32` PRNG built on the existing FNV-1a `hash32`, plus
+    `seedFromString`, `randInt`, `pick`, `shuffle`. The random source for world-gen.
+  - **`shared/src/tiles.ts`** — the canonical TILE-IDENTITY CONTRACT: a 144-tile registry
+    (terrain, grass↔path / land↔water edge sets, nature incl. tree trunk/canopy, walls/roofs/
+    doors, fences, zoo housing, props) mapping each semantic name → stable index + `{layer,
+    solid, ysort}`. Index 0 = empty; indices contiguous + append-only. The one source the
+    world-gen, the renderer, and the (Phase 7) tile-art generator agree on.
+  - **`shared/src/world.ts`** — the `WorldMap` types (ground/deco/roof `TileGrid`s, `collision`
+    `Uint8Array`, `Building`/`Housing`/`WorldEntitySpec`), helpers (`tileSolid` with
+    out-of-bounds-is-solid, `isSolidAt`, `worldToTile`, `buildCollision`), `WORLD_GEN_VERSION=1`,
+    `MAP_W=MAP_H=128` (4096×4096 units, 16× the old 1000²), and a SIMPLE seeded `generateWorld`
+    (grass field + solid border wall + an east-edge gate gap + spawns). Phase 1 expands the
+    generator body into the full plot/zone layout without changing these types.
+  - Wired into `shared/src/index.ts`. Verified: `shared` + `client` build clean; server boots;
+    `generateWorld` is deterministic (seed 123 twice → identical collision grid).
+
 - 0.2.24: **Rebrand "AI Escape" → "Escape AI" + new choreographed splash.** The premise
   reads better as *Escape AI*: an AI-run zoo, and the animals trick the AI to escape it. The
   title now appears everywhere as **Escape AI** — browser tab (`client/index.html`), Android
