@@ -1,0 +1,54 @@
+Copyright (c) 2026 Eric Scouler
+
+This software is provided 'as-is', without any express or implied
+warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+    1. The origin of this software must not be misrepresented; you must not
+    claim that you wrote the original software. If you use this software
+    in a product, an acknowledgment in the product documentation would be
+    appreciated but is not required.
+
+    2. Altered source versions must be plainly marked as such, and must not be
+    misrepresented as being the original software.
+
+    3. This notice may not be removed or altered from any source
+    distribution.
+
+-----
+
+Third-party libraries used by this software retain their own licenses.
+These are installed via npm and are not bundled in this repository's source;
+their full texts live under each package's directory in node_modules.
+
+Phaser 3
+    License: MIT license
+    https://github.com/phaserjs/phaser/blob/master/license.txt
+
+Babylon.js (optional 3D-fallback renderer; installed only if needed)
+    License: Apache License 2.0
+    https://github.com/BabylonJS/Babylon.js/blob/master/license.md
+
+Socket.IO  (and socket.io-client)
+    License: MIT license
+    https://github.com/socketio/socket.io/blob/main/LICENSE
+
+Express
+    License: MIT license
+    https://github.com/expressjs/express/blob/master/LICENSE
+
+Vite
+    License: MIT license
+    https://github.com/vitejs/vite/blob/main/LICENSE
+
+TypeScript
+    License: Apache License 2.0
+    https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt
+
+Capacitor
+    License: MIT license
+    https://github.com/ionic-team/capacitor/blob/main/LICENSE

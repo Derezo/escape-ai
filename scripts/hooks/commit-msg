@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# TINS 2026 commit-msg hook.
+# A REMINDER, not a gate: if a commit changes source but not CHANGELOG.md, it
+# warns and asks you to confirm. It never hard-blocks a clean changelog update.
+#
+# Rationale: during a 72h jam we want fast iteration, so this nudges rather than
+# stops. Bypass entirely with `git commit --no-verify`.
+#
+# Installed by scripts/hooks/install.sh — see CLAUDE.md.
+
+set -euo pipefail
+
+# Skip merge / squash / amend-template commits — nothing for us to police there.
+case "${2:-}" in
+    merge|squash|commit) exit 0 ;;
+esac
+
+# Staged files for this commit.
+staged="$(git diff --cached --name-only --diff-filter=ACMR || true)"
+[ -z "${staged}" ] && exit 0
+
+# Did this commit touch source code (client/server/shared/scripts)?
+source_changed=0
+if printf '%s\n' "${staged}" \
+    | grep -qE '^(client|server|shared|scripts)/.*\.(ts|js|css|html)$'; then
+    source_changed=1
+fi
+
+# Did it update the changelog?
+changelog_changed=0
+if printf '%s\n' "${staged}" | grep -qx 'CHANGELOG.md'; then
+    changelog_changed=1
+fi
+
+if [ "${source_changed}" -eq 1 ] && [ "${changelog_changed}" -eq 0 ]; then
+    echo "commit-msg: source changed but CHANGELOG.md was not updated." >&2
+    echo "  Add a bullet to CHANGELOG.md (and update any docs whose behavior" >&2
+    echo "  changed), then re-commit. To skip this reminder: git commit --no-verify" >&2
+    # Non-interactive contexts (CI, scripted commits) shouldn't hang waiting on a
+    # prompt — only block when a human is at the terminal.
+    if [ -t 0 ] || [ -t 1 ]; then
+        exit 1
+    fi
+fi
+
+exit 0

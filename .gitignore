@@ -1,0 +1,33 @@
+node_modules/
+dist/
+.env
+.DS_Store
+
+# --- Capacitor / Android ---
+#
+# DECISION (jam scaffold): we ignore the entire generated `client/android/`
+# platform folder. It is 100% regenerable from the committed Capacitor config
+# with `cd client && npx cap add android && npx cap sync` (see docs/ANDROID.md),
+# so there is nothing to lose and a lot of native boilerplate + build noise to
+# avoid in the repo. This is the right call for a 72-hour jam where the Android
+# build is a nice-to-have wrapper, not the product.
+#
+# IF you later want to commit the native project (the norm for a real, shipping
+# app — so signing config, custom native code, and icons are version-controlled):
+# delete the `client/android/` line below. Capacitor already writes a thorough
+# `client/android/.gitignore` that excludes the actual build artifacts listed
+# here (build/, .gradle/, local.properties, *.apk/*.aab, copied web assets),
+# so committing the folder will NOT commit build output.
+client/android/
+
+# Build artifacts — kept explicit so they stay ignored even if `android/` is
+# committed (these mirror Capacitor's generated android/.gitignore):
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/capacitor-cordova-android-plugins/
+*.apk
+*.aab
+*.keystore
+*.jks

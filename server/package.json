@@ -1,0 +1,21 @@
+{
+  "name": "tins2026-server",
+  "version": "0.1.0",
+  "license": "Zlib",
+  "description": "Authoritative multiplayer server skeleton for the TINS 2026 game-jam starter kit.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "uuid": "^11.0.5"
+  }
+}

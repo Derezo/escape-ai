@@ -1,0 +1,51 @@
+/* Full-viewport dark canvas + a corner HUD. Game-agnostic chrome only. */
+
+:root {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0b0e14;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Phaser injects its <canvas> in here; make it fill the viewport. */
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+}
+
+#game canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Latency + player-count overlay, pinned top-left, click-through. */
+#hud {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #cde7ff;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  pointer-events: none;
+  user-select: none;
+}
