@@ -4,6 +4,18 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.18: **Fix — walk animation never played.** The renderer decided idle-vs-walk
+  from the render→target position gap (`targetX - renderX`), but that gap is ~0 for
+  the **local player** (its view snaps render to target every frame, being client-
+  predicted) and collapses to ~0 for remote players between the 20Hz snapshots — so
+  no one's avatar ever animated walking. Now "moving" is driven by the *authoritative
+  target position actually changing* between updates (identical signal for the snapped
+  local player and interpolated remotes), with a short ~200ms persistence window so the
+  walk cycle stays smooth across the sparse snapshot gaps and cleanly falls to idle
+  ~160ms after stopping. Facing also derives from the authoritative move vector now,
+  not the interpolation residual. Verified by isolating the decision logic (walk holds
+  the whole time while moving; idle resumes shortly after stop) and a headless boot.
+
 - 0.2.17: **Validation remediation** (post `/plan-validation-and-review` of the
   visual-polish plan). The review traced every requirement as implemented + connected
   (14-species roster aligned across all 5 locations, facing + fx fully wired, all 14

@@ -35,8 +35,14 @@ const MARKER_SIZE = 20;
 const PROP_SIZE = 16;
 /** The atlas texture key. */
 const ATLAS_KEY = 'creatures';
-/** Squared per-frame position delta above which an entity reads as "moving". */
-const MOVE_EPS2 = 0.6;
+/** Squared authoritative-position delta (per update) above which an entity reads
+ *  as "moving". Small, so even a slow walk between snapshots registers, while
+ *  float jitter on a standing entity does not. */
+const MOVE_EPS2 = 0.25;
+/** How long (ms) a "moving" state persists after the last detected move, so the
+ *  walk cycle stays smooth across the gap between 20Hz snapshots (~50ms apart)
+ *  and the local player's per-input-frame predicted moves. */
+const MOVE_PERSIST_MS = 200;
 /** Interpolation rate for remote entities (higher = snappier). */
 const LERP_RATE = 16;
 
@@ -84,6 +90,13 @@ interface EntityView {
   renderY: number;
   targetX: number;
   targetY: number;
+  /** Previous target, to detect authoritative movement between updates. */
+  prevTargetX: number;
+  prevTargetY: number;
+  /** Scene time (ms) until which the entity reads as "moving" (walk anim). A move
+   *  refreshes this window so the walk cycle persists smoothly between the 20Hz
+   *  snapshots that arrive far less often than the ~60fps render. */
+  movingUntil: number;
   /** Last-rendered animation key + facing, so we only re-play on change. */
   anim?: string;
   facing: Dir8;
@@ -276,16 +289,24 @@ class WorldScene extends Phaser.Scene {
 
   /**
    * For animated sprite views, pick idle vs walk + the facing animation and play
-   * it (only when the key changed). Uses the smoothed render→target delta to
-   * decide "moving", and prefers the wire `facing`, falling back to the motion
-   * vector. No-op for shape fallbacks.
+   * it (only when the key changed). "Moving" is driven by the AUTHORITATIVE target
+   * position changing (works identically for the local player — which snaps — and
+   * remote players — which interpolate); a move opens a short persistence window
+   * so the walk cycle stays smooth between the 20Hz snapshots (far sparser than
+   * the ~60fps render). Facing prefers the wire `facing`, then the move vector.
+   * No-op for shape fallbacks.
    */
   private updateAnimation(view: EntityView, e: Entity): void {
     if (!view.isSprite || !view.species) return;
-    const dx = view.targetX - view.renderX;
-    const dy = view.targetY - view.renderY;
-    const moving = dx * dx + dy * dy > MOVE_EPS2;
-    const facing: Dir8 = isDir8(e.facing) ? e.facing : facingFromVec(dx, dy, view.facing);
+    const tdx = view.targetX - view.prevTargetX;
+    const tdy = view.targetY - view.prevTargetY;
+    view.prevTargetX = view.targetX;
+    view.prevTargetY = view.targetY;
+    if (tdx * tdx + tdy * tdy > MOVE_EPS2) {
+      view.movingUntil = this.time.now + MOVE_PERSIST_MS;
+    }
+    const moving = this.time.now < view.movingUntil;
+    const facing: Dir8 = isDir8(e.facing) ? e.facing : facingFromVec(tdx, tdy, view.facing);
     view.facing = facing;
     const state = moving ? 'walk' : 'idle';
     const key = `${view.species}_${state}_${facing}`;
@@ -547,6 +568,9 @@ class WorldScene extends Phaser.Scene {
       renderY: e.y,
       targetX: e.x,
       targetY: e.y,
+      prevTargetX: e.x,
+      prevTargetY: e.y,
+      movingUntil: 0,
       facing: isDir8(e.facing) ? e.facing : 's',
       ...extra,
     });
