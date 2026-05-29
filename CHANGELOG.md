@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.26: **Full deterministic zoo generator (Phase 1).** `generateWorld(seed)` in
+  `shared/src/world.ts` is now the real plot/zone layout (was a placeholder grass field):
+  a grass field inside a walled perimeter with one escape gate, a PAVED avenue skeleton that
+  partitions the interior into plots, **one home per species** drawn from a fixed
+  species→housing table (3 enterable buildings: ape/chameleon/owl; 11 open enclosures —
+  aviary/cage/paddock/den/pond/pen), enterable buildings (wall ring + floor + door + fading
+  roof + interior props), per-kind housing (pond = solid deep-water core ringed by walkable
+  shore; den = rocky cluster with a walkable mound; cage/aviary/paddock/pen = barrier ring +
+  walkable gate), scattered nature (trees as canopy+solid-trunk pairs, bushes, rocks, flowers
+  with min-spacing, never on roads/homes/spawns), and the gameplay `entitySpecs` (gate, the
+  Clipboard prop, terminals, robot spawns, and a decoy anchor + quest object per species).
+  - **Reachability is guaranteed:** after stamping, a deterministic flood-fill from spawn
+    carves L-shaped corridors until the gate, every door, every enclosure center, every spawn,
+    and every quest object are walkable — or throws (loud failure beats a silent unwinnable map).
+  - **Pure + seeded** (single `mulberry32` stream, fixed iteration order) → byte-identical on
+    server and client. `WORLD_GEN_VERSION` bumped 1→2 (output changed).
+  - **New `shared/test/world.test.mjs`** (zero deps, Node's runner over `dist`) is the
+    client/server PARITY tripwire: pins a `hash32` of the collision grid + entitySpecs (drift
+    trips the test), asserts every species has exactly one home + one quest with no strays,
+    that gate/spawns are non-solid, and re-runs an INDEPENDENT flood-fill to prove
+    reachability for the pinned seed and across 7 seeds. `shared` gains a `test` script
+    (`npm run build && node --test`). Counts (any seed): 3 buildings, 11 housing, 14 quests,
+    14 pen anchors, ~6.5% solid. Verified: `shared` build + `npm test` (6/6) + `client` build green.
+
 - 0.2.25: **Tile-map world foundations (Phase 0 of the big-world plan).** Lays the shared,
   deterministic groundwork for a large procedurally-generated zoo — no behavior change yet,
   nothing consumes it on the hot path. Three new shared modules, all pure + seeded (same
