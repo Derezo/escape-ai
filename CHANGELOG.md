@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.24: **Rebrand "AI Escape" → "Escape AI" + new choreographed splash.** The premise
+  reads better as *Escape AI*: an AI-run zoo, and the animals trick the AI to escape it. The
+  title now appears everywhere as **Escape AI** — browser tab (`client/index.html`), Android
+  app name (`capacitor.config.ts`), and the in-game HUD (`main.ts`, "ESCAPE AI").
+  - **Splash reveal is now a timed, eerie sequence** (`menu.ts` + `style.css`). The screen opens
+    *empty*. "ESCAPE" fades in slowly (cold cyan, serene); ~1.5s later "AI" pops in — flickering
+    and shaking with a red/cyan chromatic-aberration glitch, then snaps solid (the menace). The
+    tagline fades in next, then "PRESS ANY KEY TO CONTINUE" fades in and hums as before. The
+    title splits into two independently-animated `<span>`s; all timing lives in CSS
+    `animation-delay`s, so `menu.ts` stays choreography-free.
+  - **New tagline:** "The zoo is under new management." (was "The zoo is run by robots…").
+  - **Storage/DB keys renamed for brand consistency.** Client localStorage key
+    `aiescape.auth` → `escapeai.auth` (existing saved sessions are dropped — players re-enter
+    their name once). Default server DB path `./data/aiescape.db` → `./data/escapeai.db`
+    (`config.js`, `db.js`, `server/.env.example`). **Deployers with an existing
+    `data/aiescape.db` must rename it (or set `DB_PATH`) to keep accounts/stats.**
+  - Verified: `tsc` + `vite build` clean; dist contains "Escape AI", the two-word title, and
+    the new tagline; no `aiescape`/"AI Escape" references remain in source.
+
 - 0.2.23: **Fix — escaping was a dead end: "ESCAPED!" banner never cleared and the player
   never respawned.** The `escaped` flag was permanently sticky server-side — once you reached
   the gate the avatar left the field for good (robots ignore it, it can't be caught), the client

@@ -34,7 +34,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
  */
 const config: CapacitorConfig = {
   appId: 'org.tins2026.app',
-  appName: 'AI Escape',
+  appName: 'Escape AI',
   webDir: 'dist',
   server: {
     // Serve bundled assets from https://localhost — a secure origin, so calls

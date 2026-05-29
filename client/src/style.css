@@ -217,8 +217,17 @@ body {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
-/* --- Splash overlay (#splash): the animated AI ESCAPE title. Sits above the
-   game + HUD. Any key/pointer dismisses it (menu.ts) → login. --- */
+/* --- Splash overlay (#splash): the animated ESCAPE AI title. Sits above the
+   game + HUD. Any key/pointer dismisses it (menu.ts) → login.
+
+   The reveal is a timed, eerie sequence, all driven by CSS animation-delays so
+   menu.ts stays choreography-free. The screen opens empty, then:
+     0.30s  "ESCAPE" fades in slowly (cold cyan, serene)
+     2.50s  "AI" pops in — flickers + shakes as it arrives, then snaps solid
+            (cold white with a red chromatic-aberration glitch; the menace)
+     3.80s  tagline fades in
+     4.80s  "PRESS ANY KEY" fades in, then hums forever
+   --- */
 #splash {
   position: fixed;
   inset: 0;
@@ -227,7 +236,7 @@ body {
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: radial-gradient(circle at 50% 40%, #131a26 0%, #0b0e14 70%);
+  background: radial-gradient(circle at 50% 40%, #131a26 0%, #07090d 72%);
   user-select: none;
   transition: opacity 0.28s ease;
 }
@@ -244,38 +253,81 @@ body {
   margin: 0;
   font-size: clamp(48px, 12vw, 120px);
   font-weight: 800;
-  letter-spacing: 0.18em;
-  /* A cyan→white gradient fill that pulses, with a soft drift. */
+  letter-spacing: 0.16em;
+  line-height: 1.05;
+  /* The two words stack and animate independently. */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.04em;
+}
+
+/* "ESCAPE" — the calm half. A cold cyan→white gradient that fades in slowly,
+   then breathes with a soft glow once it has arrived. Starts invisible. */
+#splash-word-escape {
+  opacity: 0;
   background: linear-gradient(100deg, #4cc9f0, #cde7ff, #4cc9f0);
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  text-shadow: 0 0 38px rgba(76, 201, 240, 0.28);
-  animation: splash-glow 3.4s ease-in-out infinite, splash-drift 6s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px rgba(76, 201, 240, 0.3));
+  /* 1: slow fade-in (once). 2: gentle gradient glow (loops, after the fade). */
+  animation:
+    splash-escape-in 2.2s ease-out 0.3s forwards,
+    splash-escape-glow 3.6s ease-in-out 2.5s infinite;
 }
 
-@keyframes splash-glow {
-  0%, 100% {
-    background-position: 0% 50%;
-    filter: drop-shadow(0 0 10px rgba(76, 201, 240, 0.35));
-  }
-  50% {
-    background-position: 100% 50%;
-    filter: drop-shadow(0 0 26px rgba(76, 201, 240, 0.65));
-  }
+@keyframes splash-escape-in {
+  from { opacity: 0; letter-spacing: 0.34em; filter: drop-shadow(0 0 2px rgba(76, 201, 240, 0)); }
+  to   { opacity: 1; letter-spacing: 0.16em; filter: drop-shadow(0 0 12px rgba(76, 201, 240, 0.35)); }
 }
 
-@keyframes splash-drift {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+@keyframes splash-escape-glow {
+  0%, 100% { background-position: 0% 50%; filter: drop-shadow(0 0 10px rgba(76, 201, 240, 0.3)); }
+  50%      { background-position: 100% 50%; filter: drop-shadow(0 0 22px rgba(76, 201, 240, 0.55)); }
+}
+
+/* "AI" — the menace. Cold near-white with a red/cyan chromatic-aberration
+   glitch. Pops in ~1.5s after ESCAPE, flickering and shaking, then snaps solid.
+   Starts invisible; the pop animation is delayed and runs once (forwards). */
+#splash-word-ai {
+  opacity: 0;
+  color: #eef4ff;
+  font-size: 1.18em;
+  letter-spacing: 0.28em;
+  animation: splash-ai-pop 1.3s steps(1, end) 2.5s forwards;
+}
+
+/* The pop: hard flicker (opacity + jitter offsets + chromatic split) that
+   decays into a solid, faintly-humming logo. steps() makes the flicker snap
+   rather than smear, which reads as a glitching display. */
+@keyframes splash-ai-pop {
+  0%   { opacity: 0; transform: translate(0, 0) scale(1.18); text-shadow: none; }
+  6%   { opacity: 1; transform: translate(-3px, 2px) scale(1.12);
+         text-shadow: 3px 0 0 rgba(255, 40, 60, 0.85), -3px 0 0 rgba(60, 220, 255, 0.7); }
+  12%  { opacity: 0.15; transform: translate(4px, -2px) scale(1.05); text-shadow: none; }
+  20%  { opacity: 1; transform: translate(-2px, -3px) scale(1.02);
+         text-shadow: -4px 0 0 rgba(255, 40, 60, 0.8), 4px 0 0 rgba(60, 220, 255, 0.7); }
+  28%  { opacity: 0.3; transform: translate(3px, 2px) scale(1); text-shadow: none; }
+  38%  { opacity: 1; transform: translate(-1px, 1px) scale(1);
+         text-shadow: 2px 0 0 rgba(255, 40, 60, 0.6), -2px 0 0 rgba(60, 220, 255, 0.5); }
+  48%  { opacity: 0.6; transform: translate(1px, -1px) scale(1); }
+  60%  { opacity: 1; transform: translate(0, 0) scale(1);
+         text-shadow: 1px 0 0 rgba(255, 40, 60, 0.4), -1px 0 0 rgba(60, 220, 255, 0.35); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1);
+         text-shadow: 0 0 30px rgba(120, 180, 255, 0.45),
+                      1px 0 0 rgba(255, 40, 60, 0.22), -1px 0 0 rgba(60, 220, 255, 0.18); }
 }
 
 #splash-tagline {
-  margin: 14px 0 0;
+  margin: 26px 0 0;
   font-size: clamp(14px, 2.4vw, 20px);
-  color: #cde7ff;
-  letter-spacing: 0.04em;
+  color: #aebfd6;
+  letter-spacing: 0.06em;
+  font-style: italic;
+  opacity: 0;
+  animation: splash-fade-in 1.4s ease-out 3.8s forwards;
 }
 
 #splash-prompt {
@@ -284,7 +336,16 @@ body {
   letter-spacing: 0.2em;
   text-transform: uppercase;
   color: #6c7888;
-  animation: splash-prompt-pulse 1.6s ease-in-out infinite;
+  opacity: 0;
+  /* Fade in once (delayed), then hum forever. */
+  animation:
+    splash-fade-in 1s ease-out 4.8s forwards,
+    splash-prompt-pulse 1.6s ease-in-out 5.8s infinite;
+}
+
+@keyframes splash-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes splash-prompt-pulse {

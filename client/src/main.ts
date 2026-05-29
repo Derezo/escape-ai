@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const hud = document.createElement('div');
   hud.id = 'hud';
   hud.innerHTML = `
-    <div id="hud-title">AI ESCAPE</div>
+    <div id="hud-title">ESCAPE AI</div>
     <div class="hud-row"><span class="hud-key">latency</span><span class="hud-val" id="hud-latency">…</span></div>
     <div class="hud-row"><span class="hud-key">players</span><span class="hud-val" id="hud-players">…</span></div>
     <div class="hud-row"><span class="hud-key">panic</span><span class="hud-val" id="hud-panic">…</span></div>

@@ -12,7 +12,7 @@
  */
 
 /** The single localStorage key holding the JSON `{username, token}` blob. */
-const AUTH_KEY = 'aiescape.auth';
+const AUTH_KEY = 'escapeai.auth';
 
 /** A persisted identity: the username we claimed and the token that proves it. */
 export interface SavedAuth {

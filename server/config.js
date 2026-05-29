@@ -16,7 +16,7 @@ module.exports = {
   // Persistence: SQLite file for username-only accounts + per-user stats. A
   // relative path is resolved against the server dir (see db.js); the data/
   // directory is created on boot and gitignored.
-  DB_PATH: process.env.DB_PATH || './data/aiescape.db',
+  DB_PATH: process.env.DB_PATH || './data/escapeai.db',
 
   // Authoritative simulation
   // Tick rate in Hz; how many times per second the engine steps + broadcasts.

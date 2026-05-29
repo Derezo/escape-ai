@@ -38,7 +38,7 @@ let stmts = null;
  * @returns {string} absolute DB file path
  */
 function resolveDbPath() {
-  const configured = config.DB_PATH || './data/aiescape.db';
+  const configured = config.DB_PATH || './data/escapeai.db';
   const abs = path.isAbsolute(configured)
     ? configured
     : path.join(__dirname, configured);

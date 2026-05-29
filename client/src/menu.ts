@@ -6,7 +6,7 @@
  * main.ts awaits it, then calls `net.join(...)`; nothing joins until auth lands.
  *
  * Flow:
- *   1. SPLASH — animated "AI ESCAPE" title; any key/pointer dismisses it. That
+ *   1. SPLASH — animated "ESCAPE AI" title; any key/pointer dismisses it. That
  *      first gesture ALSO unlocks audio (browsers gate the AudioContext on a
  *      user gesture) — see the audio-unlock note below.
  *   2. LOGIN — if a token is stored, auto-login ("Welcome back, …"); else a
@@ -32,7 +32,7 @@ import { loadAuth, saveAuth, clearAuth } from './auth';
 import { createSpeciesSprite } from './species-sprite';
 
 /** The tagline under the splash title — the premise in one breath. */
-const SPLASH_TAGLINE = 'The zoo is run by robots. Look human. Walk out.';
+const SPLASH_TAGLINE = 'The zoo is under new management.';
 
 /** What `runMenu` resolves with once the player is authed and ready to join. */
 export interface MenuResult {
@@ -61,9 +61,16 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
     // --- Build the splash overlay (shown first) -----------------------------
     const splash = document.createElement('div');
     splash.id = 'splash';
+    // The title is two separately-choreographed words: "ESCAPE" fades in slowly,
+    // then "AI" pops in (flicker + shake) after a beat. Both, the tagline, and
+    // the prompt start hidden and reveal on staggered CSS animation-delays — the
+    // whole sequence is timed in style.css, so there is no JS choreography here.
     splash.innerHTML = `
       <div id="splash-inner">
-        <h1 id="splash-title">AI ESCAPE</h1>
+        <h1 id="splash-title">
+          <span id="splash-word-escape">ESCAPE</span>
+          <span id="splash-word-ai">AI</span>
+        </h1>
         <p id="splash-tagline">${SPLASH_TAGLINE}</p>
         <p id="splash-prompt">Press any key to continue</p>
       </div>
