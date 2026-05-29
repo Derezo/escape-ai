@@ -13,9 +13,16 @@
  * engine's delta diffing treats them as unchanged once sent on a full refresh.
  */
 
+const speciesRoster = require('../socket/species-roster');
+
 // Initial WorldState, mirroring shared's INITIAL_WORLD_STATE. Kept as a literal
 // because the server consumes none of shared's compiled module at runtime.
 const INITIAL_WORLD_STATE = { panic: 0, panicCapacity: 100, lockdown: false };
+
+// Emergency fallback only — the real roster comes from the shared module
+// (species-roster.js, warmed at boot before any room is created). If that
+// somehow hasn't loaded, spawn a single ape decoy rather than crash.
+const SPECIES_FALLBACK = ['ape'];
 
 // Map<roomName, { entities: Map<entityId, entity>, world: {panic,panicCapacity,lockdown} }>
 const roomWorlds = new Map();
@@ -55,12 +62,10 @@ function spawnStarterLayout() {
 
   // ~8 idle animals, species cycled through the full roster so the decoys show off
   // the whole zoo (they wander + animate but have no abilities). humanLikeness 0.
-  // MUST stay in sync with server/socket/lobby.js SPECIES_ROSTER and
-  // scripts/sprites/registry.js SPECIES (every species needs atlas art).
-  const species = [
-    'ape', 'bird', 'rat', 'elephant', 'chameleon', 'peacock', 'skunk',
-    'mole', 'cheetah', 'parrot', 'tortoise', 'kangaroo', 'owl', 'fox'
-  ];
+  // The roster is the ONE shared list (shared/src/species.ts via species-roster.js),
+  // the same source lobby.js spawns players from — so they can never drift.
+  const roster = speciesRoster.getKeys();
+  const species = roster.length ? roster : SPECIES_FALLBACK;
   const animalSpots = [
     { x: 250, y: 500 },
     { x: 450, y: 550 },

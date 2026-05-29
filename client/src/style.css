@@ -201,8 +201,9 @@ body {
 }
 
 /* --- Animated species sprite (DOM/CSS; species-sprite.ts). Reused by the login
-   picker and the help Species tab. Pixel-art atlas → crisp scaling. The walk
-   keyframes are injected into a shared <style> by the component. --- */
+   picker and the help Species tab. Pixel-art atlas → crisp scaling. The fixed
+   width/height clips the large atlas background to one frame; species-sprite.ts
+   steps background-position across the walk frames in JS. --- */
 .species-sprite {
   display: block;
   flex: none;

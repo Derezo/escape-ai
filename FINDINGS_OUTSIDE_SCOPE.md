@@ -6,6 +6,24 @@ the audit trail).
 
 ## Open
 
+### Stat-field names enumerated across four server files (low-priority DRY)
+- **Status:** open — deliberate deferral, low risk.
+- **Surfaced:** `/plan-validation-and-review` of the AI-Escape accounts plan, 2026-05-29
+  (dedup scan).
+- **Detail:** the per-player stat verbs `{escapes, caught, ordersIssued, abilitiesUsed}`
+  (+`playSeconds`/`games`) are listed in four places: `server/db.js` `DELTA_COLUMNS`
+  (the canonical camelCase→snake_case map), `server/game/engine.js` `flushStatsDelta`
+  (zeroing), `server/socket/connection.js` (disconnect read), and `server/game/stealth.js`
+  `bumpStat` (lazy init shape). Adding a future stat means touching all four.
+- **Why deferred:** the schema is stable (fixed game verbs), it's 4 lines × 4 sites (not
+  logic duplication), and the obvious fix — a shared field-list constant — would re-couple
+  `stealth.js` (game math) to a stats module, working against the deliberate decoupling
+  (`bumpStat` exists precisely so stealth.js imports no DB/stats schema). Revisit only if
+  the stat set grows materially.
+- **Refs:** `server/db.js` `DELTA_COLUMNS`; `server/game/engine.js` `flushStatsDelta`;
+  `server/socket/connection.js`; `server/game/stealth.js` `bumpStat`.
+- **Effort:** S.
+
 ### Client dev-dependency advisory: esbuild ≤0.24.2 via Vite (2 moderate)
 - **Status:** open — pre-existing, out of scope, needs a human decision.
 - **Surfaced:** `/plan-validation-and-review` of the 0.2.9 gameplay-depth plan, 2026-05-29

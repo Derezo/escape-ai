@@ -7,12 +7,21 @@
  * (see ARCHITECTURE.md) and must work even when the 3D renderer is swapped in —
  * so the sprites here paint via `background-image`, never via the game canvas.
  *
- * Animation strategy: a per-species CSS `@keyframes` that steps the
- * `background-position` through the four south-facing walk frames
- * (`<species>_walk_s_0..3`), driven by `steps(4)`. CSS animation means there are
- * NO JS timers to track or clear — the help widget can rebuild the Species tab
- * freely without leaking intervals. Keyframes are generated once per species and
- * cached in a single shared <style> element.
+ * Animation strategy: a JS interval that swaps `background-position` to each
+ * south-facing walk frame's EXACT rect (`<species>_walk_s_0..3`) in turn. We do
+ * NOT use a CSS `@keyframes` + `steps()` sprite animation here: the atlas frames
+ * for one walk cycle are NOT a contiguous horizontal strip — they're grid-packed
+ * and a cycle can wrap across rows (e.g. elephant frames run 1600,320 → 1664,320
+ * → 0,384 → 64,384). CSS `steps()` linearly interpolates `background-position`
+ * BETWEEN keyframe stops, so a frame that jumps to a new row lands the position
+ * mid-atlas and renders two half-creatures spliced together. Stepping to each
+ * frame's literal (x,y) in JS is the only correct option for an arbitrarily
+ * packed atlas.
+ *
+ * Timer hygiene: each animated element owns one interval, stored on the element;
+ * it self-stops as soon as the element leaves the DOM (`isConnected` check each
+ * tick), so the help widget can rebuild the Species tab freely without leaking
+ * intervals. Callers may also call `stopSpeciesSprite(el)` to dispose eagerly.
  *
  * Crispness: the placeholder atlas is pixel-art, so the element renders with
  * `image-rendering: pixelated` and we scale by adjusting `background-size`
@@ -32,8 +41,8 @@ const ATLAS_JSON = './sprites/atlas.json';
 
 /** Atlas walk-cycle frame count (matches the renderer's `walk: 4`). */
 const WALK_FRAMES = 4;
-/** Seconds for one full 4-frame walk cycle (≈ the renderer's 10fps walk feel). */
-const WALK_CYCLE_S = 0.45;
+/** Milliseconds each walk frame is held (≈ the renderer's ~10fps walk feel). */
+const WALK_FRAME_MS = 110;
 
 /** One packed frame's rect within the atlas image. */
 interface FrameRect {
@@ -84,10 +93,8 @@ const DEFAULT_COLOR = '#6c7888'; // theme `muted`
  */
 let atlasPromise: Promise<AtlasFrames | null> | undefined;
 
-/** The shared <style> element holding the generated per-species @keyframes. */
-let keyframeStyle: HTMLStyleElement | undefined;
-/** Species we've already emitted a @keyframes rule for (so we write each once). */
-const keyframesWritten = new Set<string>();
+/** Per-element walk interval, so we can stop it on disposal / detach. */
+const spriteTimers = new WeakMap<HTMLElement, ReturnType<typeof setInterval>>();
 
 /**
  * Fetch + parse the atlas frame map once (cached). Returns null on any failure
@@ -136,65 +143,40 @@ function colorFor(species: string): string {
   return SPECIES_COLOR[species] ?? DEFAULT_COLOR;
 }
 
-/** Lazily get the shared <style> element that holds the walk @keyframes. */
-function styleSheet(): HTMLStyleElement {
-  if (!keyframeStyle) {
-    keyframeStyle = document.createElement('style');
-    keyframeStyle.id = 'species-sprite-keyframes';
-    document.head.appendChild(keyframeStyle);
-  }
-  return keyframeStyle;
-}
-
-/**
- * Emit (once) a `@keyframes` rule that steps `background-position` across this
- * species' four south-walk frames at the requested display scale. Returns the
- * animation name, or undefined if the species has no walk frames in the atlas
- * (caller then leaves the element on its idle/first frame or fallback).
- *
- * The keyframe name encodes the scale (rounded) so two different display sizes
- * for the same species don't collide on one rule.
- */
-function ensureWalkKeyframes(species: string, atlas: AtlasFrames, scale: number): string | undefined {
-  const scaleTag = Math.round(scale * 1000);
-  const animName = `walk_${species}_${scaleTag}`;
-  if (keyframesWritten.has(animName)) return animName;
-
-  // Collect the contiguous run of walk-south frames that actually exist.
+/** Collect the south-walk frames that actually exist for a species, in order. */
+function walkFrames(species: string, atlas: AtlasFrames): FrameRect[] {
   const rects: FrameRect[] = [];
   for (let i = 0; i < WALK_FRAMES; i++) {
     const rect = atlas.frames[`${species}_walk_s_${i}`];
     if (rect) rects.push(rect);
   }
-  if (rects.length === 0) return undefined;
-
-  // One keyframe stop per frame; `steps()` on the consumer makes it discrete.
-  // background-position is the negative scaled top-left of each frame.
-  const stopPct = 100 / rects.length;
-  const stops: string[] = rects.map((r, i) => {
-    const px = -(r.x * scale);
-    const py = -(r.y * scale);
-    return `${(i * stopPct).toFixed(4)}% { background-position: ${px}px ${py}px; }`;
-  });
-  // Close the loop back to the first frame so steps() lands cleanly.
-  const first = rects[0];
-  stops.push(`100% { background-position: ${-(first.x * scale)}px ${-(first.y * scale)}px; }`);
-
-  styleSheet().appendChild(
-    document.createTextNode(`@keyframes ${animName} {\n${stops.join('\n')}\n}\n`),
-  );
-  keyframesWritten.add(animName);
-  return animName;
+  return rects;
 }
 
 /**
- * Paint `el` as the real animated atlas sprite for `species` at `scale`. Sets
- * the atlas as the background, sizes it (atlas px × scale), parks it on the
- * first walk frame, and applies the stepped walk keyframes if present. If the
- * species has no atlas frames, leaves the fallback block in place.
+ * Stop and forget an element's walk interval (if any). Safe to call repeatedly.
+ * Callers can use this to dispose eagerly; the interval also self-stops once the
+ * element is detached from the DOM, so this is belt-and-suspenders.
+ */
+export function stopSpeciesSprite(el: HTMLElement): void {
+  const timer = spriteTimers.get(el);
+  if (timer !== undefined) {
+    clearInterval(timer);
+    spriteTimers.delete(el);
+  }
+}
+
+/**
+ * Paint `el` as the real animated atlas sprite for `species`. Sets the atlas as
+ * the background, sizes it (atlas px × scale), and steps `background-position`
+ * across the species' south-walk frames in JS — each frame's EXACT (x,y) rect,
+ * scaled. (See the file header for why CSS `steps()` cannot be used on this
+ * grid-packed, row-wrapping atlas.) If the species has no atlas frames, leaves
+ * the fallback block in place. The interval self-stops once `el` detaches.
  */
 function paintSprite(el: HTMLElement, species: string, atlas: AtlasFrames, displaySize: number): void {
-  const first = atlas.frames[`${species}_walk_s_0`] ?? atlas.frames[`${species}_idle_s_0`];
+  const frames = walkFrames(species, atlas);
+  const first = frames[0] ?? atlas.frames[`${species}_idle_s_0`];
   if (!first) return; // no frames for this species → keep coloured block
   const scale = displaySize / first.w;
 
@@ -203,12 +185,30 @@ function paintSprite(el: HTMLElement, species: string, atlas: AtlasFrames, displ
   el.style.backgroundImage = `url(${ATLAS_IMG})`;
   el.style.backgroundRepeat = 'no-repeat';
   el.style.backgroundSize = `${atlas.width * scale}px ${atlas.height * scale}px`;
-  el.style.backgroundPosition = `${-(first.x * scale)}px ${-(first.y * scale)}px`;
 
-  const animName = ensureWalkKeyframes(species, atlas, scale);
-  if (animName) {
-    // steps(N) makes the position jump between frames rather than smear.
-    el.style.animation = `${animName} ${WALK_CYCLE_S}s steps(${WALK_FRAMES}) infinite`;
+  // Park on the first frame's exact position immediately (no smear).
+  const place = (r: FrameRect): void => {
+    el.style.backgroundPosition = `${-(r.x * scale)}px ${-(r.y * scale)}px`;
+  };
+  place(first);
+
+  // Animate only if there's more than one walk frame. Step to each frame's
+  // literal rect on an interval; never interpolate between rects (the atlas is
+  // not a contiguous strip). Replace any prior interval on this element.
+  stopSpeciesSprite(el);
+  if (frames.length > 1) {
+    let i = 0;
+    const timer = setInterval(() => {
+      // Self-clean once removed from the DOM, so a rebuilt Species tab or a
+      // closed login screen leaves no dangling timers.
+      if (!el.isConnected) {
+        stopSpeciesSprite(el);
+        return;
+      }
+      i = (i + 1) % frames.length;
+      place(frames[i]);
+    }, WALK_FRAME_MS);
+    spriteTimers.set(el, timer);
   }
 }
 
@@ -223,9 +223,9 @@ export interface SpeciesSpriteOpts {
  *
  * Returns a `<div>` immediately. If the atlas is already loaded it paints the
  * real sprite synchronously; otherwise it shows the coloured-block fallback and
- * upgrades itself once `loadAtlas()` resolves (the load is kicked off here). No
- * cleanup is required by callers — the walk animation is pure CSS, so an element
- * removed from the DOM stops animating with no dangling timer.
+ * upgrades itself once `loadAtlas()` resolves (the load is kicked off here). The
+ * walk animation is a JS interval that self-stops once the element detaches from
+ * the DOM, so callers need no cleanup; `stopSpeciesSprite(el)` disposes eagerly.
  */
 export function createSpeciesSprite(species: string, opts: SpeciesSpriteOpts = {}): HTMLElement {
   const size = opts.size ?? 64;

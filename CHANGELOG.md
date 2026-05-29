@@ -4,6 +4,27 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.22: **Fix — species-selector sprites rendered spliced (wrong atlas frames) + validation
+  remediation.** Post-implementation review of the accounts plan.
+  - **Species sprite splicing (CRITICAL, user-reported):** the login species selector (and the
+    help Species tab) animated each sprite with a CSS `@keyframes` + `steps(4)` over
+    `background-position`. But a species' four south-walk frames are NOT a contiguous strip in the
+    packed atlas — a cycle can wrap to a new row (e.g. elephant: 1600,320 → 1664,320 → 0,384 →
+    64,384). CSS `steps()` linearly *interpolates* between keyframe stops, so a row-wrapping frame
+    landed `background-position` mid-atlas and rendered two half-creatures spliced together (the
+    elephant "split in two"). `client/src/species-sprite.ts` now steps to each frame's EXACT (x,y)
+    rect in JS (one interval per element, self-stopping on DOM detach via an `isConnected` check,
+    plus an exported `stopSpeciesSprite()` for eager disposal) — never interpolating between rects.
+    Verified in a real headless Chrome screenshot of the login screen: all 14 species render whole.
+  - **Idle-decoy roster drift (HIGH, dedup finding):** `server/game/world.js` hardcoded the
+    14-species list (with a "MUST stay in sync" comment) to skin its idle decoy animals — the exact
+    drift the shared roster was meant to kill. It now pulls from the same shared list as the player
+    spawner via `socket/species-roster.js` (`getKeys()`), with a single-ape emergency fallback.
+  - The stat-field-name enumeration spread across four server files is documented as a deliberate
+    low-priority deferral in `FINDINGS_OUTSIDE_SCOPE.md` (fixing it would re-couple the decoupled
+    `bumpStat`). Re-verified: shared+client build/tsc clean, server `npm audit` 0 vulns, end-to-end
+    socket auth/join/species/stats integration green.
+
 - 0.2.21: **Client — splash → login → game, restyled HUD, tabbed help widget** (phases 3 & 4
   of the accounts plan). Replaces the bare `prompt('Your name?')` and the manual-opens-on-load
   with a designed front end; all UI stays DOM/CSS overlays (renderer-agnostic).
