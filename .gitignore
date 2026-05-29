@@ -3,6 +3,11 @@ dist/
 .env
 .DS_Store
 
+# Sprite staging: per-frame SVGs emitted by scripts/gen-sprites.js. Regenerable
+# from the species builders; only the packed assets/sprites/atlas.{png,json} are
+# the committed runtime artifact (a clean clone boots on the atlas, no sharp).
+assets/sprites/frames/
+
 # --- Capacitor / Android ---
 #
 # DECISION (jam scaffold): we ignore the entire generated `client/android/`

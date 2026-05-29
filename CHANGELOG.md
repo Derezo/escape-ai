@@ -4,6 +4,34 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.10: **Sprite template system + atlas pipeline (Phase A of the visual-polish plan).**
+  The renderer drew pure geometric shapes and the generator emitted one static labelled
+  SVG per entity — no animation, no directions, no spritesheet. This lays the reusable
+  programmatic-SVG foundation for an 8-directional animated zoo, built template-first and
+  proven on a reference animal before any fan-out:
+  - **Locked contract (`scripts/sprites/contract.js`):** 64×64 frames anchored at centre,
+    8 directions (5 authored `s/n/e/se/ne` + 3 mirrored `w/sw/nw`), states `idle`×2 +
+    `walk`×4, and the single `frameKey()` (`<species>_<state>_<dir>_<frame>`) that the
+    generator, atlas writer, verifier, and (soon) the renderer all share — so parallel
+    species builders stay consistent by construction.
+  - **Template + palette + anim (`template.js`, `palette.js`, `anim.js`):** SVG primitive
+    vocabulary (ellipse/limb/mirrorX/svgDoc, absorbing the old poly/star builders), a
+    central 3-tone palette (the four original bases locked to the renderer's SPECIES_TINT),
+    and pure phase-math (`bob`/`limbSwing`/`breathe`) so the whole zoo moves in one rhythm.
+  - **Five archetypes (`archetypes/{quadruped,biped,bird,serpent,robot}.js`):** shared body
+    skeletons; the quadruped base alone amortises across 8 future animals.
+  - **Pipeline:** `gen-sprites.js` (zero-dep, emits per-frame SVGs + applies the mirror
+    transform) → `build-atlas.js` (sharp; grid-packs to `assets/sprites/atlas.png` +
+    Phaser JSON-Hash `atlas.json`, both dims kept under 2048 for the Android WebView) →
+    `verify-atlas.js` (zero-dep headless gate: every expected key present, no orphans,
+    geometry sane). `sharp` is a `scripts/` devDependency only — the committed atlas means
+    a clean clone never needs it to run.
+  - **Reference animal (ape):** built end-to-end against the `biped` archetype and verified
+    (48 frames → 448×448 atlas, all keys present). Recognisable round-faced knuckle-walker
+    with directional facing + walk/idle motion. Foundation locked; fan-out can begin.
+  - Verified: `gen-sprites → build-atlas → verify-atlas` all green; visual contact-sheet
+    inspection of the ape confirms readable silhouette + correct mirroring.
+
 - 0.2.9: **Gameplay depth — a living, threatening zoo.** The world was static
   (robots stood dead-still until prey wandered into range; the 8 decoy animals never
   moved), so a robot you could see was a robot you could walk past. Three reinforcing

@@ -3,15 +3,22 @@
   "version": "0.1.0",
   "license": "Zlib",
   "private": true,
-  "description": "Dev/ops scripts for the TINS 2026 starter kit. Only the load-test harness (sim-clients.js) needs a dependency; the asset generators are zero-dep.",
+  "description": "Dev/ops scripts for the TINS 2026 starter kit. The frame generator + load-test harness are zero-dep; only the atlas rasteriser (build-atlas) needs sharp.",
   "type": "commonjs",
   "scripts": {
-    "sim": "node sim-clients.js"
+    "sim": "node sim-clients.js",
+    "gen-sprites": "node gen-sprites.js",
+    "build-atlas": "node build-atlas.js",
+    "verify-atlas": "node verify-atlas.js",
+    "sprites": "node gen-sprites.js --force && node build-atlas.js && node verify-atlas.js"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
     "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "sharp": "^0.33.5"
   }
 }
