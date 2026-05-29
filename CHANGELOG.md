@@ -4,6 +4,39 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.31: **Procedural tile-sheet art + camera-follow fix (Phase 7).** The flat-color
+  placeholder tiles are replaced by real generated art, and a camera bug is fixed.
+  - **`scripts/tiles/` (new) — the tile-art pipeline, mirroring `scripts/sprites/`:** a
+    `contract.js` that mirrors the canonical `shared/src/tiles.ts` registry, a `tilepalette.js`
+    (3-tone material families), `template-tile.js` (full-bleed `fillCell`, top-lit bands,
+    name-seeded LCG scatter for byte-stable variety), and seven builder modules drawing all
+    144 tiles (terrain, grass↔path / land↔water edge sets, nature incl. tree trunk/canopy,
+    walls/roofs/doors, fences/cages, zoo housing, props). New scripts `gen-tiles.js` (zero-dep
+    SVG), `build-tileset.js` (sharp → packed PNG), `verify-tileset.js` (zero-dep gate). Packed
+    **16-col / 32px / slot-index === tile-index** so it's a DROP-IN for the renderer's existing
+    flat-color layout. `verify-tileset` is the cross-language drift gate: it asserts
+    `contract.js` matches `shared/src/tiles.ts` (names+indices+flags+order) and the PNG packing.
+  - **Committed `assets/tiles/tileset.{png,json}`** (512×320, 33 KB) so a clean clone boots on
+    the art with no codegen and no sharp; `assets/tiles/svg/` (the intermediate) is gitignored,
+    mirroring `assets/sprites/frames/`. `scripts/package.json` gains `gen-tiles`/`build-tileset`/
+    `verify-tileset`/`tiles`.
+  - **Renderer (`client/src/render/phaser.ts`):** `preload()` loads `./tiles/tileset.png`;
+    `buildWorld()` uses the real art when present, else the unchanged flat-color fallback
+    (identical 16-col/32px/index-slot math, so canopy frames + `addTilesetImage` work either
+    way). Zero-art boot preserved.
+  - **Camera-follow fix:** the camera latched onto the local player's body ONCE, but that body is
+    destroyed and rebuilt when the seeded `{id,x,y}` view gains `kind:'animal'` on the first
+    snapshot — so the camera kept following a dead object and froze. It now re-points at the live
+    body whenever it changes (`followTarget`), and `centerOn`s the player when follow (re)starts.
+  - **Spawn set back from the gate (`shared/src/world.ts`):** players spawned ~80px from the east
+    wall, inside the camera's edge-clamp zone, so the view looked pinned at spawn. Spawns now sit
+    ~20 tiles (≈640px, half a viewport) west of the gate via a robust block scan (≥1 guaranteed),
+    so the camera frames the avatar on join. `WORLD_GEN_VERSION` 3→4; entitySpec hash re-pinned
+    (collision hash unchanged).
+  - Verified by headless Chrome: real tile art renders (textured grass/paths/water/roofs), the
+    player is centered at spawn AND the world scrolls as it moves (camera follows). `verify-tileset`
+    + shared 14/14 + client build all green.
+
 - 0.2.30: **Per-species side-quests: the gate now gates (Phase 6).** Each of the 14
   playable species must finish a short side-quest before the perimeter gate will let it
   out. Three mechanics, themed per species so the flavor varies while the server logic

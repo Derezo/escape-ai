@@ -21,7 +21,7 @@ import { SPECIES_KEYS } from './species.js';
 import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
 
 /** Bump whenever generateWorld's OUTPUT changes, so client/server parity is asserted. */
-export const WORLD_GEN_VERSION = 3;
+export const WORLD_GEN_VERSION = 4;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -730,23 +730,49 @@ export function generateWorld(seed: number): WorldMap {
     questPos.set(species, { tx: placed.questTx, ty: placed.questTy });
   }
 
-  // Spawns: a small block of grass just inside the gate (west of it). Reserve them.
+  // Spawns: a small block inside the gate, set back ~half a viewport from the
+  // east wall so the camera (which clamps to the world edge) can frame the player
+  // on join instead of pinning at the boundary. Still clearly "by the gate" — the
+  // gate is a short walk east — but off the edge where follow would look frozen.
+  const SPAWN_INSET = 20; // tiles west of the gate (≈640px ≈ half a 1280 viewport)
   const spawns: { x: number; y: number }[] = [];
   const spawnTiles: { tx: number; ty: number }[] = [];
-  let placedSpawns = 0;
-  for (let ring = 1; ring <= 4 && placedSpawns < 10; ring++) {
-    for (let dy = -ring; dy <= ring && placedSpawns < 10; dy++) {
-      const sx = gateTx - 1 - ring;
+  // Scan a small block of tiles centered SPAWN_INSET west of the gate and collect
+  // the first ~10 non-solid, unreserved cells as spawn points (row-major, so the
+  // order is stable). A block (not a single column) reliably yields enough slots
+  // even when a road/plot clips the ideal column.
+  const spawnCx = gateTx - SPAWN_INSET;
+  for (let dy = -4; dy <= 4 && spawns.length < 10; dy++) {
+    for (let dx = -3; dx <= 3 && spawns.length < 10; dx++) {
+      const sx = spawnCx + dx;
       const sy = gateTy + dy;
-      if (sx < 2 || sy < 2 || sy > h - 3) continue;
+      if (sx < 2 || sy < 2 || sx >= w - 2 || sy > h - 3) continue;
       const i = tileIndex(w, sx, sy);
       if (deco.data[i] !== 0 || reserved.has(i)) continue;
-      // Spawn on walkable ground (clear any road tile under it is fine — it's
-      // already non-solid; we just ensure it's open grass-ish, but a road is OK).
       spawns.push({ x: tileCenter(sx, tile), y: tileCenter(sy, tile) });
       spawnTiles.push({ tx: sx, ty: sy });
       reserved.add(i);
-      placedSpawns++;
+    }
+  }
+  // Guarantee at least one spawn: if the block was fully occupied (rare seed),
+  // widen the search to any non-solid tile near the gate row, then fall back to a
+  // tile just inside the gate. The reachability pass below makes it walkable.
+  if (spawns.length === 0) {
+    let found = false;
+    for (let r = 1; r <= w && !found; r++) {
+      const sx = clampInt(gateTx - r, 2, w - 3);
+      const sy = clampInt(gateTy, 2, h - 3);
+      const i = tileIndex(w, sx, sy);
+      if (deco.data[i] === 0) {
+        spawns.push({ x: tileCenter(sx, tile), y: tileCenter(sy, tile) });
+        spawnTiles.push({ tx: sx, ty: sy });
+        found = true;
+      }
+    }
+    if (!found) {
+      const sx = clampInt(gateTx - SPAWN_INSET, 2, w - 3);
+      spawns.push({ x: tileCenter(sx, tile), y: tileCenter(gateTy, tile) });
+      spawnTiles.push({ tx: sx, ty: gateTy });
     }
   }
 

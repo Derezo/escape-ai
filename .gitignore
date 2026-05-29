@@ -12,6 +12,11 @@ server/data/
 # the committed runtime artifact (a clean clone boots on the atlas, no sharp).
 assets/sprites/frames/
 
+# Tile staging: per-tile SVGs emitted by scripts/gen-tiles.js. Regenerable from
+# the tile builders; only the packed assets/tiles/tileset.{png,json} are the
+# committed runtime artifact (a clean clone boots on the tileset, no sharp).
+assets/tiles/svg/
+
 # --- Capacitor / Android ---
 #
 # DECISION (jam scaffold): we ignore the entire generated `client/android/`

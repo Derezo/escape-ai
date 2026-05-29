@@ -10,7 +10,11 @@
     "gen-sprites": "node gen-sprites.js",
     "build-atlas": "node build-atlas.js",
     "verify-atlas": "node verify-atlas.js",
-    "sprites": "node gen-sprites.js --force && node build-atlas.js && node verify-atlas.js"
+    "sprites": "node gen-sprites.js --force && node build-atlas.js && node verify-atlas.js",
+    "gen-tiles": "node gen-tiles.js",
+    "build-tileset": "node build-tileset.js",
+    "verify-tileset": "node verify-tileset.js",
+    "tiles": "node gen-tiles.js --force && node build-tileset.js && node verify-tileset.js"
   },
   "engines": {
     "node": ">=22"

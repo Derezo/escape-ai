@@ -36,6 +36,9 @@ const MARKER_SIZE = 20;
 const PROP_SIZE = 16;
 /** The atlas texture key. */
 const ATLAS_KEY = 'creatures';
+/** The committed procedural tileset texture key (Phase 7 art; flat-color fallback
+ *  if absent). Packed 16-col / 32px / slot-index === tile-index — see buildWorld. */
+const TILESET_ART_KEY = 'tileset';
 /** Squared authoritative-position delta (per update) above which an entity reads
  *  as "moving". Small, so even a slow walk between snapshots registers, while
  *  float jitter on a standing entity does not. */
@@ -147,6 +150,9 @@ class WorldScene extends Phaser.Scene {
   private pending: Entity[] = [];
   /** True once the atlas texture loaded; gates the sprite path (else shapes). */
   private atlasReady = false;
+  /** True once the committed tileset.png loaded; buildWorld uses the real art when
+   *  set, else generates the flat-color fallback texture. */
+  private tilesetArtReady = false;
   /** Species that have a full set of atlas frames (so anims exist for them). */
   private animatedSpecies = new Set<string>();
   /** Strongest camera-shake requested this frame (coalesced so shakes don't stack). */
@@ -160,8 +166,11 @@ class WorldScene extends Phaser.Scene {
   private worldBuilt = false;
   /** Per-building roof objects + footprint (world units), for the fade-on-enter. */
   private roofs: { rect: Phaser.GameObjects.Rectangle; bx0: number; by0: number; bx1: number; by1: number; inside: boolean }[] = [];
-  /** Whether the camera has started following the local player yet. */
-  private followSet = false;
+  /** The body the camera is currently following, so we RE-follow when the local
+   *  player's view is recreated (kind change: the seeded {id,x,y} → 'animal'
+   *  snapshot destroys+rebuilds the body, and a stale follow target freezes the
+   *  camera). Null until the first follow. */
+  private followTarget: Phaser.GameObjects.GameObject | null = null;
 
   constructor() {
     super('world');
@@ -178,14 +187,21 @@ class WorldScene extends Phaser.Scene {
     // and inside the Capacitor Android WebView. Missing files just leave the
     // atlas absent → the shape fallback takes over (handled in create/createView).
     this.load.atlas(ATLAS_KEY, './sprites/atlas.png', './sprites/atlas.json');
+    // The committed procedural tileset (Phase 7 art). Packed to match buildWorld's
+    // grid exactly (16 cols, 32px, slot-index === tile-index). If it 404s, the
+    // loaderror clears the flag and buildWorld falls back to the flat-color
+    // texture — the zero-art path stays fully intact.
+    this.load.image(TILESET_ART_KEY, './tiles/tileset.png');
     this.load.on('loaderror', (file: Phaser.Loader.File) => {
       if (file.key === ATLAS_KEY) this.atlasReady = false;
+      if (file.key === TILESET_ART_KEY) this.tilesetArtReady = false;
     });
   }
 
   create(): void {
     this.atlasReady = this.textures.exists(ATLAS_KEY);
     if (this.atlasReady) this.buildAnimations();
+    this.tilesetArtReady = this.textures.exists(TILESET_ART_KEY);
     this.makeDotTexture();
   }
 
@@ -279,11 +295,12 @@ class WorldScene extends Phaser.Scene {
   }
 
   /**
-   * Build the tilemap world from the generated WorldMap: a flat-color tileset
-   * texture (Phase 7 swaps in real art), three Phaser TilemapLayers (ground /
-   * deco-solid / canopy) with culling, per-building roof rectangles for the
-   * fade-on-enter, and the camera bounds. Mobile entities Y-sort against the
-   * canopy (see interpolate). Idempotent: runs once (worldBuilt guards it).
+   * Build the tilemap world from the generated WorldMap: the tileset texture (the
+   * committed procedural tileset.png when present, else a flat-color fallback),
+   * three Phaser TilemapLayers (ground / deco-solid / canopy) with culling,
+   * per-building roof rectangles for the fade-on-enter, and the camera bounds.
+   * Mobile entities Y-sort against the canopy (see interpolate). Idempotent: runs
+   * once (worldBuilt guards it).
    */
   private buildWorld(map: WorldMap): void {
     if (this.worldBuilt) return;
@@ -292,29 +309,42 @@ class WorldScene extends Phaser.Scene {
     const TS = map.tile; // 32
     const worldPx = { w: map.w * TS, h: map.h * TS };
 
-    // 1. A flat-color tileset TEXTURE: one TS×TS colored cell per registry index,
-    //    packed in a grid so a tile's index = its grid slot (matches how the real
-    //    tileset PNG will be packed in Phase 7). Generated once.
-    const TILESET_KEY = '__tileset_flat';
-    const maxIndex = this.maxTileIndex();
+    // 1. The tileset TEXTURE. PREFER the committed procedural art (tileset.png,
+    //    loaded in preload) — it is packed EXACTLY as this renderer lays tiles out:
+    //    a 16-col grid of TS×TS cells with slot-index === tile-index (index 0 a
+    //    blank/transparent cell). If that PNG is absent (zero-art clone / 404), we
+    //    generate the FLAT-COLOR fallback texture with the identical grid math, so
+    //    everything downstream (addTilesetImage, the canopy per-index frames) works
+    //    unchanged regardless of which texture key is used.
     const cols = 16;
+    const maxIndex = this.maxTileIndex();
     const rows = Math.ceil((maxIndex + 1) / cols);
-    if (!this.textures.exists(TILESET_KEY)) {
-      const g = this.add.graphics();
-      for (let idx = 0; idx <= maxIndex; idx++) {
-        const cx = (idx % cols) * TS;
-        const cy = Math.floor(idx / cols) * TS;
-        const color = fallbackTileColor(idx);
-        if (color === null) continue; // empty / transparent (index 0, deco gaps)
-        g.fillStyle(color, 1).fillRect(cx, cy, TS, TS);
-        // A subtle inner border so adjacent same-color tiles still read as a grid
-        // on solid structures (walls/fences) without art.
-        if (idx !== 0 && TILE_BY_INDEX[idx]?.solid) {
-          g.lineStyle(1, 0x000000, 0.25).strokeRect(cx + 0.5, cy + 0.5, TS - 1, TS - 1);
+    const FLAT_KEY = '__tileset_flat';
+    let TILESET_KEY: string;
+    if (this.tilesetArtReady && this.textures.exists(TILESET_ART_KEY)) {
+      // Use the real art. Its layout is the spec above by construction (the build
+      // pipeline packs by index in a 16-col / 32px grid — see scripts/build-tileset.js).
+      TILESET_KEY = TILESET_ART_KEY;
+    } else {
+      // Zero-art fallback: one TS×TS colored cell per registry index, same grid.
+      TILESET_KEY = FLAT_KEY;
+      if (!this.textures.exists(FLAT_KEY)) {
+        const g = this.add.graphics();
+        for (let idx = 0; idx <= maxIndex; idx++) {
+          const cx = (idx % cols) * TS;
+          const cy = Math.floor(idx / cols) * TS;
+          const color = fallbackTileColor(idx);
+          if (color === null) continue; // empty / transparent (index 0, deco gaps)
+          g.fillStyle(color, 1).fillRect(cx, cy, TS, TS);
+          // A subtle inner border so adjacent same-color tiles still read as a grid
+          // on solid structures (walls/fences) without art.
+          if (idx !== 0 && TILE_BY_INDEX[idx]?.solid) {
+            g.lineStyle(1, 0x000000, 0.25).strokeRect(cx + 0.5, cy + 0.5, TS - 1, TS - 1);
+          }
         }
+        g.generateTexture(FLAT_KEY, cols * TS, rows * TS);
+        g.destroy();
       }
-      g.generateTexture(TILESET_KEY, cols * TS, rows * TS);
-      g.destroy();
     }
 
     // 2. Build the three layers from the grids. The canopy layer carries only the
@@ -366,8 +396,9 @@ class WorldScene extends Phaser.Scene {
    * canopy occludes only the entities "under" it. Depth = the tree base's worldY
    * (the trunk one tile south of the canopy cell), so a mobile entity (depth =
    * its own worldY) below the base draws OVER the canopy, above the base draws
-   * UNDER it. Uses a per-index frame on the (flat-color or, in Phase 7, real)
-   * tileset texture. Canopies are few (tens), so individual images are cheap.
+   * UNDER it. Uses a per-index frame on the tileset texture (the committed
+   * procedural art, or the flat-color fallback). Canopies are few (tens), so
+   * individual images are cheap.
    */
   private buildCanopies(map: WorldMap, TS: number, tilesetKey: string, cols: number): void {
     const tex = this.textures.get(tilesetKey);
@@ -510,12 +541,26 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** Start the camera following the local player's body (once). Only after a map
-   *  exists, so bounds are set first. */
+  /**
+   * Make the camera follow the local player's body. Called every frame the local
+   * view is seen; it (re)starts the follow whenever the followed body CHANGES —
+   * which happens not just on first sight but each time the view is recreated (the
+   * seeded {id,x,y} view is destroyed and rebuilt when the first snapshot adds
+   * kind:'animal'). Following a destroyed body silently freezes the camera, so we
+   * must re-point it at the live body. Requires the map (bounds) to exist first.
+   */
   private startFollow(view: EntityView): void {
-    if (this.followSet || !this.worldBuilt) return;
-    this.followSet = true;
-    this.cameras.main.startFollow(view.body, true, 0.12, 0.12);
+    if (!this.worldBuilt) return;
+    if (this.followTarget === view.body) return; // already following this body
+    this.followTarget = view.body;
+    const cam = this.cameras.main;
+    cam.startFollow(view.body, true, 0.12, 0.12);
+    // Snap to the player immediately (within bounds) so the first frame is framed
+    // on the avatar instead of easing in from the previous scroll. Near the world
+    // edge (e.g. spawning by the gate) the bounds clamp still pins the camera —
+    // that's correct: it can't scroll past the edge, so the player rides toward
+    // the screen edge until it's more than half a viewport inward.
+    cam.centerOn(view.renderX, view.renderY);
   }
 
   /**
