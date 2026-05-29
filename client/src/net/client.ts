@@ -21,6 +21,7 @@ import {
   type Pong,
   type LobbyState,
   type SnapshotMsg,
+  type MapMsg,
 } from '@shared/net';
 
 /** How often (ms) to send a ping for the latency estimate. */
@@ -35,6 +36,7 @@ export class NetClient {
   private snapshotCb: (msg: SnapshotMsg) => void = () => {};
   private lobbyCb: (msg: LobbyState) => void = () => {};
   private authCb: (msg: AuthResult) => void = () => {};
+  private mapCb: (msg: MapMsg) => void = () => {};
 
   /** Open the connection. Wires server->client handlers and starts the ping loop. */
   connect(url: string): void {
@@ -56,6 +58,13 @@ export class NetClient {
 
     this.socket.on(SERVER_EVENTS.LOBBY_STATE, (msg: LobbyState) => {
       this.lobbyCb(msg);
+    });
+
+    // The world map (seed-only) — sent once on join. The client regenerates the
+    // full WorldMap from the seed (see main.ts onMap). Registered here; the cb
+    // defaults to a no-op until main.ts registers via onMap().
+    this.socket.on(SERVER_EVENTS.MAP, (msg: MapMsg) => {
+      this.mapCb(msg);
     });
 
     // Latency: server echoes our timestamp back in pong {t}; rtt = now - t.
@@ -109,6 +118,11 @@ export class NetClient {
   /** Register the lobby-state handler. */
   onLobbyState(cb: (msg: LobbyState) => void): void {
     this.lobbyCb = cb;
+  }
+
+  /** Register the map handler (the seed-only world map, sent once on join). */
+  onMap(cb: (msg: MapMsg) => void): void {
+    this.mapCb = cb;
   }
 
   /** Current smoothed latency in ms, or -1 if not yet measured. */

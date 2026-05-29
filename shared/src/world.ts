@@ -21,7 +21,7 @@ import { SPECIES_KEYS } from './species.js';
 import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
 
 /** Bump whenever generateWorld's OUTPUT changes, so client/server parity is asserted. */
-export const WORLD_GEN_VERSION = 2;
+export const WORLD_GEN_VERSION = 3;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -360,12 +360,16 @@ function stampBuilding(
       }
     }
   }
-  // Door on the south wall, road-facing, walkable.
+  // Door on the south wall, road-facing, walkable. TWO tiles wide (64px) so the
+  // player's collision AABB (radius ~13) passes through comfortably — a 1-tile
+  // gap leaves only ~6px clearance and is effectively impassable.
   const doorTx = rx + Math.floor(rw / 2);
   const doorTy = ry + rh - 1;
   setTile(deco, doorTx, doorTy, TILE_INDEX.DOOR_OPEN);
-  // A keep the threshold roof-free so entering reads as "inside".
+  setTile(deco, doorTx - 1, doorTy, TILE_INDEX.DOOR_OPEN);
+  // Keep the threshold roof-free so entering reads as "inside".
   setTile(roof, doorTx, doorTy, 0);
+  setTile(roof, doorTx - 1, doorTy, 0);
 
   // Interior props + the quest terminal tile (the quest object sits just inside
   // the door so it is reliably reachable once the door is reachable).
@@ -445,7 +449,9 @@ function stampHousing(
     setTile(deco, rx, ry + dy, barrier);
     setTile(deco, rx + rw - 1, ry + dy, barrier);
   }
-  setTile(deco, gateTx, gateTy, barrierGate); // walkable opening
+  // Two-tile-wide opening (64px) so the player's collision AABB fits through.
+  setTile(deco, gateTx, gateTy, barrierGate);
+  setTile(deco, gateTx - 1, gateTy, barrierGate);
 
   const reachTargets: { tx: number; ty: number }[] = [
     { tx: gateTx, ty: gateTy },

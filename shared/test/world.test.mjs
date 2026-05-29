@@ -21,7 +21,7 @@ import { SPECIES_KEYS } from '../dist/species.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-const PINNED_COLLISION_HASH = 1411468955;
+const PINNED_COLLISION_HASH = 651189019;
 const PINNED_ENTITYSPEC_HASH = 1509859296;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */

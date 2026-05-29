@@ -19,9 +19,10 @@
  */
 
 import Phaser from 'phaser';
-import type { IRenderer, Entity } from '@shared/renderer';
+import type { IRenderer, Entity, WorldMap } from '@shared/renderer';
 import type { Dir8 } from '@shared/types';
 import { facingFromVec } from '@shared/step';
+import { TILE_BY_INDEX } from '@shared/tiles';
 
 /** Visual size of a mobile entity (animal/robot), in pixels. */
 const RECT_SIZE = 28;
@@ -57,11 +58,29 @@ const SPECIES_TINT: Record<string, number> = {
   elephant: 0x5a6b7a, // slate
 };
 
-/** Draw depths. Pens floor; props/markers; mobile; fx on top. */
-const DEPTH_PEN = 0;
-const DEPTH_PROP = 1; // terminals / gates / hazards
-const DEPTH_MOBILE = 2; // animals / robots
-const DEPTH_FX = 3; // ability effects, glows, particles (above everything)
+/**
+ * Draw depths. With the tilemap world, mobile entities Y-SORT: their depth is
+ * their world Y (so an entity lower on screen draws in front), which lets tree
+ * canopies (also Y-sorted by their trunk-base Y) occlude an entity "under" them
+ * while the solid trunk — pinned BELOW the Y-sort band — always draws behind the
+ * entity. The Y-sort band spans the world height (0..~MAP_H*TILE), so the fixed
+ * layers below/above it are pushed clear of that range.
+ *
+ *   ground tiles ........ DEPTH_GROUND        (terrain floor)
+ *   solid deco tiles ..... DEPTH_DECO_GROUND   (trunks/walls/fences/rocks; below mobile)
+ *   mobile + canopy ...... worldY              (Y-sorted: the band [0, ~4096])
+ *   labels/halos/rings ... worldY + small      (track their entity, just above it)
+ *   roof ................. DEPTH_ROOF          (occludes everything until it fades)
+ *   fx .................. DEPTH_FX            (bursts/flashes, always on top)
+ */
+const DEPTH_GROUND = -200;
+const DEPTH_DECO_GROUND = -100; // solid, non-canopy deco — always under mobile
+const DEPTH_ROOF = 1_000_000; // building roofs (fade to reveal the interior)
+const DEPTH_FX = 2_000_000; // ability effects, glows, particles (above everything)
+/** Kept for the legacy no-map path (shape views before a map arrives). */
+const DEPTH_PEN = -150;
+const DEPTH_PROP = 1; // terminals / gates / hazards / quest objects (Y-sorted band base)
+const DEPTH_MOBILE = 2; // animals / robots (overridden to worldY once a map is set)
 
 /** A soft round particle texture key, generated once in create(). */
 const DOT_KEY = '__fxdot';
@@ -108,6 +127,10 @@ interface EntityView {
   fxStartTick?: number;
   /** A sustained glow/overlay (cloak/carry/shell/stink), cleared when fx ends. */
   fxGlow?: Phaser.GameObjects.Arc;
+  /** True for the local player's view (drives camera-follow + roof-fade probe). */
+  isLocal?: boolean;
+  /** Whether this kind Y-sorts (mobile entities + quest objects in the world band). */
+  ysorted?: boolean;
 }
 
 /** humanLikeness at/above this reads as "human" — mirrors the server freeze threshold. */
@@ -131,8 +154,23 @@ class WorldScene extends Phaser.Scene {
   /** Whether a screen flash was requested this frame (coalesced to one). */
   private pendingFlash = false;
 
+  /** A map handed in (before or after create()); built on the next update tick. */
+  private pendingMap: WorldMap | null = null;
+  /** True once buildWorld has stamped the tilemap (so we don't rebuild). */
+  private worldBuilt = false;
+  /** Per-building roof objects + footprint (world units), for the fade-on-enter. */
+  private roofs: { rect: Phaser.GameObjects.Rectangle; bx0: number; by0: number; bx1: number; by1: number; inside: boolean }[] = [];
+  /** Whether the camera has started following the local player yet. */
+  private followSet = false;
+
   constructor() {
     super('world');
+  }
+
+  /** Receive the world map (from PhaserRenderer.setMap). Built lazily in update()
+   *  so it works whether it arrives before or after the scene's create(). */
+  setMap(map: WorldMap): void {
+    this.pendingMap = map;
   }
 
   preload(): void {
@@ -219,8 +257,15 @@ class WorldScene extends Phaser.Scene {
   // Phaser drives update() every frame; we reconcile views to `pending` here so
   // creation/movement happens on the render thread, then interpolate positions.
   update(_time: number, delta: number): void {
+    // Build the tilemap world the first frame a map is available (it may have
+    // arrived before or after create()). Done here so the scene is fully booted.
+    if (this.pendingMap && !this.worldBuilt) {
+      this.buildWorld(this.pendingMap);
+      this.pendingMap = null;
+    }
     this.upsert(this.pending);
     this.interpolate(delta / 1000);
+    this.updateRoofFade();
     // Apply the coalesced camera FX once per frame (strongest shake wins; one
     // flash) so a burst of simultaneous abilities can't stack into nausea.
     if (this.pendingShake > 0) {
@@ -230,6 +275,170 @@ class WorldScene extends Phaser.Scene {
     if (this.pendingFlash) {
       this.cameras.main.flash(150, 255, 255, 255, false);
       this.pendingFlash = false;
+    }
+  }
+
+  /**
+   * Build the tilemap world from the generated WorldMap: a flat-color tileset
+   * texture (Phase 7 swaps in real art), three Phaser TilemapLayers (ground /
+   * deco-solid / canopy) with culling, per-building roof rectangles for the
+   * fade-on-enter, and the camera bounds. Mobile entities Y-sort against the
+   * canopy (see interpolate). Idempotent: runs once (worldBuilt guards it).
+   */
+  private buildWorld(map: WorldMap): void {
+    if (this.worldBuilt) return;
+    this.worldBuilt = true;
+
+    const TS = map.tile; // 32
+    const worldPx = { w: map.w * TS, h: map.h * TS };
+
+    // 1. A flat-color tileset TEXTURE: one TS×TS colored cell per registry index,
+    //    packed in a grid so a tile's index = its grid slot (matches how the real
+    //    tileset PNG will be packed in Phase 7). Generated once.
+    const TILESET_KEY = '__tileset_flat';
+    const maxIndex = this.maxTileIndex();
+    const cols = 16;
+    const rows = Math.ceil((maxIndex + 1) / cols);
+    if (!this.textures.exists(TILESET_KEY)) {
+      const g = this.add.graphics();
+      for (let idx = 0; idx <= maxIndex; idx++) {
+        const cx = (idx % cols) * TS;
+        const cy = Math.floor(idx / cols) * TS;
+        const color = fallbackTileColor(idx);
+        if (color === null) continue; // empty / transparent (index 0, deco gaps)
+        g.fillStyle(color, 1).fillRect(cx, cy, TS, TS);
+        // A subtle inner border so adjacent same-color tiles still read as a grid
+        // on solid structures (walls/fences) without art.
+        if (idx !== 0 && TILE_BY_INDEX[idx]?.solid) {
+          g.lineStyle(1, 0x000000, 0.25).strokeRect(cx + 0.5, cy + 0.5, TS - 1, TS - 1);
+        }
+      }
+      g.generateTexture(TILESET_KEY, cols * TS, rows * TS);
+      g.destroy();
+    }
+
+    // 2. Build the three layers from the grids. The canopy layer carries only the
+    //    'behind' tiles (drawn ABOVE mobile for walk-behind); the deco layer
+    //    carries the rest of deco (solid trunks/walls/fences/rocks, below mobile).
+    const tilemap = this.make.tilemap({ tileWidth: TS, tileHeight: TS, width: map.w, height: map.h });
+    const ts = tilemap.addTilesetImage(TILESET_KEY, TILESET_KEY, TS, TS, 0, 0);
+    if (!ts) return;
+
+    const ground = tilemap.createBlankLayer('ground', ts, 0, 0)!;
+    ground.setDepth(DEPTH_GROUND).setCullPadding(2, 2);
+    this.fillLayer(ground, map.ground.data, map.w, map.h, () => true);
+
+    const decoGround = tilemap.createBlankLayer('decoGround', ts, 0, 0)!;
+    decoGround.setDepth(DEPTH_DECO_GROUND).setCullPadding(2, 2);
+    this.fillLayer(decoGround, map.deco.data, map.w, map.h, (idx) => TILE_BY_INDEX[idx]?.ysort !== 'behind');
+
+    // Canopy ('behind') tiles can't live on ONE tilemap layer: a layer has a
+    // single depth, but each canopy must Y-sort against the player by its OWN
+    // tree-base Y (a player south of a north tree should pass in front of that
+    // canopy, behind a south one). There are only a few dozen canopy tiles, so we
+    // spawn each as an individual image at depth = the tree base's worldY: a
+    // mobile entity (depth = its worldY) below the base draws over the canopy, one
+    // above draws under it. The base is one tile below the canopy cell (the trunk).
+    this.buildCanopies(map, TS, TILESET_KEY, cols);
+
+    // Roof grid tiles bake into per-building rectangles (below) for the fade, so
+    // we DON'T draw the roof grid as a static layer — the rects own the roof.
+
+    // 3. Per-building roof rectangles (fade on enter). Footprint in world units.
+    for (const b of map.buildings) {
+      const bx = b.rx * TS;
+      const by = b.ry * TS;
+      const bw = b.rw * TS;
+      const bh = b.rh * TS;
+      const rect = this.add
+        .rectangle(bx + bw / 2, by + bh / 2, bw, bh, 0x6b4f3a, 1)
+        .setStrokeStyle(2, 0x4a3526, 1)
+        .setDepth(DEPTH_ROOF);
+      this.roofs.push({ rect, bx0: bx, by0: by, bx1: bx + bw, by1: by + bh, inside: false });
+    }
+
+    // 4. Camera: bound to the world and (later) follow the local player.
+    this.cameras.main.setBounds(0, 0, worldPx.w, worldPx.h);
+  }
+
+  /**
+   * Spawn each 'behind' (canopy) deco tile as an individual Y-sorted image, so a
+   * canopy occludes only the entities "under" it. Depth = the tree base's worldY
+   * (the trunk one tile south of the canopy cell), so a mobile entity (depth =
+   * its own worldY) below the base draws OVER the canopy, above the base draws
+   * UNDER it. Uses a per-index frame on the (flat-color or, in Phase 7, real)
+   * tileset texture. Canopies are few (tens), so individual images are cheap.
+   */
+  private buildCanopies(map: WorldMap, TS: number, tilesetKey: string, cols: number): void {
+    const tex = this.textures.get(tilesetKey);
+    const data = map.deco.data;
+    for (let ty = 0; ty < map.h; ty++) {
+      for (let tx = 0; tx < map.w; tx++) {
+        const idx = data[ty * map.w + tx];
+        if (idx === 0 || TILE_BY_INDEX[idx]?.ysort !== 'behind') continue;
+        // Register a frame for this index once (slot in the packed grid).
+        const frameName = `t${idx}`;
+        if (!tex.has(frameName)) {
+          tex.add(frameName, 0, (idx % cols) * TS, Math.floor(idx / cols) * TS, TS, TS);
+        }
+        const wx = tx * TS + TS / 2;
+        const wy = ty * TS + TS / 2;
+        // Tree base = the trunk one tile south (canopy at ty, trunk at ty+1).
+        const baseY = (ty + 1) * TS + TS / 2;
+        this.add.image(wx, wy, tilesetKey, frameName).setOrigin(0.5).setDepth(baseY);
+      }
+    }
+  }
+
+  /** Stamp a grid's tile indices into a layer, filtered by `keep(index)`. */
+  private fillLayer(
+    layer: Phaser.Tilemaps.TilemapLayer,
+    data: Uint16Array,
+    w: number,
+    h: number,
+    keep: (index: number) => boolean,
+  ): void {
+    for (let ty = 0; ty < h; ty++) {
+      for (let tx = 0; tx < w; tx++) {
+        const idx = data[ty * w + tx];
+        if (idx === 0 || !keep(idx)) continue;
+        layer.putTileAt(idx, tx, ty);
+      }
+    }
+  }
+
+  /** Highest tile index in the registry (for sizing the flat tileset texture). */
+  private maxTileIndex(): number {
+    let m = 0;
+    for (const k of Object.keys(TILE_BY_INDEX)) m = Math.max(m, Number(k));
+    return m;
+  }
+
+  /**
+   * Fade each building roof in/out as the LOCAL player enters/leaves its
+   * footprint. Edge-triggered (a tween only on the inside↔outside flip) so it's
+   * cheap and smooth. The interior (floor/walls drawn underneath) is revealed
+   * when the roof reaches alpha 0.
+   */
+  private updateRoofFade(): void {
+    if (this.roofs.length === 0) return;
+    // Find the local player's interpolated position.
+    let px: number | undefined;
+    let py: number | undefined;
+    for (const v of this.views.values()) {
+      if (v.isLocal) { px = v.renderX; py = v.renderY; break; }
+    }
+    if (px === undefined || py === undefined) return;
+    for (const r of this.roofs) {
+      const inside = px >= r.bx0 && px < r.bx1 && py >= r.by0 && py < r.by1;
+      if (inside === r.inside) continue;
+      r.inside = inside;
+      this.tweens.add({
+        targets: r.rect,
+        alpha: inside ? 0 : 1,
+        duration: 220,
+        ease: 'Sine.easeOut',
+      });
     }
   }
 
@@ -245,9 +454,11 @@ class WorldScene extends Phaser.Scene {
         // already client-predicted), remote entities interpolate (see interpolate()).
         view.targetX = e.x;
         view.targetY = e.y;
+        view.isLocal = e._local === true;
         if (e._local === true) {
           view.renderX = e.x;
           view.renderY = e.y;
+          this.startFollow(view);
         }
         this.updateAnimation(view, e);
         this.restyle(view, e);
@@ -255,10 +466,12 @@ class WorldScene extends Phaser.Scene {
       } else {
         if (view) this.destroyView(view);
         const created = this.createView(e);
+        created.isLocal = e._local === true;
         this.updateAnimation(created, e);
         this.restyle(created, e);
         this.updateFx(created, e);
         this.views.set(e.id, created);
+        if (e._local === true) this.startFollow(created);
       }
     }
 
@@ -284,7 +497,25 @@ class WorldScene extends Phaser.Scene {
       view.ring?.setPosition(x, y);
       view.halo?.setPosition(x, y);
       view.fxGlow?.setPosition(x, y);
+      // Y-SORT: once a tilemap world exists, a mobile entity's depth is its world
+      // Y, so it draws in front of things above it (smaller Y) and behind things
+      // below it — including the canopy layer at mid-band, giving the walk-behind
+      // -trees effect. Labels/rings/halos track just above their body's band.
+      if (view.ysorted && this.worldBuilt) {
+        view.body.setDepth(y);
+        view.label?.setDepth(y + 0.3);
+        view.ring?.setDepth(y + 0.1);
+        view.halo?.setDepth(y - 0.1);
+      }
     }
+  }
+
+  /** Start the camera following the local player's body (once). Only after a map
+   *  exists, so bounds are set first. */
+  private startFollow(view: EntityView): void {
+    if (this.followSet || !this.worldBuilt) return;
+    this.followSet = true;
+    this.cameras.main.startFollow(view.body, true, 0.12, 0.12);
   }
 
   /**
@@ -598,7 +829,7 @@ class WorldScene extends Phaser.Scene {
 
       case 'robot': {
         const sprite = this.makeSprite('robot', e);
-        if (sprite) return base(sprite, { species: 'robot', label: this.makeLabel(e) });
+        if (sprite) return base(sprite, { species: 'robot', label: this.makeLabel(e), ysorted: true });
         // Fallback: a steel-gray diamond (rotated square) — clearly not an animal.
         const body = this.add
           .rectangle(e.x, e.y, RECT_SIZE, RECT_SIZE, 0x9aa3ad)
@@ -606,7 +837,7 @@ class WorldScene extends Phaser.Scene {
           .setOrigin(0.5)
           .setAngle(45)
           .setDepth(DEPTH_MOBILE);
-        return base(body, { species: 'robot', label: this.makeLabel(e) });
+        return base(body, { species: 'robot', label: this.makeLabel(e), ysorted: true });
       }
 
       case 'terminal':
@@ -636,13 +867,26 @@ class WorldScene extends Phaser.Scene {
             .setDepth(DEPTH_PROP),
         );
 
+      case 'questObject':
+        // A per-species objective marker: a small glowing diamond, Y-sorted so it
+        // sits naturally among the entities in its enclosure. (Phase 6 reads the
+        // species/quest; this is the on-field marker the player fetches/reaches.)
+        return base(
+          this.add
+            .star(e.x, e.y, 4, MARKER_SIZE * 0.3, MARKER_SIZE * 0.6, 0xffe066)
+            .setStrokeStyle(2, 0xfff4b0, 0.9)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PROP),
+          { ysorted: true, label: this.makeLabel(e) },
+        );
+
       case 'animal':
       default: {
         const species = typeof e.species === 'string' ? e.species : 'ape';
         const sprite = this.makeSprite(species, e);
-        if (sprite) return base(sprite, { species, label: this.makeLabel(e) });
+        if (sprite) return base(sprite, { species, label: this.makeLabel(e), ysorted: true });
         // Fallback: the original per-species geometric shape.
-        return base(this.makeAnimalBody(e), { species, label: this.makeLabel(e) });
+        return base(this.makeAnimalBody(e), { species, label: this.makeLabel(e), ysorted: true });
       }
     }
   }
@@ -768,6 +1012,41 @@ function blendColors(a: number, b: number, t: number): number {
   return (r << 16) | (g << 8) | bl;
 }
 
+/**
+ * Flat fallback color for a tile index (used until Phase 7 ships the real tileset
+ * PNG). Returns null for tiles that should be transparent (empty, and deco tiles
+ * are drawn on a transparent cell so the ground shows through). Grouped by the
+ * tile's semantic NAME prefix so the whole zoo reads correctly with zero art:
+ * grass green, paths gray, water blue, walls/roofs brown, fences tan, etc.
+ */
+function fallbackTileColor(idx: number): number | null {
+  const def = TILE_BY_INDEX[idx];
+  if (!def || idx === 0) return null;
+  const name = def.name;
+  // Ground tiles fill their whole cell; deco tiles draw on transparent so the
+  // ground beneath shows (except solid structures, which get an opaque body).
+  if (name.startsWith('GRASS')) return 0x4f7a3a;
+  if (name.startsWith('DIRT') || name.startsWith('MUD')) return 0x7a5a38;
+  if (name.startsWith('PAVED') || name.startsWith('COBBLE') || name.startsWith('PATH')) return 0x8b8b93;
+  if (name.startsWith('SAND')) return 0xd4c483;
+  if (name.startsWith('WATER') || name.startsWith('POND')) return name.includes('DEEP') ? 0x2f5d8a : 0x3f86c0;
+  if (name.startsWith('FLOOR') || name.startsWith('PEN_FLOOR') || name === 'HEAT_LAMP_FLOOR') return 0xb8a888;
+  // Deco / structures (drawn on transparent cells over the ground).
+  if (name.startsWith('TREE_CANOPY') || name === 'PINE_CANOPY') return 0x35702f;
+  if (name.includes('TRUNK') || name === 'LOG' || name === 'STUMP') return 0x5a3f24;
+  if (name.startsWith('BUSH') || name === 'GRASS_TALL' || name === 'REEDS' || name === 'CATTAILS') return 0x3c6b30;
+  if (name.startsWith('ROCK') || name === 'BOULDER' || name.startsWith('ROCKY_DEN')) return 0x807a72;
+  if (name.startsWith('FLOWER')) return 0xd9627a;
+  if (name.startsWith('WALL') || name === 'WINDOW' || name === 'DOOR_CLOSED') return 0x8a6b4a;
+  if (name === 'DOOR_OPEN') return 0x3a2a1a;
+  if (name.startsWith('ROOF')) return 0x9a4a3a;
+  if (name.startsWith('FENCE') || name.startsWith('CAGE')) return 0xb0894f;
+  if (name.startsWith('AVIARY') || name.startsWith('ENCLOSURE') || name === 'MOAT_EDGE' || name === 'KEEPER_GATE' || name === 'SHADE_CLOTH') return 0x9aa3ad;
+  if (name === 'LILY_PAD' || name === 'LILY_FLOWER' || name === 'NEST' || name === 'BURROW_MOUND' || name === 'MUSHROOM') return 0x4a7a4a;
+  // Props.
+  return 0xb0b0b8;
+}
+
 function hsvToInt(h: number, s: number, v: number): number {
   const c = v * s;
   const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
@@ -812,6 +1091,10 @@ export class PhaserRenderer implements IRenderer {
     await new Promise<void>((resolve) => {
       this.game!.events.once(Phaser.Core.Events.READY, () => resolve());
     });
+  }
+
+  setMap(map: WorldMap): void {
+    this.scene?.setMap(map);
   }
 
   syncEntities(entities: Entity[]): void {

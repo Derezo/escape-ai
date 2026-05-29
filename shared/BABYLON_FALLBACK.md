@@ -47,7 +47,7 @@ This keeps the same `{x, y}` contract Phaser uses; 3D only adds an optional axis
 
 ```ts
 import { Engine, Scene, ArcRotateCamera, HemisphericLight, Vector3, MeshBuilder, type Mesh } from '@babylonjs/core';
-import type { IRenderer, Entity } from '@tins2026/shared';
+import type { IRenderer, Entity, WorldMap } from '@tins2026/shared';
 
 export class BabylonRenderer implements IRenderer {
   private engine!: Engine;
@@ -69,6 +69,17 @@ export class BabylonRenderer implements IRenderer {
 
     this.engine.runRenderLoop(() => this.scene.render());
     window.addEventListener('resize', this.onResize);
+  }
+
+  // Called once when the world map is ready (the client regenerates it from the
+  // seed the server sends). A 3D impl builds its ground from the same plain
+  // WorldMap arrays — e.g. a tiled ground plane + instanced meshes for solid
+  // deco tiles (map.collision) — instead of Phaser TilemapLayers. Renderer-
+  // agnostic: WorldMap carries no Phaser/Babylon types.
+  setMap(map: WorldMap): void {
+    const ground = MeshBuilder.CreateGround('ground', { width: map.w * map.tile, height: map.h * map.tile }, this.scene);
+    ground.position.set((map.w * map.tile) / 2, 0, (map.h * map.tile) / 2);
+    // (Solid tiles from map.collision would become instanced wall/tree meshes.)
   }
 
   syncEntities(entities: Entity[]): void {

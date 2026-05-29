@@ -35,6 +35,7 @@ tins2026/
 ```ts
 export interface IRenderer {
   init(canvas: HTMLElement): Promise<void>;
+  setMap(map: WorldMap): void;             // once, when the world map is ready
   syncEntities(entities: Entity[]): void;  // called every frame from net state
   destroy(): void;
 }

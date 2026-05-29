@@ -4,6 +4,35 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.29: **The world is on screen: tilemap rendering, camera-follow, Y-sort, roof-fade
+  (Phase 5).** The client now draws the generated zoo instead of a dark void — verified with
+  headless-Chrome screenshots end-to-end.
+  - **`IRenderer` gains `setMap(map: WorldMap)`** (`shared/src/renderer.ts`) — a plain shared
+    data type, no Phaser types, so a Babylon impl can build ground meshes from the same arrays.
+    Docs updated in lockstep (`ARCHITECTURE.md`, `shared/BABYLON_FALLBACK.md`).
+  - **`client/src/render/phaser.ts`:** `setMap` builds the tilemap from the `WorldMap` grids —
+    a flat-color tileset TEXTURE generated at runtime (Phase 7 swaps in the real art PNG with
+    no logic change), three culled `TilemapLayer`s (ground / solid-deco / —), per-building
+    **roof rectangles**, and **camera bounds + follow** on the local player. **Y-sort**: mobile
+    entities + quest objects take depth = their world Y; tree canopies spawn as individual
+    images at depth = the trunk-base Y, so you walk *behind* a canopy and *in front of* its
+    trunk. **Roof fade**: each frame, if the local player's position is inside a building
+    footprint, that roof tweens to alpha 0 (revealing floor/walls/windows/quest marker) and
+    back on exit — keyed purely on player-in-bounds. New `questObject` view (a Y-sorted star).
+  - **`client/src/net/client.ts`:** `onMap` handler for the `map` event.
+    **`client/src/main.ts`:** regenerates the `WorldMap` from the seed (asserting
+    `WORLD_GEN_VERSION`), hands it to the renderer, and switches client prediction to the shared
+    **`moveWithCollision`** against the same grid — so prediction stops at walls exactly where
+    the server does (no rubber-band). `PREDICTION_BOUNDS`/`applyInput` prediction retired.
+  - **Door/gate width fix (`shared/src/world.ts`):** 1-tile (32px) openings left only ~6px
+    clearance for the player's collision AABB — effectively impassable. Doors and enclosure
+    gates are now **2 tiles (64px)** wide so buildings/enclosures are genuinely enterable.
+    `WORLD_GEN_VERSION` 2→3; the parity test's collision hash re-pinned (entitySpecs unchanged).
+  - Verified by headless Chrome: tilemap (grass/paths/gate) renders, camera follows across the
+    4096² world, collision blocks walls, **entering a building fades its roof to reveal the
+    interior + quest marker**, trees render as canopy/trunk pairs that Y-sort. No console errors;
+    shared 10/10; client build green.
+
 - 0.2.28: **Server runs on the generated world: map-derived entities, real collision,
   seed-on-join (Phase 4).** The hardcoded starter layout is gone — the authoritative server
   now generates each room's world from a per-room seed and plays on it.

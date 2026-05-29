@@ -16,7 +16,8 @@ import './style.css';
 import type { IRenderer } from '@shared/renderer';
 import type { Entity, WorldState, Dir8 } from '@shared/types';
 import type { InputMsg, PlayerAction } from '@shared/net';
-import { applyInput, moveSpeed, facingFromVec, type Bounds } from '@shared/step';
+import { moveWithCollision, moveSpeed, facingFromVec } from '@shared/step';
+import { generateWorld, WORLD_GEN_VERSION, type WorldMap } from '@shared/world';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -32,15 +33,11 @@ import { preloadSfx, playSfx, type SfxName } from './audio';
 import { createHelp } from './help';
 import { runMenu } from './menu';
 
-// The server integrates input without clamping (server/game/engine.js), so for
-// prediction we use effectively-unbounded bounds to match authority exactly and
-// avoid rubber-banding at the shared WORLD edges.
-const PREDICTION_BOUNDS: Bounds = {
-  minX: -Infinity,
-  minY: -Infinity,
-  maxX: Infinity,
-  maxY: Infinity,
-};
+// Client prediction uses the SAME collision-aware integration as the server
+// (shared moveWithCollision against the regenerated map's grid), so prediction
+// and authority agree and there's no rubber-banding at walls. The radius MUST
+// match the server's (config.RECT_SIZE * 0.4 = 32 * 0.4); keep them in lockstep.
+const PREDICT_RADIUS = 32 * 0.4;
 
 /** How often (ms) we sample input and send it to the server. */
 const INPUT_SEND_MS = 50; // 20 Hz, matching the server tick
@@ -151,6 +148,25 @@ async function main(): Promise<void> {
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
+
+  // The regenerated world map (from the seed the server sends once on join). Used
+  // for collision-aware client prediction AND handed to the renderer to draw the
+  // tilemap. Undefined until the `map` event arrives.
+  let localMap: WorldMap | undefined;
+
+  net.onMap((msg) => {
+    // The seed is authoritative (server-chosen); we only assert the generator
+    // version matches so we can't silently desync from a server on different gen
+    // code. Then regenerate the identical WorldMap and hand it to the renderer.
+    if (msg.version !== WORLD_GEN_VERSION) {
+      console.error(
+        `map version mismatch: server ${msg.version} vs client ${WORLD_GEN_VERSION}. ` +
+          'Client/server world generators are out of sync — rebuild shared.',
+      );
+    }
+    localMap = generateWorld(msg.seed);
+    renderer.setMap(localMap);
+  });
 
   net.onLobbyState((msg) => {
     playerCount = msg.players.length;
@@ -276,20 +292,35 @@ async function main(): Promise<void> {
     net.sendInput(input);
 
     // Client-side prediction: advance OUR entity immediately so movement feels
-    // instant. Predict at the SAME walk/sprint speed the server integrates at
-    // (shared moveSpeed) so reconciliation doesn't rubber-band. The next snapshot
-    // reconciles any drift (server positions win).
-    if (myId) {
+    // instant. We predict with the SAME collision-aware integration the server
+    // runs authoritatively (shared moveWithCollision against the regenerated map's
+    // grid, same speed + radius), so prediction stops at walls exactly where the
+    // server will and reconciliation doesn't rubber-band. Before the map arrives
+    // we simply don't predict movement (the first snapshot seeds our position).
+    if (myId && localMap && (dx !== 0 || dy !== 0)) {
       const me = entities.get(myId);
       if (me) {
-        if (dx !== 0 || dy !== 0) {
-          applyInput(me, input, dt, moveSpeed(sprint), PREDICTION_BOUNDS);
-        }
-        // Predict our own facing so the avatar turns instantly on key-press
-        // rather than after a server round-trip. Same shared helper the server
-        // uses, so the next snapshot reconciles without a visible snap.
-        me.facing = facingFromVec(dx, dy, (me.facing as Dir8) ?? 's');
+        moveWithCollision(
+          me as { x: number; y: number },
+          dx,
+          dy,
+          dt,
+          moveSpeed(sprint),
+          localMap.collision,
+          localMap.w,
+          localMap.h,
+          localMap.tile,
+          PREDICT_RADIUS,
+        );
       }
+    }
+    // Predict our own facing so the avatar turns instantly on key-press rather
+    // than after a server round-trip. Same shared helper the server uses, so the
+    // next snapshot reconciles without a visible snap. (Independent of movement
+    // prediction so facing still updates the frame the map is still loading.)
+    if (myId) {
+      const me = entities.get(myId);
+      if (me) me.facing = facingFromVec(dx, dy, (me.facing as Dir8) ?? 's');
     }
   }, INPUT_SEND_MS);
 
