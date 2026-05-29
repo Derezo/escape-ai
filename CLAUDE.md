@@ -60,6 +60,17 @@ node scripts/gen-placeholder-sfx.js
   When code and docs disagree, fix one of them in the same commit — never leave
   them in conflict. A commit-msg hook reminds you; install with
   `bash scripts/hooks/install.sh`.
+- **Commit to the feature branch between every phase of plan execution.** When
+  executing a multi-phase plan, finish a phase — build/verify it green — then commit
+  it to the feature branch before starting the next phase. Each phase is its own
+  commit (or a small set), with a `CHANGELOG.md` entry, so progress is checkpointed
+  and reviewable. Never carry a pile of uncommitted multi-phase work; never commit to
+  `main`.
+- **When a plan has fully executed, validate that all commits are complete.** Before
+  claiming the plan done, confirm `git status` is clean (no stray uncommitted or
+  untracked work that belongs in the plan), every phase landed as a commit, and the
+  CHANGELOG reflects the whole arc. A plan is not done until the working tree is clean
+  and the history tells the full story.
 - **After completing a plan, run `/plan-validation-and-review`** before claiming the
   work is done. It traces requirements, checks connectivity, hunts dead/duplicate
   code, and runs build + tests. It costs a little time and is worth it — it is the

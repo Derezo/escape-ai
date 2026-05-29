@@ -4,6 +4,11 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.11: **CLAUDE.md workflow directive** — added two Workflow rules: commit to the
+  feature branch between every phase of plan execution (one phase = one checkpointed
+  commit with a CHANGELOG entry), and validate all commits are complete (clean working
+  tree, every phase landed) when a plan has fully executed.
+
 - 0.2.10: **Sprite template system + atlas pipeline (Phase A of the visual-polish plan).**
   The renderer drew pure geometric shapes and the generator emitted one static labelled
   SVG per entity — no animation, no directions, no spritesheet. This lays the reusable
