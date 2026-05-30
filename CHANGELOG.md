@@ -4,6 +4,35 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.33: **Map overhaul Phase A — organic layout + biome zones + water feature
+  (`shared/src/world.ts`).** The rigid 3×3 PAVED avenue grid and uniform rectangular plots
+  are replaced by an organic, real-zoo layout while keeping the generator pure + deterministic
+  and every reach target reachable. `WORLD_GEN_VERSION` 4 → 5; hashes re-pinned.
+  - **Biome zones (`partitionZones`):** the interior west of a reserved entrance band is split
+    into five themed zones (savanna / aviary / forest / wetland / rockyDen) via a fixed-topology,
+    jittered BSP — stable themes, per-seed shapes. `SPECIES_ZONE` assigns each species to a
+    sensible zone (pond→wetland, dens→forest/rocky, fliers→aviary, grazers/runners→savanna),
+    consistent with `SPECIES_HOUSING`, so homes cluster by biome.
+  - **Organic enclosures (`findFreeRect`/`claimPlot`):** one irregular home per species placed by
+    a deterministic free-rect scan inside its zone, with jittered footprints. Minimum interior is
+    pinned to ≥6×6 tiles so Phase C's animal-containment wander bias can't collapse and freeze
+    animals in a tiny box.
+  - **Water feature (`carveRiver`/`bridgeRiverCrossings`):** a meandering river runs down the
+    wetland zone (integer Bresenham + ±1 jitter — **no trig**, which isn't bit-stable across the
+    browser and server V8s) with a shallow walkable shore and a solid deep core. Paths route
+    around the bed and bridge it only where they meet both banks; an invariant + test keep every
+    reach target off/away from deep water so the reachability backstop never paves across the river.
+  - **Winding paths (`carveOrganicPaths`/`carveWindingPath`):** a jittered spine loop visits the
+    forecourt + every zone center, with a spur from each home to the spine, so the zoo reads as
+    curving avenues instead of a grid. The pass returns path **junctions** that now anchor the
+    terminals + robot spawns (the old placement read the deleted avenue lines — rewritten in the
+    same change so the build never breaks between phases).
+  - **Determinism discipline:** every branching helper draws its rng unconditionally per iteration
+    and all iteration order is fixed, so `generateWorld(seed)` stays byte-identical client↔server.
+  - **Tests:** new `world.test.mjs` invariant "no reach target on/adjacent to deep water" across
+    8 seeds; reachability + determinism + one-home/one-quest-per-species all still green (15/15).
+    No new tiles, no renderer change (blend tiles 25–48 already render via `TILE_BY_INDEX`).
+
 - 0.2.32: **Plan-validation remediation (post-`/plan-validation-and-review`).** The validation
   pass (requirements trace, connectivity audit, dedup scan, three-group code review, build/test)
   found the tilemap work complete and connected; it surfaced three fixable items, all fixed here:

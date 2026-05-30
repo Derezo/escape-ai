@@ -17,12 +17,13 @@ import assert from 'node:assert/strict';
 import { generateWorld, worldToTile, tileSolid } from '../dist/world.js';
 import { hash32 } from '../dist/step.js';
 import { SPECIES_KEYS } from '../dist/species.js';
+import { TILE_INDEX } from '../dist/tiles.js';
 
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-const PINNED_COLLISION_HASH = 651189019;
-const PINNED_ENTITYSPEC_HASH = 901741202;
+const PINNED_COLLISION_HASH = 505499499;
+const PINNED_ENTITYSPEC_HASH = 3154250066;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -164,6 +165,50 @@ test('reachability holds across several seeds (not just the pinned one)', () => 
       if (e.kind === 'questObject') {
         assert.ok(reach(tx(map, e.x), tx(map, e.y)), `seed ${seed}: quest ${e.species} reachable`);
       }
+    }
+  }
+});
+
+// --- Phase A (organic layout) invariants ------------------------------------
+
+/** Tile index at a world-unit position via the map's ground grid. */
+function groundAt(map, wx, wy) {
+  const gx = tx(map, wx);
+  const gy = tx(map, wy);
+  if (gx < 0 || gy < 0 || gx >= map.w || gy >= map.h) return -1;
+  return map.ground.data[gy * map.w + gx];
+}
+
+test('water feature: no reach target sits on or adjacent to deep water', () => {
+  // The reachability flood-carve is a backstop that paves through anything (incl.
+  // open water). To keep it from carving an ugly road across the river, the
+  // generator must never place a REACH TARGET (gate / door / housing center /
+  // quest object) on or next to a WATER_DEEP/POND_DEEP tile. Checked across seeds.
+  const DEEP = new Set([TILE_INDEX.WATER_DEEP, TILE_INDEX.POND_DEEP]);
+  const nearDeep = (map, wx, wy) => {
+    const gx = tx(map, wx);
+    const gy = tx(map, wy);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const x = gx + dx;
+        const y = gy + dy;
+        if (x < 0 || y < 0 || x >= map.w || y >= map.h) continue;
+        if (DEEP.has(map.ground.data[y * map.w + x])) return true;
+      }
+    }
+    return false;
+  };
+  for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
+    const map = generateWorld(seed);
+    const targets = [
+      { name: 'gate', x: map.gate.x, y: map.gate.y },
+      ...map.buildings.map((b) => ({ name: `door:${b.species}`, x: (b.doorTx + 0.5) * map.tile, y: (b.doorTy + 0.5) * map.tile })),
+      ...map.housing.map((hh) => ({ name: `center:${hh.species}`, x: hh.cx, y: hh.cy })),
+      ...map.entitySpecs.filter((e) => e.kind === 'questObject').map((e) => ({ name: `quest:${e.species}`, x: e.x, y: e.y })),
+    ];
+    for (const t of targets) {
+      assert.ok(!nearDeep(map, t.x, t.y), `seed ${seed}: reach target ${t.name} is on/adjacent to deep water`);
+      assert.ok(groundAt(map, t.x, t.y) !== TILE_INDEX.WATER_DEEP, `seed ${seed}: reach target ${t.name} is ON deep water`);
     }
   }
 });
