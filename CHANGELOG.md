@@ -4,6 +4,21 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.104: **Fix: food collection (and feeding) threw — broken by a circular-require trap.**
+  The multi-step quest wiring made `server/game/follow.js` and `server/game/quests.js`
+  require each other. In the server's real load order (`engine → stealth → quests →
+  follow`), `follow.js` loads *while `quests.js` is still mid-load*, so its top-level
+  `const quests = require('./quests')` captured quests' **partial (empty) exports** —
+  making `quests.onCollect` / `onRecruit` `undefined`. Every food-collect press (and
+  every feed) then threw `TypeError: quests.onCollect is not a function` inside
+  `collectNearbyFood`, so collecting food silently did nothing. `follow.js` now resolves
+  `quests` **lazily at call time** (a tiny `quests()` accessor), when the module has
+  finished loading. Added `server/test/quest-wiring.test.js` (3 tests) + a server `test`
+  script that load the modules in the **real engine order** and assert food collection /
+  feeding don't throw — the guard that would have caught this. (The earlier validation's
+  circular-require check passed only because it required the modules in the *opposite*
+  order, which masked the partial-export window.)
+
 - 0.2.103: **Validation follow-up for the multi-step quests.** `/plan-validation-and-review`
   surfaced a wire-contract honesty gap: `server/game/quests.js` `makeQuest` serializes a
   per-step `done` on every `steps[]` entry, but `QuestStepProgress` (shared/src/types.ts)

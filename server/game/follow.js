@@ -27,9 +27,23 @@
 
 const config = require('../config');
 const world = require('./world');
-const quests = require('./quests');
 const { bumpStat, bumpEscapedSpecies } = require('./stats-delta');
 const { secsToTicks, findPlayerById } = require('./room-utils');
+
+// follow.js and quests.js require EACH OTHER (quests.stepEscort needs
+// follow.gatherFollowersOf; follow's collect/feed observe quests' step hooks). In
+// the server's real load order (engine → stealth → quests → follow) quests.js is
+// still MID-LOAD when follow.js first loads, so a top-level `require('./quests')`
+// here would capture quests' partial (empty) exports — making quests.onCollect /
+// onRecruit `undefined` and throwing the moment a player collects food or feeds an
+// animal. Resolve it LAZILY at call time instead, when quests.js has finished
+// loading and its exports are complete. (quests.js loads first in the cycle, so its
+// top-level `require('./follow')` is safe and stays as-is.)
+let _quests = null;
+function quests() {
+  if (!_quests) _quests = require('./quests');
+  return _quests;
+}
 
 // The cached shared modules (handed over by stealth.loadShared via setShared).
 // `shared` = step.js (math/collision); `movement` = movement.js (chain/steer);
@@ -113,7 +127,7 @@ function collectNearbyFood(player, roomName, currentTick) {
   bumpStat(player, 'foodCollected');
   // Quest: a 'collect' step OBSERVES this success edge (it never re-bumps the
   // foodCollected stat above — only advances the quest's current step).
-  quests.onCollect(player);
+  quests().onCollect(player);
   // FX echo so the client can fire a pickup burst/SFX on this player's entity.
   setFx(player, 'collect', currentTick);
   return true;
@@ -177,7 +191,7 @@ function feedNearbyAnimal(player, roomName, currentTick) {
     setFx(target, 'steal', currentTick);
     // Quest: a steal is always a NEW follower for this player (prevOwner was
     // someone else). OBSERVES the success — never re-bumps animalsStolen above.
-    quests.onRecruit(player, 'stolen', true);
+    quests().onRecruit(player, 'stolen', true);
     return 'stolen';
   }
 
@@ -194,7 +208,7 @@ function feedNearbyAnimal(player, roomName, currentTick) {
   setFx(target, 'feed', currentTick);
   // Quest: a 'recruit' step counts only a NEW follower (a wild capture), not a
   // pure top-up of one you already own. OBSERVES the result; bumps no stat.
-  quests.onRecruit(player, 'fed', isNewFollower);
+  quests().onRecruit(player, 'fed', isNewFollower);
   return 'fed';
 }
 
