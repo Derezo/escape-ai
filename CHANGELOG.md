@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.83: **Water tiles retonation: single blue hue family, depth by value only.** `WATER_DEEP` and
+  `WATER_SHALLOW` previously used different hues — deep a muted dark blue (#2f5d8a), shallow a
+  bright cyan (#4f96c8) — so adjacent cells looked like two disjoint materials. Both now share one
+  blue hue (203°) with identical saturation, differing only in lightness: shallow is bright
+  (accessible), deep is darker (shows depth), abyss is subtle (10% darker, not a hole). Both
+  builders use the same wave vocabulary (band positions, ripple frequency) so the surface reads as
+  continuous. Result: water reads as one cohesive body in two depths, no hard seams or colour
+  discontinuities. Deterministic + seamlessly tiled (verified 4×4 comparison grid).
+
 - 0.2.82: **Full audio set generated — all 8 music tracks + all 18 SFX.** The remaining
   ungenerated assets were produced with the sound-describing prompts (0.2.74) and the livelier
   music palette: music `tension_loop`, `lockdown_loop`, `victory_sting`, `caught_sting`,

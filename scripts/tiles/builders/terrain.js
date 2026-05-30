@@ -174,18 +174,19 @@ function waterDeep() {
   const deep = TILE_PAL.waterDeep;
   const abyss = TILE_PAL.waterAbyss;
   let out = fillCell(deep.base);
-  // Depth banding: darker abyss troughs low/centre, a hint of lit crest up top.
+  // Depth banding using the SAME wave vocabulary as waterShallow so the surface
+  // texture is consistent: only base colour and opacity differ to show depth.
   // Full-width waves → seamless horizontally; identical neighbours → seamless
   // vertically. Bands sit toward the vertical centre so the field reads "deeper".
-  out += waveBand(20, 3, abyss.base, 9, 0.30);  // broad dark trough through the centre
-  out += waveBand(27, 2.5, abyss.shade, 7, 0.28); // deeper, darker band lower down
-  out += waveBand(6, 2.5, deep.light, 5, 0.16);   // faint lit crest near the top
+  out += waveBand(9, 2.5, deep.light, 6, 0.18);   // subtle lit band near top
+  out += waveBand(22, 2.5, abyss.base, 6, 0.20);  // depth band in the middle (slightly darker)
+  out += waveBand(28, 2, abyss.shade, 4, 0.12);   // faint shade trough at the bottom
   // Crisp ripple lines on top of the banding (the moving-surface read).
-  out += waveLine(11, 2.5, deep.light, 1, 0.40);
-  out += waveLine(24, 2.5, deep.light, 1, 0.30);
+  out += waveLine(11, 2.5, deep.light, 1, 0.35);
+  out += waveLine(24, 2.5, deep.light, 1, 0.25);
   // A few deterministic sparkle dashes for surface glint (seeded by tile name).
   out += scatter('WATER_DEEP', 4, (x, y) =>
-    ellipse(x, y, 3.5, 1, deep.light, { stroke: 'none', opacity: 0.35 }), { margin: 5 });
+    ellipse(x, y, 3.5, 1, deep.light, { stroke: 'none', opacity: 0.30 }), { margin: 5 });
   return out;
 }
 
@@ -193,18 +194,20 @@ function waterShallow() {
   const shal = TILE_PAL.waterShallow;
   const wade = TILE_PAL.waterWade;
   let out = fillCell(shal.base);
-  // Shallow lightens toward the pale green-blue wade tone (reads lighter/greener
-  // than deep), with gentler, more frequent ripples (the wadeable surface).
-  out += waveBand(9, 2.5, wade.light, 8, 0.32);   // broad lit shallow crest up top
-  out += waveBand(22, 2.5, wade.base, 7, 0.26);   // a second lit band lower down
-  out += waveBand(28, 2, shal.shade, 5, 0.18);    // a faint shade trough at the bottom
-  // Crisp closely-spaced ripples — shallow water chops finer than deep.
-  out += waveLine(5, 2, wade.light, 1, 0.45);
-  out += waveLine(15, 2, wade.light, 1, 0.40);
-  out += waveLine(25, 2, wade.light, 1, 0.35);
+  // Shallow uses the SAME wave vocabulary as waterDeep (same band positions, same
+  // ripple density) so they tile together seamlessly with matching surface texture.
+  // The difference is base colour (lighter) and opacity (slightly higher) to read
+  // as "same water, just brighter/shallower". The wadeable light tone floats on top.
+  out += waveBand(9, 2.5, wade.light, 6, 0.24);   // broad lit band near top (brighter)
+  out += waveBand(22, 2.5, wade.base, 6, 0.22);   // mid-depth band (lighter than deep)
+  out += waveBand(28, 2, shal.shade, 4, 0.14);    // faint shade trough at the bottom
+  // Crisp ripple lines on top of the banding (same positions as deep).
+  out += waveLine(5, 2, wade.light, 1, 0.40);
+  out += waveLine(15, 2, wade.light, 1, 0.35);
+  out += waveLine(25, 2, wade.light, 1, 0.30);
   // Deterministic light sparkle.
   out += scatter('WATER_SHALLOW', 5, (x, y) =>
-    ellipse(x, y, 3.5, 1, wade.light, { stroke: 'none', opacity: 0.40 }), { margin: 5 });
+    ellipse(x, y, 3.5, 1, wade.light, { stroke: 'none', opacity: 0.38 }), { margin: 5 });
   return out;
 }
 

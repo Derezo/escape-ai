@@ -36,14 +36,15 @@ const TILE_PAL = {
   sand: makePalette('#d8c489', { accent: '#b8a468' }), // dry pale sand
   straw: makePalette('#c8a64e', { accent: '#a8863a' }), // pen straw bedding
   // --- Water ---
-  // waterDeep/waterShallow keep their LOCKED base hues (the renderer/world-gen read these);
-  // the extra tones below give the water builders + shoreline foam more tonal range.
-  waterDeep: makePalette('#2f5d8a', { accent: '#244a70' }), // deep water (solid)
-  waterShallow: makePalette('#4f96c8', { accent: '#3f86b8' }), // wadeable shallow
-  // An even darker abyss tone for the deep-water depth gradient (below waterDeep.shade).
-  waterAbyss: makePalette('#1d4060', { accent: '#142e46' }), // deep-centre darkening
-  // A pale green-blue the wadeable shallow lightens toward (reads greener/lighter than deep).
-  waterWade: makePalette('#5fb0c4', { accent: '#4a98ad' }),
+  // Single blue hue family: deep and shallow share ONE hue (203°) with consistent saturation;
+  // only lightness varies so they read as one body of water at two depths, not two materials.
+  // Shallow is bright (accessible), deep is darker (shows depth), abyss is subtle (not a hole).
+  waterDeep: makePalette('#3d7fa8', { accent: '#2f6a94' }), // deep water, same hue as shallow
+  waterShallow: makePalette('#5ba3d0', { accent: '#4a8fbf' }), // bright wadeable shallow
+  // A subtle darkening for deep-water depth gradient (10% darker than waterDeep, not a near-black hole).
+  waterAbyss: makePalette('#2e6a94', { accent: '#235485' }), // depth hint, same hue as deep
+  // Light shimmer for the shallow surface (lighter than shallow base, still one hue).
+  waterWade: makePalette('#6db5d8', { accent: '#5c9fbf' }),
   // --- Wood / floors ---
   woodFloor: makePalette('#b08a52', { accent: '#8a6a3c' }), // warm plank floor
   woodFloorDark: makePalette('#7a5a36', { accent: '#5e4528' }), // dark plank floor
