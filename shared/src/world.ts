@@ -38,8 +38,24 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  shifts where tree trunks sit → collision hash re-pinned. entitySpecs unchanged.
  *  v13: zoo overhaul — BRIDGE tiles + enhanced tile art (roofs/walls/water/fences/
  *  nature/props) + rewritten zoo placement (pens/paths/gates/pond/river/buildings,
- *  unused tiles wired in). Both pinned hashes re-pinned. */
-export const WORLD_GEN_VERSION = 13;
+ *  unused tiles wired in). Both pinned hashes re-pinned.
+ *  v14: map-readability overhaul. (1) Paths are now SPARSE + STRAIGHT: one horizontal
+ *  spine avenue + one short vertical branch per zone + a short straight stub from each
+ *  pen gate to the nearest spine tile (was a per-zone winding spaghetti corridor to
+ *  every zone center and back, plus 14 forecourt spurs). carveWindingPath → axis-
+ *  aligned carveStraightPath (no per-tile wobble, no rng in path carving). PAVED +
+ *  path-edge coverage drops from ~32% to ~12%. (2) The RIVER is a CONNECTED channel:
+ *  a 2-wide WATER_DEEP core in a 2-tile shallow margin, meandering at most ±1 every 3
+ *  rows so consecutive deep rows overlap (no staircase of isolated tiles); the deep
+ *  core is one body broken only where the spine bridge crosses it. (3) WATER TOUCHES
+ *  ONLY GRASS: a water margin keeps paths >=1 tile from water during carving, paths +
+ *  corridors never pave over water, enforceWaterGrassMargin demotes any path the
+ *  reachability carve left adjacent to water, and bridges are the sole water/path
+ *  crossing. (4) The edge blend drops the ICORNER (inner-corner) branch so isolated
+ *  jogs stay grass instead of becoming busy corner tiles ("grass holes"). collision +
+ *  entitySpecs both drift (path junctions now relocate OUT of water, so a wetland
+ *  zone-center terminal/robot anchor shifts off the river bed) → both hashes re-pinned. */
+export const WORLD_GEN_VERSION = 14;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -585,45 +601,106 @@ function claimPlot(claimed: Set<number>, plot: Plot, w: number): void {
 // the shore walkable and gives blendWaterEdges something to feather.
 
 /**
- * Carve a meandering river down through the wetland `zone`. Records every deep
- * (solid) water tile in `riverDeep` so later passes can keep reach targets and
- * the entrance band clear of it (the carve fallback must never have to pave across
- * the river). Returns the channel's center column per row (for optional bridges)
- * and the set of all water tiles. Draws exactly one rng value per row.
+ * Carve a CONNECTED meandering river down through the wetland `zone`. The channel
+ * is a CONTINUOUS body of water: a 2-wide WATER_DEEP core wrapped in a 1-tile
+ * WATER_SHALLOW margin on every side, so the deep core is always 8-neighbour
+ * surrounded by water and forms ONE connected channel — never a staircase of
+ * isolated single tiles. The meander is HEAVILY limited: the channel's left edge
+ * only shifts by at most ±1 every {@link RIVER_STRAIGHT_RUN} rows, so consecutive
+ * deep rows always overlap by ≥1 column and the channel stays connected.
+ *
+ * Records every deep (solid) water tile in `riverDeep` so later passes can keep
+ * reach targets, paths and the entrance band clear of the bed (the carve fallback
+ * must never have to pave across the river). Draws exactly one rng value per row.
  */
+const RIVER_STRAIGHT_RUN = 3; // rows between meander steps (limits the wander)
+const RIVER_DEEP_W = 2; // deep core width in tiles (>= 2 → connected, not a stair)
+/** Per-row water footprint of the river: the full span [x0..x1] (shallow→shallow). */
+interface RiverRow {
+  ty: number;
+  x0: number;
+  x1: number;
+}
 function carveRiver(
   ground: TileGrid,
   zone: Zone,
   riverDeep: Set<number>,
   rng: () => number,
-): void {
+): RiverRow[] {
   const w = ground.w;
   // Channel runs the zone's vertical extent, inset so it never touches the zone
-  // edge (and thus never an enclosure or the wall). A 5-wide band: a 2-tile WATER_
-  // SHALLOW margin on each side wraps a 1-wide WATER_DEEP core, so even as the
-  // channel meanders ±1 per row the deep core stays surrounded (8-neighbour) by
-  // water — enforceWaterCohesion then never has to demote the core, keeping the
-  // river a real deep barrier instead of an all-shallow puddle.
+  // edge (and thus never an enclosure or the wall). The carved band is the deep
+  // core (RIVER_DEEP_W wide) wrapped by a 1-tile shallow margin on each side, so
+  // the full footprint is (RIVER_DEEP_W + 2) wide. `col` is the LEFT column of the
+  // deep core; it shifts by at most ±1 once every RIVER_STRAIGHT_RUN rows, biased
+  // back toward the center, so the deep core never staircases apart.
+  const rows: RiverRow[] = [];
   const top = zone.ty + 1;
   const bot = zone.ty + zone.th - 2;
-  const colMin = zone.tx + 3;
-  const colMax = zone.tx + zone.tw - 4;
-  if (colMax <= colMin || bot <= top) return;
-  let col = clampInt(zone.cx, colMin, colMax);
-  const target = clampInt(zone.tx + Math.floor(zone.tw / 2), colMin, colMax);
+  const colMin = zone.tx + 3; // leftmost deep-core column (2 shallow + 1 edge inset)
+  const colMax = zone.tx + zone.tw - 3 - RIVER_DEEP_W; // rightmost deep-core start
+  if (colMax <= colMin || bot <= top) return rows;
+  let col = clampInt(zone.cx - Math.floor(RIVER_DEEP_W / 2), colMin, colMax);
+  const target = clampInt(zone.tx + Math.floor(zone.tw / 2) - Math.floor(RIVER_DEEP_W / 2), colMin, colMax);
   for (let ty = top; ty <= bot; ty++) {
-    // Meander: ±1 jitter biased back toward the target column (integer only).
+    // Meander: only STEP every RIVER_STRAIGHT_RUN rows, and only by ±1, biased back
+    // toward the target column. The rng is drawn EVERY row (so the deterministic
+    // draw count is unchanged) but only applied on a step row, keeping consecutive
+    // deep rows overlapping by >= RIVER_DEEP_W - 1 columns → one connected channel.
     const bias = col < target ? 1 : col > target ? -1 : 0;
-    const j = randInt(rng, -1, 1) + bias;
-    col = clampInt(col + (j < -1 ? -1 : j > 1 ? 1 : j), colMin, colMax);
-    // 2-wide shallow shore on each side (walkable) + a deep core tile (solid).
-    setTile(ground, col - 2, ty, TILE_INDEX.WATER_SHALLOW);
-    setTile(ground, col - 1, ty, TILE_INDEX.WATER_SHALLOW);
-    setTile(ground, col + 1, ty, TILE_INDEX.WATER_SHALLOW);
-    setTile(ground, col + 2, ty, TILE_INDEX.WATER_SHALLOW);
-    setTile(ground, col, ty, TILE_INDEX.WATER_DEEP);
-    riverDeep.add(tileIndex(w, col, ty));
+    const j = randInt(rng, -1, 1);
+    if ((ty - top) % RIVER_STRAIGHT_RUN === 0) {
+      const stepDir = bias !== 0 ? bias : j < 0 ? -1 : j > 0 ? 1 : 0;
+      col = clampInt(col + stepDir, colMin, colMax);
+    }
+    // 2-tile shallow margin on each side of the RIVER_DEEP_W-wide deep core. The
+    // margin is 2 wide (not 1) so that even where the core steps ±1 between rows,
+    // every deep tile's 8-neighbourhood stays water — enforceWaterCohesion then never
+    // demotes the core, so the deep channel stays CONNECTED instead of staircasing
+    // into single tiles. Footprint = RIVER_DEEP_W + 4 wide.
+    for (let m = 1; m <= 2; m++) {
+      setTile(ground, col - m, ty, TILE_INDEX.WATER_SHALLOW);
+      setTile(ground, col + RIVER_DEEP_W - 1 + m, ty, TILE_INDEX.WATER_SHALLOW);
+    }
+    for (let dx = 0; dx < RIVER_DEEP_W; dx++) {
+      setTile(ground, col + dx, ty, TILE_INDEX.WATER_DEEP);
+      riverDeep.add(tileIndex(w, col + dx, ty));
+    }
+    rows.push({ ty, x0: col - 2, x1: col + RIVER_DEEP_W + 1 });
   }
+  return rows;
+}
+
+/**
+ * Build the WATER MARGIN: every grass-or-other cell within the 8-neighbourhood of
+ * any WATER tile (deep or shallow, river or pond). Path carving treats these as
+ * unpaveable so a path NEVER runs adjacent to water — the shoreline's land
+ * neighbours stay grass, which lets the water-edge blend draw a proper shore and
+ * keeps the "water touches only grass" adjacency rule. Pure (no rng), row-major.
+ * The water tiles themselves are NOT in the margin (a bridge may still deck them).
+ */
+function buildWaterMargin(ground: TileGrid): Set<number> {
+  const { w, h, data } = ground;
+  const margin = new Set<number>();
+  const isWater = (i: number): boolean => isWaterIndex(data[i]);
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      const i = ty * w + tx;
+      if (isWater(i)) continue; // water cell itself is not "margin"
+      let adj = false;
+      for (let dy = -1; dy <= 1 && !adj; dy++) {
+        for (let dx = -1; dx <= 1 && !adj; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          if (isWater(ny * w + nx)) adj = true;
+        }
+      }
+      if (adj) margin.add(i);
+    }
+  }
+  return margin;
 }
 
 // --- Organic path network ----------------------------------------------------
@@ -635,80 +712,85 @@ interface Junction {
 }
 
 /**
- * Lay a winding PAVED corridor from (fx,fy) to (tx,ty): walk the dominant axis one
- * tile at a time, taking a ±1 wobble on the cross axis (biased back to the target
- * line) so the path curves instead of running ruler-straight. Pure integer math;
- * draws one rng value per step. Never paves over a deep-water tile (routes the
- * wobble around it) so the river is crossed only where a bridge is laid.
+ * Lay a STRAIGHT 2-wide PAVED corridor from (fx,fy) to (tx,ty) as a simple L-bend:
+ * one axis-aligned run on the dominant axis, then an axis-aligned run on the other
+ * — NO per-tile wobble, so paths read as deliberate zoo walkways with clear
+ * direction instead of diagonal striations. Pure integer math, NO rng (straight
+ * runs are fully determined by the endpoints).
+ *
+ * The carver NEVER paves:
+ *   - a deep-water tile (the river bed; bridges handle crossings),
+ *   - a protected pen/building footprint cell,
+ *   - a tile inside `waterMargin` (the 1-tile grass buffer around any water) — so a
+ *     path never runs adjacent to water; if a leg would graze the bank it simply
+ *     leaves grass there, and the reachability carve (which ignores the margin)
+ *     guarantees connectivity regardless.
+ * Skipped cells stay grass, so a blocked leg never striates — it just thins.
  */
-function carveWindingPath(
+function carveStraightPath(
   ground: TileGrid,
   riverDeep: Set<number>,
   protectedTiles: Set<number>,
+  waterMargin: Set<number>,
   fx: number,
   fy: number,
   tx: number,
   ty: number,
-  rng: () => number,
 ): void {
   const w = ground.w;
+  const h = ground.h;
   const road = TILE_INDEX.PAVED;
-  const horizontal = Math.abs(tx - fx) >= Math.abs(ty - fy);
-  let x = fx;
-  let y = fy;
-  // SMOOTHING: the cross-axis wobble is only APPLIED every other step (the rng is
-  // still drawn EVERY step, so the deterministic draw count is unchanged), so the
-  // walkway curves gently in 2-tile runs instead of sawtoothing ±1 every tile —
-  // it reads as a deliberate zoo path, not striations.
-  let step = 0;
   const pave = (px: number, py: number) => {
+    if (px < 1 || py < 1 || px >= w - 1 || py >= h - 1) return;
     const i = tileIndex(w, px, py);
     if (riverDeep.has(i)) return; // don't pave the river bed; bridges handle crossings
     if (protectedTiles.has(i)) return; // never pave over a pen/building footprint
+    if (waterMargin.has(i)) return; // keep a grass buffer between paths and water
+    if (isWaterIndex(ground.data[i])) return; // never pave over ANY water (incl. the shallow shore margin)
     setTile(ground, px, py, road);
   };
+  // Horizontal leg first (along the dominant axis if horizontal, else just the
+  // x-alignment), then the vertical leg — a clean L. 2-wide on each leg so the
+  // player's collision AABB fits.
+  const horizontal = Math.abs(tx - fx) >= Math.abs(ty - fy);
   if (horizontal) {
     const stepX = tx >= fx ? 1 : -1;
-    while (x !== tx) {
-      const wob = randInt(rng, -1, 1) + (y < ty ? 1 : y > ty ? -1 : 0);
-      // Apply the wobble only on even steps; on odd steps just keep converging
-      // toward the target line. Halves the wiggle frequency → smoother path.
-      if (step % 2 === 0) y = clampInt(y + (wob < -1 ? -1 : wob > 1 ? 1 : wob), 1, ground.h - 2);
-      else if (y !== ty) y = clampInt(y + (y < ty ? 1 : -1), 1, ground.h - 2);
-      x += stepX;
-      step++;
-      pave(x, y);
-      pave(x, clampInt(y + 1, 1, ground.h - 2)); // 2-wide so collision AABB fits
+    for (let x = fx; x !== tx + stepX; x += stepX) {
+      pave(x, fy);
+      pave(x, fy + 1); // 2-wide
     }
-    while (y !== ty) {
-      y += ty > y ? 1 : -1;
-      pave(x, y);
-      pave(clampInt(x + 1, 1, w - 2), y);
+    const stepY = ty >= fy ? 1 : -1;
+    for (let y = fy; y !== ty + stepY; y += stepY) {
+      pave(tx, y);
+      pave(tx + 1, y);
     }
   } else {
     const stepY = ty >= fy ? 1 : -1;
-    while (y !== ty) {
-      const wob = randInt(rng, -1, 1) + (x < tx ? 1 : x > tx ? -1 : 0);
-      if (step % 2 === 0) x = clampInt(x + (wob < -1 ? -1 : wob > 1 ? 1 : wob), 1, w - 2);
-      else if (x !== tx) x = clampInt(x + (x < tx ? 1 : -1), 1, w - 2);
-      y += stepY;
-      step++;
-      pave(x, y);
-      pave(clampInt(x + 1, 1, w - 2), y);
+    for (let y = fy; y !== ty + stepY; y += stepY) {
+      pave(fx, y);
+      pave(fx + 1, y); // 2-wide
     }
-    while (x !== tx) {
-      x += tx > x ? 1 : -1;
-      pave(x, y);
-      pave(x, clampInt(y + 1, 1, ground.h - 2));
+    const stepX = tx >= fx ? 1 : -1;
+    for (let x = fx; x !== tx + stepX; x += stepX) {
+      pave(x, ty);
+      pave(x, ty + 1);
     }
   }
 }
 
 /**
- * Build the organic path network: a winding spine loop visiting the forecourt
- * root then every zone center in order and back, plus the gate spur. Returns the
- * junction list (forecourt + zone centers) for terminal/robot anchoring. Draws rng
- * inside carveWindingPath (one per step) in a fixed waypoint order.
+ * Build a SPARSE, mostly-STRAIGHT trunk path network: a main horizontal SPINE
+ * avenue running west from the forecourt across the interior (the deliberate zoo
+ * "main street"), one short vertical BRANCH from the spine up/down toward each
+ * zone center, plus the gate spur. NO winding — every leg is axis-aligned (carved
+ * by carveStraightPath), so the paths read as clean walkways, not striations. The
+ * per-pen GATE stubs are carved separately by the caller (each gate → nearest
+ * spine tile), keeping pens connected with a short straight stub rather than a
+ * corridor back to every zone center.
+ *
+ * Returns the junction list (forecourt + zone centers) for terminal/robot
+ * anchoring + the patrol loop. Draws NO rng (the trunk is fully determined by the
+ * forecourt + zone geometry), so the stream is untouched by path carving.
  */
 function carveOrganicPaths(
   ground: TileGrid,
@@ -717,24 +799,36 @@ function carveOrganicPaths(
   gateTx: number,
   riverDeep: Set<number>,
   protectedTiles: Set<number>,
-  rng: () => number,
-): { junctions: Junction[] } {
+  waterMargin: Set<number>,
+): { junctions: Junction[]; spineTiles: { tx: number; ty: number }[]; spineY: number } {
+  const w = ground.w;
+  const h = ground.h;
   const road = TILE_INDEX.PAVED;
   // Gate spur: straight PAVED run from the gate gap to the forecourt root (kept
   // straight + 3-wide so the entrance is unambiguous and always road-connected).
   // The plaza band is reserved (no homes there), so no protection check is needed.
   for (let tx = gateTx; tx >= forecourt.tx; tx--) {
-    for (let d = -1; d <= 1; d++) setTile(ground, tx, clampInt(forecourt.ty + d, 1, ground.h - 2), road);
+    for (let d = -1; d <= 1; d++) setTile(ground, tx, clampInt(forecourt.ty + d, 1, h - 2), road);
   }
 
-  // Spine: forecourt → each zone center (fixed order) → back to forecourt. The
-  // waypoint order is fixed, so the rng consumption inside carveWindingPath is
-  // deterministic across client/server.
-  const waypoints: Junction[] = [forecourt, ...zones.map((z) => ({ tx: z.cx, ty: z.cy })), forecourt];
-  for (let i = 0; i < waypoints.length - 1; i++) {
-    const a = waypoints[i];
-    const b = waypoints[i + 1];
-    carveWindingPath(ground, riverDeep, protectedTiles, a.tx, a.ty, b.tx, b.ty, rng);
+  // The MAIN SPINE: a single straight horizontal avenue at the forecourt row,
+  // running from the forecourt west only as far as the WESTMOST zone center column
+  // (a few tiles past it) — not all the way to the wall, so there's no dead spine on
+  // the far-west edge. This is the one trunk every spur connects to; it gives the map
+  // a clear "main street" instead of a web of corridors. 2-wide for the collision
+  // AABB. Skips protected/water-margin cells (leaves grass) — the reachability
+  // backstop guarantees connectivity.
+  const spineY = clampInt(forecourt.ty, 3, h - 4);
+  const westCx = zones.reduce((m, z) => Math.min(m, z.cx), forecourt.tx);
+  const spineXEnd = clampInt(westCx - 3, 3, forecourt.tx);
+  carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, forecourt.tx, spineY, spineXEnd, spineY);
+
+  // One short BRANCH per zone: a straight vertical run from the spine to the zone
+  // center's column, just enough to bring the spine near each zone (so spurs from
+  // that zone's pens are short). Carved in fixed zone order → deterministic.
+  for (const z of zones) {
+    const bx = clampInt(z.cx, 3, w - 4);
+    carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, bx, spineY, bx, clampInt(z.cy, 3, h - 4));
   }
 
   const junctions: Junction[] = [forecourt, ...zones.map((z) => ({ tx: z.cx, ty: z.cy }))];
@@ -745,18 +839,26 @@ function carveOrganicPaths(
   // pen path-free, never pave a protected footprint cell; instead RELOCATE the
   // junction outward (spiralling deterministically) to the nearest non-protected
   // tile so its anchor/patrol waypoint stays walkable without clobbering the pen.
+  // A junction must not host its anchor on a protected pen cell OR in the water
+  // margin / on water — paving any of those would clobber a pen or punch a hole in
+  // the river (breaking the connected channel). Relocate the junction out of all of
+  // them so the wetland's center (which can land on the river) moves to dry grass.
+  const junctionBlocked = (px: number, py: number): boolean =>
+    protectedTiles.has(tileIndex(w, px, py)) ||
+    waterMargin.has(tileIndex(w, px, py)) ||
+    isWaterIndex(ground.data[tileIndex(w, px, py)]);
   for (const j of junctions) {
-    if (protectedTiles.has(tileIndex(ground.w, j.tx, j.ty))) {
+    if (junctionBlocked(j.tx, j.ty)) {
       // Deterministic outward search (increasing Chebyshev radius, fixed scan order)
-      // for a non-protected, in-bounds tile to host this junction.
+      // for an unblocked, in-bounds tile to host this junction.
       let moved = false;
       for (let r = 1; r <= 12 && !moved; r++) {
         for (let dy = -r; dy <= r && !moved; dy++) {
           for (let dx = -r; dx <= r && !moved; dx++) {
             if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // ring only
-            const px = clampInt(j.tx + dx, 1, ground.w - 2);
-            const py = clampInt(j.ty + dy, 1, ground.h - 2);
-            if (protectedTiles.has(tileIndex(ground.w, px, py))) continue;
+            const px = clampInt(j.tx + dx, 1, w - 2);
+            const py = clampInt(j.ty + dy, 1, h - 2);
+            if (junctionBlocked(px, py)) continue;
             j.tx = px;
             j.ty = py;
             moved = true;
@@ -765,61 +867,58 @@ function carveOrganicPaths(
       }
     }
     for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const px = clampInt(j.tx + dx, 1, ground.w - 2);
-      const py = clampInt(j.ty + dy, 1, ground.h - 2);
-      if (protectedTiles.has(tileIndex(ground.w, px, py))) continue;
+      const px = clampInt(j.tx + dx, 1, w - 2);
+      const py = clampInt(j.ty + dy, 1, h - 2);
+      if (protectedTiles.has(tileIndex(w, px, py))) continue;
+      if (waterMargin.has(tileIndex(w, px, py))) continue;
+      if (isWaterIndex(ground.data[tileIndex(w, px, py)])) continue; // never pave over water
       setTile(ground, px, py, road);
-      riverDeep.delete(tileIndex(ground.w, px, py));
     }
   }
-  return { junctions };
+
+  // Snapshot the spine + branch tiles (PAVED cells) so the caller can route each
+  // pen's gate stub to the NEAREST already-paved tile (a short straight stub),
+  // rather than a long corridor back to the forecourt.
+  const spineTiles: { tx: number; ty: number }[] = [];
+  for (let ty = 1; ty < h - 1; ty++) {
+    for (let tx = 1; tx < w - 1; tx++) {
+      if (ground.data[tileIndex(w, tx, ty)] === road) spineTiles.push({ tx, ty });
+    }
+  }
+  return { junctions, spineTiles, spineY };
 }
 
 /**
- * Lay BRIDGE tiles where the path net wants to cross the river: any deep-water tile
- * with PAVED on opposite sides (E+W or N+S) is a place a winding path ran up to the
- * bank on both shores — deck it with a walkable BRIDGE tile (chosen by orientation)
- * so the crossing reads as an intentional bridge instead of bare PAVED, and the
- * reachability fallback never has to carve an ugly road across open water.
+ * Lay ONE bridge across the river where the main SPINE avenue crosses it. The spine
+ * is a 2-wide horizontal avenue at `spineY`; if it passes through the river's
+ * vertical extent, deck the river's water span on the spine's row(s) as BRIDGE_H and
+ * pave the grass margins just outside the span so the bridge connects to the spine
+ * on both banks. The bridge is the ONE place a path meets water — everywhere else the
+ * shoreline stays grass, and the rest of the deep core stays one connected channel.
  *
- * Orientation contract (from tiles.ts / the bridge builders): BRIDGE_H spans an
- * E-W path over N-S water (the river runs vertically here, the path crosses going
- * east-west → PAVED on the E+W sides); BRIDGE_V spans a N-S path over E-W water.
- * The flanking shore tiles the path already paved at the crossing row/column are
- * re-decked to the same bridge tile so the whole span reads as one deck.
- *
- * Pure (no rng), row-major over the snapshot. The decked tile leaves `riverDeep`
- * (it's a non-solid BRIDGE now), so buildCollision treats it as walkable.
+ * Orientation contract (tiles.ts): BRIDGE_H spans an E-W path over N-S water (our
+ * river runs vertically, so this east-west crossing → BRIDGE_H on every spanned cell).
+ * Pure (no rng). Decked deep tiles leave `riverDeep` (a non-solid BRIDGE now), so
+ * buildCollision treats them as walkable. No-op if the spine doesn't reach the river.
  */
-function bridgeRiverCrossings(ground: TileGrid, riverDeep: Set<number>): void {
+function bridgeRiverCrossings(
+  ground: TileGrid,
+  riverDeep: Set<number>,
+  riverRows: RiverRow[],
+  spineY: number,
+): void {
   const w = ground.w;
-  const road = TILE_INDEX.PAVED;
-  const isWalk = (tx: number, ty: number): boolean => {
-    const idx = ground.data[tileIndex(w, tx, ty)];
-    return idx === road || idx === TILE_INDEX.WATER_SHALLOW || idx === TILE_INDEX.BRIDGE_H || idx === TILE_INDEX.BRIDGE_V;
-  };
-  const isPaved = (tx: number, ty: number) => ground.data[tileIndex(w, tx, ty)] === road;
-  // Snapshot to an array first: insertion order (fixed row-major from carveRiver)
-  // so the scan is deterministic, and we mutate the set inside the loop.
-  for (const i of [...riverDeep]) {
-    const tx = i % w;
-    const ty = (i - tx) / w;
-    const ew = isPaved(tx - 1, ty) && isPaved(tx + 1, ty);
-    const ns = isPaved(tx, ty - 1) && isPaved(tx, ty + 1);
-    if (!ew && !ns) continue;
-    // EW crossing (path runs east-west over the N-S river) → BRIDGE_H; otherwise a
-    // N-S path over an E-W stretch → BRIDGE_V. EW wins ties (the river is N-S here).
-    const deck = ew ? TILE_INDEX.BRIDGE_H : TILE_INDEX.BRIDGE_V;
-    setTile(ground, tx, ty, deck);
-    riverDeep.delete(i);
-    // Re-deck the flanking shore tiles the path already crossed so the span reads as
-    // one continuous bridge (only where they are walkable path/shore, not dry land).
-    if (ew) {
-      if (isWalk(tx - 1, ty)) setTile(ground, tx - 1, ty, deck);
-      if (isWalk(tx + 1, ty)) setTile(ground, tx + 1, ty, deck);
-    } else {
-      if (isWalk(tx, ty - 1)) setTile(ground, tx, ty - 1, deck);
-      if (isWalk(tx, ty + 1)) setTile(ground, tx, ty + 1, deck);
+  if (riverRows.length === 0) return;
+  // Only deck the spine's two avenue rows (spineY and spineY+1, since the avenue is
+  // 2-wide), and only where the river actually has a row there. This yields exactly
+  // one crossing, so the rest of the deep core stays connected.
+  for (const r of riverRows) {
+    if (r.ty !== spineY && r.ty !== spineY + 1) continue;
+    // Deck the full water footprint plus the 1-tile grass margins just outside it, so
+    // the deck reads as a continuous bridge that meets the spine pavement on both shores.
+    for (let tx = r.x0 - 1; tx <= r.x1 + 1; tx++) {
+      setTile(ground, tx, r.ty, TILE_INDEX.BRIDGE_H);
+      riverDeep.delete(tileIndex(w, tx, r.ty));
     }
   }
 }
@@ -868,11 +967,17 @@ function isGrassIndex(idx: number): boolean {
 
 /**
  * Pick the blend tile for a grass cell given which of its 4 orthogonal neighbours
- * (n/e/s/ww) and 4 diagonal neighbours (ne/se/sw/nw) are of `target` class. Outer
- * corner (two adjacent edges) > straight edge > inner corner (a single diagonal,
- * orthogonals clear → a concave notch where grass pokes into the region). Returns
- * 0 to leave the cell unchanged (opposite edges N+S, all-four, or a fully isolated
- * cell — those read fine as base grass).
+ * (n/e/s/ww) are of `target` class. Outer corner (two adjacent edges) > straight
+ * edge. The edge tile's TARGET side faces the target region (water on the N → the
+ * N-edge tile), so a shore/path seam visually connects.
+ *
+ * The four DIAGONAL flags (ne/se/sw/nw) are accepted for signature compatibility
+ * but DELIBERATELY ignored: the old inner-corner (ICORNER) branch wrapped isolated
+ * 1-tile jogs in busy concave corner tiles, which read as "grass holes" / diagonal
+ * banding once the map had wobbling paths. With straight, sparse paths the seams
+ * are clean rectangles, so we only emit edges + outer corners and leave every
+ * ambiguous diagonal-only neighbourhood as plain grass. Returns 0 to leave the cell
+ * unchanged (no orthogonal target, opposite pair N+S/E+W, or all-four).
  */
 function pickBlendTile(
   target: 'path' | 'water',
@@ -880,19 +985,17 @@ function pickBlendTile(
   e: boolean,
   s: boolean,
   ww: boolean,
-  ne: boolean,
-  se: boolean,
-  sw: boolean,
-  nw: boolean,
+  _ne: boolean,
+  _se: boolean,
+  _sw: boolean,
+  _nw: boolean,
 ): number {
   const P = TILE_INDEX;
   const E = target === 'path'
     ? { N: P.PATH_EDGE_N, E: P.PATH_EDGE_E, S: P.PATH_EDGE_S, W: P.PATH_EDGE_W,
-        CNE: P.PATH_CORNER_NE, CNW: P.PATH_CORNER_NW, CSE: P.PATH_CORNER_SE, CSW: P.PATH_CORNER_SW,
-        INE: P.PATH_ICORNER_NE, INW: P.PATH_ICORNER_NW, ISE: P.PATH_ICORNER_SE, ISW: P.PATH_ICORNER_SW }
+        CNE: P.PATH_CORNER_NE, CNW: P.PATH_CORNER_NW, CSE: P.PATH_CORNER_SE, CSW: P.PATH_CORNER_SW }
     : { N: P.WATER_EDGE_N, E: P.WATER_EDGE_E, S: P.WATER_EDGE_S, W: P.WATER_EDGE_W,
-        CNE: P.WATER_CORNER_NE, CNW: P.WATER_CORNER_NW, CSE: P.WATER_CORNER_SE, CSW: P.WATER_CORNER_SW,
-        INE: P.WATER_ICORNER_NE, INW: P.WATER_ICORNER_NW, ISE: P.WATER_ICORNER_SE, ISW: P.WATER_ICORNER_SW };
+        CNE: P.WATER_CORNER_NE, CNW: P.WATER_CORNER_NW, CSE: P.WATER_CORNER_SE, CSW: P.WATER_CORNER_SW };
   // Outer corners: two orthogonally-adjacent edges of the target.
   if (n && e) return E.CNE;
   if (n && ww) return E.CNW;
@@ -903,15 +1006,7 @@ function pickBlendTile(
   if (s && !n) return E.S;
   if (e && !ww) return E.E;
   if (ww && !e) return E.W;
-  // Inner (concave) corners: no orthogonal target, exactly one diagonal of target.
-  // The cell is a grass nub jutting into the region; the ICORNER tile rounds it.
-  if (!n && !e && !s && !ww) {
-    if (ne && !se && !sw && !nw) return E.INE;
-    if (se && !ne && !sw && !nw) return E.ISE;
-    if (sw && !ne && !se && !nw) return E.ISW;
-    if (nw && !ne && !se && !sw) return E.INW;
-  }
-  return 0; // opposite pair, all-four, or ambiguous diagonals → leave as grass
+  return 0; // no orthogonal target, opposite pair, or all-four → leave as grass
 }
 
 /**
@@ -1009,6 +1104,46 @@ function enforceWaterCohesion(ground: TileGrid): void {
       data[i] = data[i] === TILE_INDEX.POND_DEEP ? TILE_INDEX.POND_EDGE : TILE_INDEX.WATER_SHALLOW;
     }
   }
+}
+
+/**
+ * Enforce the WATER-TOUCHES-ONLY-GRASS adjacency rule over the whole ground grid:
+ * any PAVED/COBBLE/path-or-floor tile that is 8-neighbour adjacent to a water tile
+ * (deep or shallow) is demoted back to GRASS_A — EXCEPT a BRIDGE deck, which is the
+ * one sanctioned place a walkway meets water. This is the belt-and-braces backstop
+ * for the path water-margin (the reachability carve runs later and ignores the
+ * margin, so a fallback corridor could pave up to a bank); after this pass, every
+ * water tile's land neighbours are grass (or a bridge), so the water-edge blend can
+ * draw a clean shore. Pure (no rng), snapshot-based so demotions don't cascade.
+ * Returns nothing; mutates ground. Run AFTER the reachability carve, BEFORE the
+ * water-edge blend.
+ */
+function enforceWaterGrassMargin(ground: TileGrid): void {
+  const { w, h, data } = ground;
+  const isPathLike = (idx: number): boolean =>
+    idx === TILE_INDEX.PAVED ||
+    idx === TILE_INDEX.PAVED_CRACK ||
+    idx === TILE_INDEX.COBBLE ||
+    idx === TILE_INDEX.COBBLE_WORN;
+  const demote: number[] = [];
+  for (let ty = 0; ty < h; ty++) {
+    for (let tx = 0; tx < w; tx++) {
+      const i = ty * w + tx;
+      if (!isPathLike(data[i])) continue;
+      let touchesWater = false;
+      for (let dy = -1; dy <= 1 && !touchesWater; dy++) {
+        for (let dx = -1; dx <= 1 && !touchesWater; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = tx + dx;
+          const ny = ty + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          if (isWaterIndex(data[ny * w + nx])) touchesWater = true;
+        }
+      }
+      if (touchesWater) demote.push(i);
+    }
+  }
+  for (const i of demote) data[i] = TILE_INDEX.GRASS_A;
 }
 
 /**
@@ -1761,8 +1896,12 @@ function carveCorridor(
     const i = tileIndex(w, x, y);
     deco.data[i] = 0;
     // Don't pave the destination if it's a special non-solid tile (door, water
-    // shore, den mound); just ensure it's walkable. For corridor cells, pave.
-    if (!(x === tx && y === ty)) setTile(ground, x, y, TILE_INDEX.PAVED);
+    // shore, den mound); just ensure it's walkable. For corridor cells, pave —
+    // EXCEPT a SHALLOW-water cell, which is already a walkable shore: leave it as
+    // water so the corridor never punches a paved hole through the river's shore
+    // margin (which would later be demoted to grass and break water cohesion).
+    const isShallow = ground.data[i] === TILE_INDEX.WATER_SHALLOW || ground.data[i] === TILE_INDEX.POND_EDGE;
+    if (!(x === tx && y === ty) && !isShallow) setTile(ground, x, y, TILE_INDEX.PAVED);
     collision[i] = 0;
   };
   const stepX = fx < tx ? 1 : -1;
@@ -1842,7 +1981,7 @@ export function generateWorld(seed: number): WorldMap {
   //    every solid water tile so reach targets + paths stay clear of the bed.
   const riverDeep = new Set<number>();
   const wetland = zones.find((z) => z.id === 'wetland');
-  if (wetland) carveRiver(ground, wetland, riverDeep, rng);
+  const riverRows = wetland ? carveRiver(ground, wetland, riverDeep, rng) : [];
 
   // 5. Species → home assignment. Roster is shuffled deterministically (keeps the
   //    same rng draw as before — one shuffle here), but each species is PLACED in
@@ -1859,6 +1998,22 @@ export function generateWorld(seed: number): WorldMap {
     for (let tx = plaza.reservedRect.x0; tx <= plaza.reservedRect.x1; tx++) {
       claimed.add(tileIndex(w, tx, ty));
       reserved.add(tileIndex(w, tx, ty));
+    }
+  }
+  // Reserve the RIVER footprint (the full water band + a 1-tile shore halo) so no
+  // enclosure stamps over it — a home placed on the river would overwrite the
+  // shallow margin and break the deep core's cohesion (enforceWaterCohesion would
+  // then eat the channel into a staircase). `claimed` keeps findFreeRect off it;
+  // `reserved` keeps nature off it. Deterministic (riverRows is fixed-order).
+  for (const r of riverRows) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = r.x0 - 1; dx <= r.x1 + 1; dx++) {
+        const tx = dx;
+        const ty = r.ty + dy;
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+        claimed.add(tileIndex(w, tx, ty));
+        reserved.add(tileIndex(w, tx, ty));
+      }
     }
   }
   const reachTargets: { tx: number; ty: number }[] = [];
@@ -2107,24 +2262,45 @@ export function generateWorld(seed: number): WorldMap {
     }
   }
 
-  // 6. Organic path network: a winding spine through the zone centers + the gate
-  //    spur, plus a spur from each enclosure gate to the nearest spine tile so
-  //    every home is path-connected before the reachability backstop runs. Bridges
-  //    span the river where a path meets both banks. `junctions` (forecourt + zone
-  //    centers) anchor the terminals + robot spawns (replacing the old avenues).
-  const { junctions } = carveOrganicPaths(ground, zones, forecourt, gateTx, riverDeep, protectedTiles, rng);
+  // 6. Sparse, mostly-straight path network: one main horizontal SPINE avenue from
+  //    the forecourt, one short vertical branch toward each zone center, the gate
+  //    spur, plus a SHORT straight stub from each home's gate to the NEAREST already-
+  //    paved spine tile (so a pen only gets a stub, not a corridor to every zone).
+  //    Bridges span the river where the path approaches both banks. `junctions`
+  //    (forecourt + zone centers) anchor the terminals + robot spawns. NO rng here:
+  //    every leg is axis-aligned and fully determined by the geometry.
+  //
+  //    The WATER MARGIN (every cell adjacent to a water tile) is computed from the
+  //    river BEFORE paths carve, so no path ever runs next to water — the shoreline
+  //    stays grass for a clean shore (bridges are the one exception).
+  const waterMargin = buildWaterMargin(ground);
+  const { junctions, spineTiles, spineY } = carveOrganicPaths(
+    ground, zones, forecourt, gateTx, riverDeep, protectedTiles, waterMargin,
+  );
   // The robot patrol loop in world units: the junctions in carve order. Robots are
   // anchored at these exact junctions (see robotSpawn specs below), so each spawns
   // on its route; walking them in order traces the carved spine. tileCenter matches
   // the transform used to place the robots/terminals, so the route lands on pavement.
   const patrolRoute = junctions.map((j) => ({ x: tileCenter(j.tx, tile), y: tileCenter(j.ty, tile) }));
-  // Spur each home's gate/door reach target to the spine (deterministic; draws rng
-  // inside carveWindingPath). reachTargets[0] of each home is its gate/door tile.
-  // protectedTiles keeps these spurs from paving back over a pen/building footprint.
+  // Spur each home's gate/door reach target to the NEAREST already-paved spine tile
+  // with a SHORT straight L-stub (no rng). reachTargets[0..] are the gate/door tiles.
+  // protectedTiles + waterMargin keep these stubs off pen footprints and away from
+  // water. The reachability backstop guarantees connectivity if a stub gets blocked.
   for (const rt of reachTargets) {
-    carveWindingPath(ground, riverDeep, protectedTiles, rt.tx, rt.ty, forecourt.tx, forecourt.ty, rng);
+    let best: { tx: number; ty: number } | null = null;
+    let bestD = Infinity;
+    for (const sp of spineTiles) {
+      const d = Math.abs(sp.tx - rt.tx) + Math.abs(sp.ty - rt.ty);
+      if (d < bestD) {
+        bestD = d;
+        best = sp;
+      }
+    }
+    if (best) {
+      carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, rt.tx, rt.ty, best.tx, best.ty);
+    }
   }
-  bridgeRiverCrossings(ground, riverDeep);
+  bridgeRiverCrossings(ground, riverDeep, riverRows, spineY);
   // Water cohesion: every DEEP tile must wear a shallow margin. The river + pond are
   // carved wide enough to satisfy this, but path paving near a bank can leave a deep
   // tile touching pavement — demote any such tile to shallow (deep-only-beside-
@@ -2324,10 +2500,20 @@ export function generateWorld(seed: number): WorldMap {
     collision[gi] = 0;
   }
 
+  // 9c. Water-touches-only-grass: the reachability carve ignores the water margin,
+  //     so a fallback corridor could have paved up to a bank. Demote any PAVED/cobble
+  //     tile that ends up 8-neighbour adjacent to water back to grass (a BRIDGE deck
+  //     is the one sanctioned crossing). After this, every water tile's land
+  //     neighbours are grass-or-bridge, so the shore blend draws a clean edge. This
+  //     only rewrites ground (never deco/collision — the demoted cells were already
+  //     non-solid PAVED), so collision is unchanged.
+  enforceWaterGrassMargin(ground);
+
   // 10. Tile-style accuracy: feather grass↔path and grass↔water seams with the blend
-  //     tiles (25-48). Runs AFTER the carve (so fallback corridors blend too) and
-  //     after the food stamp — it only rewrites GRASS ground cells, never the deco
-  //     TROUGH_FOOD markers or collision, so the two passes are independent.
+  //     tiles (25-48). Runs AFTER the carve + the water-margin demotion (so the shore
+  //     reads off the FINAL water boundary) and after the food stamp — it only
+  //     rewrites GRASS ground cells, never the deco TROUGH_FOOD markers or collision,
+  //     so the two passes are independent.
   blendGroundEdges(ground);
 
   return {

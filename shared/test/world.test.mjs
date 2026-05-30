@@ -22,13 +22,18 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v13: re-pinned for the zoo overhaul — BRIDGE tiles, enhanced tile art, and the
-// rewritten zoo placement (pens/paths/gates/pond/river/buildings, unused tiles wired
-// in). Both the collision grid (new pond/river/fence/bridge solids + relocated
-// buildings) and the entitySpecs (rewritten placement) drifted, so BOTH hashes are
-// re-pinned. Recomputed from generateWorld(123).
-const PINNED_COLLISION_HASH = 2794058600;
-const PINNED_ENTITYSPEC_HASH = 293418140;
+// v14: re-pinned for the map-readability overhaul — sparse straight paths (spine
+// avenue + per-zone branch + short pen-gate stubs, replacing the winding per-zone
+// spaghetti), a CONNECTED 2-wide river core wrapped in a 2-tile shallow margin, the
+// water-touches-only-grass margin (paths kept off water, demoted near water, bridges
+// the sole crossing), and the edge blend dropping the inner-corner branch. BOTH
+// hashes drift: the COLLISION grid changes (the wider connected river core changes
+// which water tiles are deep/solid + the path layout moved), and the entitySpecs
+// change because path junctions now relocate out of water (so a wetland zone-center
+// terminal/robot anchor that used to sit on the river bed shifts to dry grass).
+// Recomputed from generateWorld(123).
+const PINNED_COLLISION_HASH = 2182634496;
+const PINNED_ENTITYSPEC_HASH = 3622420766;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -92,11 +97,12 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v13: zoo overhaul (BRIDGE tiles + enhanced tile art + rewritten pen/path/gate/
-  // pond/river/building placement). Both pinned hashes above are re-pinned (collision
-  // + entitySpecs both changed); the bump is the deliberate cache-bust so old clients
-  // (which assert msg.version === WORLD_GEN_VERSION) fail loud rather than desync.
-  assert.equal(WORLD_GEN_VERSION, 13, 'version pinned at 13');
+  // v14: map-readability overhaul (sparse straight paths, connected river core,
+  // water-touches-only-grass margin, simplified edge blend). The collision hash is
+  // re-pinned (river core + path layout drift); entitySpecs are unchanged. The bump
+  // is the deliberate cache-bust so old clients (which assert msg.version ===
+  // WORLD_GEN_VERSION) fail loud rather than desync.
+  assert.equal(WORLD_GEN_VERSION, 14, 'version pinned at 14');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 

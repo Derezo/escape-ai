@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.84: **Map-readability overhaul (WORLD_GEN_VERSION 14): sparse straight paths, a
+  connected river, water that only touches grass.** Three fixes to `shared/src/world.ts`,
+  all deterministic. (1) **Paths are now sparse + straight.** The winding per-zone spaghetti
+  (a 2-wide wobbling corridor to every zone center *and back*, plus 14 forecourt spurs) is
+  replaced by a sparse network of mostly-straight trunk avenues: one main horizontal **spine**
+  + one short vertical **branch** per zone + a short straight **stub** from each pen gate to the
+  nearest spine tile. `carveWindingPath` → axis-aligned `carveStraightPath` (no per-tile wobble,
+  no rng in path carving). PAVED drops from ~20% to ~7%; PAVED + path-edge drops from ~35% to
+  ~13% of the map. (2) **The river is a connected channel.** `carveRiver` now lays a 2-wide
+  `WATER_DEEP` core wrapped in a 2-tile `WATER_SHALLOW` margin, meandering at most ±1 every 3
+  rows so consecutive deep rows overlap — the deep core is one continuous body (broken only
+  where the spine bridge crosses it), never a staircase of isolated single tiles. The river
+  footprint is reserved so no enclosure stamps over it. (3) **Water touches only grass.** A
+  water-margin set keeps paths ≥1 tile from any water during carving; paths and reachability
+  corridors never pave over water; `enforceWaterGrassMargin` demotes any path the fallback carve
+  left adjacent to water back to grass; bridges (`BRIDGE_H`) are the sole place a walkway meets
+  water. The water-edge blend now reads the real water boundary so every shoreline gets the
+  matching `WATER_EDGE`/`CORNER` tile, and `pickBlendTile` drops the inner-corner (ICORNER)
+  branch so isolated 1-tile jogs stay grass instead of becoming busy corner tiles (the
+  "grass holes" / diagonal banding). `WORLD_GEN_VERSION` 13→14; both parity hashes re-pinned
+  (collision + entitySpecs both drift — path junctions now relocate out of water). All 70 shared
+  tests green (reachability, coverage, water-adjacency, blend idempotency). No tile art touched.
+
 - 0.2.83: **Water tiles retonation: single blue hue family, depth by value only.** `WATER_DEEP` and
   `WATER_SHALLOW` previously used different hues — deep a muted dark blue (#2f5d8a), shallow a
   bright cyan (#4f96c8) — so adjacent cells looked like two disjoint materials. Both now share one
