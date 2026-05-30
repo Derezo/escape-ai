@@ -17,6 +17,7 @@
 const config = require('../config');
 const world = require('./world');
 const quests = require('./quests');
+const follow = require('./follow');
 const speciesRoster = require('../socket/species-roster');
 const { bumpStat } = require('./stats-delta');
 
@@ -72,6 +73,9 @@ async function loadShared() {
     );
   }
   shared = mod;
+  // Hand the cached shared math to the follow orchestrator too, so there is exactly
+  // ONE cached copy of the ESM module (follow.js doesn't import() it itself).
+  follow.setShared(shared);
   return shared;
 }
 
@@ -455,6 +459,10 @@ function stepIdleAnimals(dt, roomName, currentTick) {
   const bounds = mapBounds(world.getRoomMap(roomName));
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
+    // An animal currently FOLLOWING a player is moved by follow.stepFollowers this
+    // tick (which runs right after this) — skip it here so it isn't both drifted by
+    // wander AND pulled toward its owner in the same tick (a double-move).
+    if (follow.isFollower(e, currentTick)) continue;
     const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED, bounds);
     // Face the drift direction so the decoy's walk animation reads correctly.
     e.facing = shared.facingFromVec(next.x - e.x, next.y - e.y, e.facing || 's');
@@ -542,6 +550,11 @@ function catchPlayer(player, spawn) {
   player.dashUntilTick = 0;
   player.shellUntilTick = 0;
   player.fx = null;
+  // Animal collection: a catch is the sting — you lose your collected food AND the
+  // herd you were leading (the animals are freed back to idle drift). Cleared here
+  // so the loss is part of the soft-respawn reset. player.room is set at join.
+  follow.resetPlayer(player);
+  if (player.room) follow.releaseFollowersOf(player.room, player.id);
   // Soft respawn at the room's first map spawn point (just inside the gate).
   const at = spawn || { x: 50, y: 50 };
   player.x = at.x;
@@ -585,6 +598,12 @@ function respawnPlayer(player, spawn) {
   // quest and reset all progress (done:0/complete:false). Must run AFTER the
   // species reassignment so the new run gets the new animal's quest.
   quests.initPlayer(player);
+  // Animal collection: a fresh run starts with an empty food bag and no pending
+  // gate toast. Release any follower still chasing this id (those scored at the
+  // gate were already released; this frees a straggler fed DURING the celebration
+  // window). scoreTotal is NOT reset — it's the running round score, persisted.
+  follow.resetPlayer(player);
+  if (player.room) follow.releaseFollowersOf(player.room, player.id);
   // Back to the room's first map spawn point (mirrors catchPlayer).
   const at = spawn || { x: 50, y: 50 };
   player.x = at.x;
@@ -639,6 +658,12 @@ function checkEscape(player, roomName, currentTick) {
   // above), so each escape is counted once. Decoupled from the DB; the engine
   // flushes the delta promptly on the escape edge tick.
   bumpStat(player, 'escapes');
+  // Animal collection: bank the herd. Awards points for your own animal + each
+  // following animal that escapes with you (stolen ones worth more), credits
+  // escaped-by-species for the player and every follower, stamps player.lastScore
+  // (the client toast) + scoreTotal, and releases the followers at the gate. Runs
+  // on the same escape edge so the score is ready when the client sees `escaped`.
+  follow.scoreEscape(player, roomName, currentTick);
 }
 
 /**
@@ -659,15 +684,24 @@ function applyAction(player, action, roomName, currentTick) {
       orderNearestRobot(player, roomName, currentTick);
       break;
     case 'interact':
-      // Phase 2 minimal coherent behavior: interacting near a terminal acts like
-      // a Second-Law order to the nearest robot (a terminal command stands a
-      // patrol down). Phase 4 wires real terminal effects + disguise-prop pickup.
+      // FOOD FIRST: collecting from a kind:'food' source is a "use the world" verb
+      // (same family as tapping a terminal) but a DISJOINT target class — food
+      // sources live inside enclosures, terminals on roads. Early-return on a
+      // successful collect so one press never both collects food AND orders a robot.
+      if (follow.collectNearbyFood(player, roomName, currentTick)) break;
+      // Interacting near a terminal acts like a Second-Law order to the nearest
+      // robot (a terminal command stands a patrol down), and advances an 'activate'
+      // quest (elephant/peacock/parrot) by counting each DISTINCT terminal tapped.
       if (nearTerminal(player, roomName)) {
         orderNearestRobot(player, roomName, currentTick);
-        // Phase 6: an 'activate' quest (elephant/peacock/parrot) counts each
-        // DISTINCT terminal tapped toward its target. No-op for other quests.
         quests.onInteract(player, roomName);
       }
+      break;
+    case 'feed':
+      // Give the nearest feedable animal its liked food → it follows you (or, if it
+      // was following someone else, you steal it). A DEDICATED verb (not overloaded
+      // on 'interact') so it never collides with the terminal / 'activate'-quest path.
+      follow.feedNearbyAnimal(player, roomName, currentTick);
       break;
     case 'ability':
       // Phase 4: species-specific powers. Edge-triggered (the engine clears

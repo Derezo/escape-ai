@@ -11,13 +11,15 @@
 const { v4: uuidv4 } = require('uuid');
 const world = require('../game/world');
 const quests = require('../game/quests');
+const follow = require('../game/follow');
 const speciesRoster = require('./species-roster');
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
-// The verbs `input` may carry. 'interact' (use a terminal / stand down a robot),
-// 'order' (Second-Law command), 'ability' (species power — Phase 4 stub).
-const ACTIONS = new Set(['interact', 'order', 'ability']);
+// The verbs `input` may carry. 'interact' (use a terminal / collect food), 'order'
+// (Second-Law command), 'ability' (species power), 'feed' (give an animal its liked
+// food so it follows you — the animal-collection verb).
+const ACTIONS = new Set(['interact', 'order', 'ability', 'feed']);
 
 // Per-room monotonic join counter, used to deterministically spread spawns so
 // that ~20 players don't all stack on the origin. Survives leaves (it only
@@ -138,11 +140,20 @@ function register(socket, deps) {
       // model (quests.initPlayer sets player.quest + questTerminals + questBlocked).
       quest: null,
       questTerminals: null,
-      questBlocked: 0
+      questBlocked: 0,
+      // Animal collection: the player's food bag (foodKey → count), filled by
+      // collecting at food sources and spent by feeding animals. (Re)initialized
+      // below by follow.initPlayer; declared here so the shape is documented.
+      inventory: {},
+      // The running round score + the last gate award (a one-shot client toast).
+      scoreTotal: 0,
+      lastScore: null
     };
     // Derive the quest for this player's species (reach/fetch/activate). Done
     // AFTER the species is resolved above, so the quest matches the avatar.
     quests.initPlayer(player);
+    // Initialize the food bag (empty) for the animal-collection loop.
+    follow.initPlayer(player);
     connectedPlayers.set(socket.id, player);
 
     // Track room membership and join the Socket.IO room for broadcasts.

@@ -111,6 +111,28 @@ module.exports = {
     COOLDOWN_SECS: parseFloat(process.env.ABILITY_COOLDOWN_SECS) || 4
   },
 
+  // Animal collection (food / follow / steal / score). Feeding an animal its
+  // liked food recruits it as a follower that trails you to the gate. All timing
+  // is in seconds here and converted to ticks server-side (deterministic).
+  FOLLOW: {
+    // Seconds each feed grants. Accumulative across feeds, up to CAP_SECS.
+    GRANT_SECS: parseFloat(process.env.FOLLOW_GRANT_SECS) || 15,
+    // Hard ceiling on a follower's remaining time, so it can't be parked forever.
+    CAP_SECS: parseFloat(process.env.FOLLOW_CAP_SECS) || 60,
+    // Follower chase speed (units/sec). Above the walk speed (120) so a follower
+    // keeps up with a walking owner, but below sprint (200) so SPRINTING sheds it
+    // — an emergent cost of sprinting (which also crashes your own disguise).
+    SPEED: parseFloat(process.env.FOLLOW_SPEED) || 150,
+    // Don't close inside this distance (units) — the follower trails, it doesn't
+    // jitter on top of the owner.
+    STOP_DIST: parseFloat(process.env.FOLLOW_STOP_DIST) || 40,
+    // Scoring at the gate: your own animal, each WILD follower, each STOLEN
+    // follower (worth more — the competitive theft payoff).
+    SCORE_OWN: parseFloat(process.env.SCORE_OWN) || 100,
+    SCORE_FOLLOWER: parseFloat(process.env.SCORE_FOLLOWER) || 50,
+    SCORE_STOLEN: parseFloat(process.env.SCORE_STOLEN) || 120
+  },
+
   // Environment helpers
   NODE_ENV,
   isProduction: NODE_ENV === 'production',

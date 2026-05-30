@@ -6,6 +6,7 @@
  */
 
 const { broadcastLobbyState } = require('./lobby');
+const follow = require('../game/follow');
 
 /**
  * @param {import('socket.io').Socket} socket
@@ -55,6 +56,13 @@ function cleanup(socket, deps) {
   }
 
   if (player && player.room) {
+    // Animal collection: free any animals this player was leading so they revert to
+    // idle drift instead of chasing a disconnected ghost. Done before the room
+    // membership teardown, while the player + room are still resolvable. (The
+    // per-tick stepFollowers backstop also catches this, but doing it here frees
+    // them the same tick rather than on the next follower step.)
+    follow.releaseFollowersOf(player.room, player.id);
+
     const members = rooms.get(player.room);
     if (members) {
       members.delete(socket.id);

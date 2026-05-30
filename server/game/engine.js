@@ -29,6 +29,7 @@ const config = require('../config');
 const world = require('./world');
 const stealth = require('./stealth');
 const quests = require('./quests');
+const follow = require('./follow');
 const statsDelta = require('./stats-delta');
 
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
@@ -69,6 +70,10 @@ async function init(socketIo, players, roomsMap, dbModule) {
   // Hand the live player + room maps to the stealth orchestrator so its ability
   // hooks (e.g. the ape carry hand-off) can scan a room from applyAction.
   stealth.setRefs(players, roomsMap);
+  // Same for the follow orchestrator, so stepFollowers can resolve a follower's
+  // owner back to the live player object each tick. (follow.js gets the cached
+  // shared math separately, via stealth.loadShared → follow.setShared.)
+  follow.setRefs(players, roomsMap);
   // Load + cache the shared stealth math once, before the loop runs.
   await stealth.loadShared();
   // Load + cache the shared world generator once, before any room is created —
@@ -221,7 +226,13 @@ function stepNpcs(dt) {
     world.pruneExpired(roomName, currentTick);
     // Drift the idle decoy animals first so robots perceive them at this tick's
     // positions (no one-tick lag) when stepRobots runs its Three-Laws decision.
+    // stepIdleAnimals SKIPS active followers (follow.isFollower) so they aren't
+    // double-moved by the follower step that runs next.
     stealth.stepIdleAnimals(dt, roomName, currentTick);
+    // Move every active follower one step toward its owner (and release lapsed /
+    // owner-gone ones). MUST run after stepIdleAnimals (which skipped them) and
+    // before stepRobots (so robots perceive followers at this tick's positions).
+    follow.stepFollowers(dt, roomName, currentTick);
     const robotEvents = stealth.stepRobots(dt, roomName, connectedPlayers, rooms, currentTick);
     const { enteredLockdown, liftedLockdown } = stealth.stepPanic(dt, roomName, robotEvents);
     // Lockdown transitions are rare and operationally interesting — log them.

@@ -4,6 +4,40 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.35: **Animal collection — Phase 3: server mechanics (collect/feed/follow/steal/score).**
+  The authoritative simulation for the whole loop.
+  - **`server/game/follow.js` (new):** owns the rules (mirrors `quests.js`/`stealth.js`);
+    engine + stealth call in. `collectNearbyFood` (interact-collect from a renewable food
+    source → inventory + `foodCollected`), `feedNearbyAnimal` (consume liked food →
+    `followerOf`/`followUntilTick`/`followSince`; accumulative + capped on a wild feed/top-up;
+    a fresh-timer ownership transfer + `animalsStolen` on a steal), `stepFollowers` (per-tick
+    collision-aware chase toward the owner via the shared integrator; release on expiry /
+    owner-gone / owner-escaped), `scoreEscape` (SCORE_OWN + per-follower, stolen worth more;
+    escaped-by-species for player + each follower; stamps `lastScore` + `scoreTotal`; releases
+    the herd), `releaseFollower(sOf)`, `initPlayer`/`resetPlayer`. Gets the cached shared math
+    via `setShared` (from `stealth.loadShared`) and the live maps via `setRefs` (from
+    `engine.init`) — no second ESM import, no require cycle.
+  - **`server/config.js`:** new `FOLLOW` block — `GRANT_SECS=15`, `CAP_SECS=60`, `SPEED=150`
+    (above walk so a follower keeps up, below sprint so sprinting sheds it), `STOP_DIST=40`,
+    `SCORE_OWN/FOLLOWER/STOLEN`.
+  - **`server/game/stealth.js`:** `applyAction` 'interact' does a food-first early-return
+    (collect), then the unchanged terminal/order/`activate`-quest path; new dedicated 'feed'
+    case. `checkEscape` calls `follow.scoreEscape` on the escape edge. `stepIdleAnimals` skips
+    active followers (no double-move). `catchPlayer`/`respawnPlayer` clear inventory + release
+    the herd (a catch is the sting; `scoreTotal` survives respawn).
+  - **`server/game/engine.js`:** `init` wires `follow.setRefs`; `stepNpcs` run-order is now
+    pruneExpired → stepIdleAnimals (skips followers) → **stepFollowers** → stepRobots →
+    stepPanic (a hard requirement so followers move once and robots perceive them in-position).
+  - **`server/socket/lobby.js`:** `ACTIONS += 'feed'`; join object seeds `inventory:{}` /
+    `scoreTotal:0` / `lastScore:null` + `follow.initPlayer`.
+  - **`server/socket/connection.js`:** disconnect releases the player's followers (no ghost
+    chase) before the room teardown.
+  - Verified: an integration harness drives collect → feed → accumulate(+capped) → steal
+    (ownership + fresh timer + theft stat) → gate score (220 = own 100 + stolen 120;
+    escapes-by-species credits both species; herd released) → isFollower/release — all green.
+    A 10-client live sim holds 20 Hz, max-entity 64 (the 14 food entities included), ~1 ms RTT,
+    no server errors.
+
 - 0.2.34: **Animal collection — Phase 2: deterministic food placement.** The world now
   contains one collectable food source per species, so every food is findable and
   reachable.
