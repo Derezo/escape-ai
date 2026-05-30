@@ -11,23 +11,8 @@
  * load and cached, so `play()` is cheap to call from gameplay events.
  */
 
-/** Logical sound names → file under `./sfx/`. Maps game events to the catalogue. */
-const SFX_FILES = {
-  blip: './sfx/blip.wav',
-  select: './sfx/select.wav',
-  confirm: './sfx/confirm.wav',
-  pickup: './sfx/pickup.wav',
-  hit: './sfx/hit.wav',
-  error: './sfx/error.wav',
-  jump: './sfx/jump.wav',
-  // Ability FX sounds (Phase E).
-  whoosh: './sfx/whoosh.wav',
-  thud: './sfx/thud.wav',
-  sparkle2: './sfx/sparkle2.wav',
-  dazzle: './sfx/dazzle.wav',
-} as const;
-
-export type SfxName = keyof typeof SFX_FILES;
+import { SFX_FILES, SFX_FALLBACK, type SfxName } from './audio.generated';
+export type { SfxName } from './audio.generated';
 
 let ctx: AudioContext | undefined;
 const buffers = new Map<SfxName, AudioBuffer>();
@@ -46,6 +31,12 @@ function audioCtx(): AudioContext | undefined {
   return ctx;
 }
 
+/**
+ * Track which names we've already attempted a fallback for, so we never loop:
+ * primary fails → try fallback once → give up silently.
+ */
+const triedFallback = new Set<SfxName>();
+
 /** Fetch + decode one sound into the cache. Safe to call repeatedly. */
 async function load(name: SfxName): Promise<void> {
   if (buffers.has(name) || loading.has(name)) return;
@@ -54,10 +45,31 @@ async function load(name: SfxName): Promise<void> {
   loading.add(name);
   try {
     const res = await fetch(SFX_FILES[name]);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const bytes = await res.arrayBuffer();
     const buf = await context.decodeAudioData(bytes);
     buffers.set(name, buf);
   } catch (err) {
+    // Primary URL failed. If a fallback WAV is configured (and we haven't tried
+    // it yet), load THAT under the same name so gameplay has sound until the
+    // real MP3 is generated. Auto-upgrades: once the MP3 lands, a page reload
+    // fetches it fresh (the buffer isn't cached across reloads).
+    const fallbackUrl = SFX_FALLBACK[name];
+    if (fallbackUrl && !triedFallback.has(name)) {
+      triedFallback.add(name);
+      loading.delete(name); // allow the fallback load() call below to proceed
+      try {
+        loading.add(name);
+        const res2 = await fetch(fallbackUrl);
+        if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
+        const bytes2 = await res2.arrayBuffer();
+        const buf2 = await context.decodeAudioData(bytes2);
+        buffers.set(name, buf2);
+        return; // fallback succeeded; skip the outer warn
+      } catch {
+        // Fallback also failed — fall through to the silent warn below.
+      }
+    }
     // A missing/undecodable SFX must never break gameplay — just stay silent.
     console.warn(`[audio] could not load "${name}":`, err);
   } finally {
@@ -100,4 +112,12 @@ export function playSfx(name: SfxName, volume = 0.6): void {
   gain.gain.value = volume;
   src.connect(gain).connect(context.destination);
   src.start();
+}
+
+/**
+ * Expose the shared AudioContext so music.ts (Phase 3) can share the single
+ * context and benefit from unlockAudio() without creating a second context.
+ */
+export function getAudioCtx(): AudioContext | undefined {
+  return audioCtx();
 }

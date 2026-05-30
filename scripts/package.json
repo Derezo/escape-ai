@@ -14,7 +14,10 @@
     "gen-tiles": "node gen-tiles.js",
     "build-tileset": "node build-tileset.js",
     "verify-tileset": "node verify-tileset.js",
-    "tiles": "node gen-tiles.js --force && node build-tileset.js && node verify-tileset.js"
+    "tiles": "node gen-tiles.js --force && node build-tileset.js && node verify-tileset.js",
+    "audio:codegen": "node audio/gen-bindings.js",
+    "audio:verify": "node audio/verify-audio.js",
+    "audio": "node audio/gen-bindings.js && node audio/verify-audio.js"
   },
   "engines": {
     "node": ">=22"

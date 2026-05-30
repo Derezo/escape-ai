@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.66: **Audio pipeline Phase 1 — manifest→client codegen + drift gate (`scripts/audio/`, new).**
+  Makes `asset-pipeline/manifest.json` the single source of truth for the client. `scripts/audio/
+  gen-bindings.js` renders the committed `client/src/audio.generated.ts` (deterministic; `SFX_FILES`
+  for all 26 sfx keys — 18 manifest `.mp3` + 8 keep-synth `.wav` — plus `SFX_FALLBACK`, `SFX_VOLUME`,
+  `MUSIC_FILES`, `MUSIC_META` and the `SfxName`/`MusicName` types). `client/src/audio.ts` now imports
+  those maps instead of hand-listing them and, in `load()`, falls back to a committed synth WAV when an
+  SFX's `.mp3` isn't generated yet (so e.g. `robot_alert` plays `error.wav` until its MP3 lands, then
+  auto-upgrades on reload); it also exports `getAudioCtx()` for the Phase-3 music layer to share the one
+  AudioContext. `scripts/audio/verify-audio.js` is the **drift gate** (mirroring `verify-tileset.js`):
+  manifest↔generated key coverage, URL-formula correctness, a regenerate-and-diff staleness check,
+  asset-existence with placeholder tolerance (missing `.mp3` → WARN, never FAIL while a placeholder WAV
+  exists), and fallback-target existence. New `npm run audio` / `audio:codegen` / `audio:verify` scripts.
+  Client typechecks strict and the gate exits 0.
+
 - 0.2.65: **Audio pipeline Phase 0 — contracts (`asset-pipeline/`, new).** The foundation
   for Suno-generated music + SFX. `asset-pipeline/theme.json` is the single editable global
   audio identity (eerie/creepy *Caves of Steel* palette, with separate `music` "light and
