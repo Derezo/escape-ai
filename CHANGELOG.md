@@ -4,6 +4,19 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.46: **NPC movement refactor — Phase 3: un-stick idle wander.** Idle decoy/pen animals no
+  longer pin flush against a wall until their wander heading re-rolls (up to 2s of looking
+  "stuck"). `stepIdleAnimals` now drives movement through `movement.wanderAvoid` — the same
+  deterministic wander heading + soft inward edge-bias as before, but it probe-and-rotates around
+  the obstacle and commits via the sliding `moveWithCollision`, so the animal rounds its enclosure
+  fence instead of stalling on it. Containment is preserved (soft bias + the collision grid as the
+  hard backstop). `stealth.loadShared` now also imports + validates `shared/dist/movement.js` and
+  `shared/dist/locomotion.js` (fail-loud missing-export guards, like the step module) and added the
+  `homeBiasedWanderStep` export to the step `required` list; `follow.setShared` extended to receive
+  the extra modules. Verified by a 600-tick sim: a pen animal made 1200 units of cumulative
+  progress with **0/600 fully-stalled ticks**, stayed contained, and reproduced bit-identically on
+  rerun (determinism). Server boots clean; shared 50/50.
+
 - 0.2.45: **NPC movement refactor — Phase 2: expose `patrolRoute` on `WorldMap`.** Surface the
   path-network junctions (which `carveOrganicPaths` already computes, in carve order) as a new
   `WorldMap.patrolRoute: {x,y}[]` (world units) so robots can patrol the carved spine instead of

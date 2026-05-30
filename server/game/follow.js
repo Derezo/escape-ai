@@ -30,16 +30,25 @@ const world = require('./world');
 const { bumpStat, bumpEscapedSpecies } = require('./stats-delta');
 const { secsToTicks, findPlayerById } = require('./room-utils');
 
-// The cached shared module (handed over by stealth.loadShared via setShared).
+// The cached shared modules (handed over by stealth.loadShared via setShared).
+// `shared` = step.js (math/collision); `movement` = movement.js (chain/steer);
+// `locomotion` = locomotion.js (per-species gait). The latter two are used by the
+// chain-follow + return-home work; harmless to hold even before they're wired.
 let shared = null;
+let movement = null;
+let locomotion = null;
 // The engine's live player + room maps (handed over by engine.init via setRefs),
 // so we can resolve a follower's owner back to the live player object each tick.
 let connectedPlayers = null; // Map<socketId, player>
 let rooms = null;            // Map<roomName, Set<socketId>>
 
-/** Hand over the cached shared step module. Called from stealth.loadShared(). */
-function setShared(mod) {
+/** Hand over the cached shared modules. Called from stealth.loadShared(). `moveMod`
+ *  and `locoMod` are optional so older callers (and tests) that pass only the step
+ *  module keep working; the chain/return-home paths require them. */
+function setShared(mod, moveMod, locoMod) {
   shared = mod;
+  if (moveMod) movement = moveMod;
+  if (locoMod) locomotion = locoMod;
 }
 
 /** Hand over the engine's live player + room maps. Called from engine.init(). */

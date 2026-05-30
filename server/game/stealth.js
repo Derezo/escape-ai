@@ -22,8 +22,13 @@ const speciesRoster = require('../socket/species-roster');
 const { bumpStat } = require('./stats-delta');
 const { secsToTicks, findPlayerById } = require('./room-utils');
 
-// The cached shared module (resolved by loadShared() before the loop starts).
+// The cached shared modules (resolved by loadShared() before the loop starts).
+// `shared` is shared/dist/step.js (the Three-Laws math + collision integrator);
+// `movement` is shared/dist/movement.js (steering/patrol/wander-avoid primitives);
+// `locomotion` is shared/dist/locomotion.js (per-species gait registry + applicator).
 let shared = null;
+let movement = null;
+let locomotion = null;
 
 // Collision half-extent for moving entities. Players, robots and idle decoys all
 // share roughly one entity rect; 0.4×RECT_SIZE keeps them clear of walls without
@@ -58,13 +63,15 @@ function setRefs(players, roomsMap) {
  */
 async function loadShared() {
   if (shared) return shared;
-  // Relative to this file (server/game/stealth.js) -> shared/dist/step.js.
+  // Relative to this file (server/game/stealth.js) -> shared/dist/*.js.
   const mod = await import('../../shared/dist/step.js');
   const required = [
     'STEALTH', 'updateHumanLikeness', 'firstLawProtects',
     'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep', 'facingFromVec',
     // Phase 4: collision-aware movement for players AND robots/idle animals.
-    'moveWithCollision'
+    'moveWithCollision',
+    // NPC movement refactor: home-return drift for released followers.
+    'homeBiasedWanderStep'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -74,9 +81,35 @@ async function loadShared() {
     );
   }
   shared = mod;
-  // Hand the cached shared math to the follow orchestrator too, so there is exactly
-  // ONE cached copy of the ESM module (follow.js doesn't import() it itself).
-  follow.setShared(shared);
+
+  // NPC movement refactor: the steering/patrol primitives (movement.js) and the
+  // per-species gait registry (locomotion.js). Loaded + validated the same way so
+  // a stale shared/dist fails LOUD at boot rather than mid-tick.
+  const moveMod = await import('../../shared/dist/movement.js');
+  const moveRequired = ['steerAround', 'patrolStep', 'chainFollowStep', 'speedBoost', 'wanderAvoid'];
+  const moveMissing = moveRequired.filter((name) => moveMod[name] === undefined);
+  if (moveMissing.length) {
+    throw new Error(
+      `shared/dist/movement.js is missing expected exports: ${moveMissing.join(', ')}. ` +
+      'Did you run `npm run build` in shared/?'
+    );
+  }
+  movement = moveMod;
+
+  const locoMod = await import('../../shared/dist/locomotion.js');
+  const locoRequired = ['locomotionFor', 'gaitSpeed', 'locomotionStep'];
+  const locoMissing = locoRequired.filter((name) => locoMod[name] === undefined);
+  if (locoMissing.length) {
+    throw new Error(
+      `shared/dist/locomotion.js is missing expected exports: ${locoMissing.join(', ')}. ` +
+      'Did you run `npm run build` in shared/?'
+    );
+  }
+  locomotion = locoMod;
+
+  // Hand the cached shared modules to the other orchestrators so there is exactly
+  // ONE cached copy of each ESM module (they don't import() it themselves).
+  follow.setShared(shared, movement, locomotion);
   return shared;
 }
 
@@ -433,8 +466,9 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
  * @param {number} currentTick
  */
 function stepIdleAnimals(dt, roomName, currentTick) {
-  if (!shared) return;
-  const mapB = mapBounds(world.getRoomMap(roomName));
+  if (!shared || !movement) return;
+  const rm = world.getRoomMap(roomName);
+  const mapB = mapBounds(rm);
   const homeBySpecies = homeBoundsForRoom(roomName);
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
@@ -443,20 +477,24 @@ function stepIdleAnimals(dt, roomName, currentTick) {
     // wander AND pulled toward its owner in the same tick (a double-move).
     if (follow.isFollower(e, currentTick)) continue;
     // CONTAINMENT (Phase C): a pen animal (id `pen-${species}` / `pen-${species}-n`)
-    // that is NOT following wanders ONLY within its enclosure interior rect, so it
-    // can't drift out the 2-tile non-solid gate. The clamp inside shared.wanderStep
-    // keeps it off the gate row entirely. Non-pen animals (the fox lure `decoy-N`,
-    // any future free animal) have no entry → mapB → roam the whole map (unchanged).
+    // that is NOT following wanders ONLY within its enclosure interior rect. The soft
+    // inward bias inside wanderAvoid turns it away from the fence before it reaches
+    // the gate row; the collision grid is the hard backstop. Non-pen animals (the fox
+    // lure `decoy-N`, any future free animal) have no entry → mapB → roam (unchanged).
     const species = penSpeciesOf(e.id);
     const bounds = (species && homeBySpecies.get(species)) || mapB;
-    const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED, bounds);
-    // Face the drift direction so the decoy's walk animation reads correctly.
-    e.facing = shared.facingFromVec(next.x - e.x, next.y - e.y, e.facing || 's');
-    // Hold position if the drift would carry the decoy onto a solid tile, so it
-    // doesn't walk through its own enclosure fence / a pond's deep core.
-    if (world.isSolidAtRoom(roomName, next.x, next.y)) continue;
-    e.x = next.x;
-    e.y = next.y;
+    // wanderAvoid SLIDES off walls (deterministic probe-and-rotate) instead of pinning
+    // flush to them until the heading re-rolls — the same deterministic wander heading
+    // + edge bias as before, but it rounds the obstacle and commits via
+    // moveWithCollision (which also slides). Mutates e.{x,y} in place.
+    const bx = e.x;
+    const by = e.y;
+    movement.wanderAvoid(
+      e, currentTick, dt, config.WANDER_ANIMAL_SPEED,
+      rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, bounds,
+    );
+    // Face the actual drift direction (zero delta on a boxed-in tick holds facing).
+    e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
   }
 }
 
