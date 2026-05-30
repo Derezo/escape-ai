@@ -3,8 +3,10 @@
  * payload shapes — never hardcode an event string anywhere else.
  *
  * Mirrors ARCHITECTURE.md "Network contract":
- *   Client -> server: `lobby:join {room, name}`, `input {seq, ...}`, `ping {t}`
- *   Server -> client: `lobby:state {players}`, `snapshot {tick, entities, acks}`, `pong {t}`
+ *   Client -> server: `auth:login {username, token?, species?}`,
+ *     `lobby:join {room, name, species?}`, `input {seq, dx, dy, sprint?, action?}`, `ping {t}`
+ *   Server -> client: `auth:result {ok, ...}`, `lobby:state {players}`,
+ *     `snapshot {tick, entities, acks, world?}`, `pong {t}`, `map {seed, version, tile, w, h}`
  */
 
 import type { Entity, Input, Player, WorldState } from './types.js';

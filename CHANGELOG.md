@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.62: **Rejuvenation Phase 2 — documentation accuracy.** Fixed the two genuinely
+  stale doc claims (the rest of the docs audited clean): (1) `ARCHITECTURE.md` stated
+  `BabylonRenderer (client/src/render/babylon.ts) is the 3D fallback impl.` as fact, but
+  that file does not exist — reworded to "documented-but-unimplemented" with the skeleton
+  in `shared/BABYLON_FALLBACK.md` and the swap path in `client/src/main.ts`. (2) The
+  network-contract event lists had drifted: both `ARCHITECTURE.md` and the
+  `shared/src/net.ts` header comment (which claims to mirror it) listed only the old
+  `lobby:join`/`input`/`ping` ↔ `lobby:state`/`snapshot`/`pong` events — added
+  `auth:login`/`auth:result` and `map`, and corrected the payload shapes to match
+  `shared/src/net.ts`. Rebuilt `shared/dist`. No behavior change.
+
 - 0.2.61: **Rejuvenation Phase 1 — finish the *Escape AI* title relabel.** Landed the
   in-flight rename of the game title "The Caves of Steel" → "Escape AI" across docs,
   shared, server, client and the asset-pipeline script headers (relabels only — no logic

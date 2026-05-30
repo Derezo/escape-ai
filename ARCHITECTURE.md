@@ -26,10 +26,15 @@ tins2026/
 ```
 
 ## Network contract (shared/src/net.ts — authoritative)
-- Client → server events: `lobby:join {room, name}`, `input {seq, ...}`, `ping {t}`
-- Server → client events: `lobby:state {players}`, `snapshot {tick, entities, acks}`, `pong {t}`
+- Client → server events: `auth:login {username, token?, species?}`,
+  `lobby:join {room, name, species?}`, `input {seq, dx, dy, sprint?, action?}`, `ping {t}`
+- Server → client events: `auth:result {ok, reason?, token?, username?, stats?}`,
+  `lobby:state {players}`, `snapshot {tick, entities, acks, world?}`, `pong {t}`,
+  `map {seed, version, tile, w, h}`
 - Server runs a fixed tick (default 20 Hz). Client interpolates/predicts.
 - Entities are plain serializable objects `{id, x, y, ...}`; renderer-agnostic.
+- The map is sent once as a seed; the client regenerates the identical tilemap
+  deterministically (no per-tile bandwidth).
 
 ## Renderer interface (shared/src/renderer.ts)
 ```ts
@@ -40,8 +45,11 @@ export interface IRenderer {
   destroy(): void;
 }
 ```
-PhaserRenderer (client/src/render/phaser.ts) is the default impl.
-BabylonRenderer (client/src/render/babylon.ts) is the 3D fallback impl.
+PhaserRenderer (client/src/render/phaser.ts) is the default (and currently only) impl.
+BabylonRenderer (client/src/render/babylon.ts) is the documented-but-unimplemented 3D
+fallback: a pre-written skeleton lives in shared/BABYLON_FALLBACK.md, and the swap path
+(install @babylonjs/core, drop in babylon.ts, flip two lines) is wired in
+client/src/main.ts. Build it only if an hour-0 genre rule forces 3D.
 
 ## Reuse sources (copy patterns, generalize, strip game specifics)
 - Server skeleton ← `~/Projects/galaxy-miner/server/{index.js,socket/index.js,socket/connection.js,game/engine.js}`
