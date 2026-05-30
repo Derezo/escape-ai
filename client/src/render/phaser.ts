@@ -621,7 +621,17 @@ class WorldScene extends Phaser.Scene {
       }
       seen.add(e.id);
       const view = this.views.get(e.id);
-      if (view && view.kind === e.kind) {
+      // For 'animal' entities a respawn can change the species on the same id while
+      // kind stays 'animal'.  species drives the body type (Sprite vs Shape), the
+      // animation key (view.anim), the halo, and view.isSprite — all set at creation
+      // time.  Reusing a stale view would keep the old rat sprite under the new
+      // elephant banner.  We resolve the effective species with the same 'ape'
+      // fallback the createView animal branch uses, so an undefined-species entity
+      // never spuriously rebuilds every frame.  Non-animal kinds (robots) carry no
+      // meaningful species field and are excluded from this check.
+      const effectiveSpecies = typeof e.species === 'string' ? e.species : 'ape';
+      const sameSpecies = e.kind !== 'animal' || effectiveSpecies === view?.species;
+      if (view && view.kind === e.kind && sameSpecies) {
         // New target position from the snapshot; the local entity snaps (it is
         // already client-predicted), remote entities interpolate (see interpolate()).
         view.targetX = e.x;
