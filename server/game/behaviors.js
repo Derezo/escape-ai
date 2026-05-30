@@ -24,11 +24,15 @@ const { secsToTicks } = require('./room-utils');
 // Cached shared modules (handed over by stealth.loadShared via setShared).
 let shared = null;   // shared/dist/step.js — dist2, facingFromVec, freezeThreshold, …
 let movement = null; // shared/dist/movement.js — steerAround, patrolStep, speedBoost
+let pathfind = null; // shared/dist/pathfind.js — findPath (route around walls to a goal)
 
-/** Hand over the cached shared step + movement modules. Called from stealth.loadShared(). */
-function setShared(stepMod, moveMod) {
+/** Hand over the cached shared step + movement (+ pathfind) modules. Called from
+ *  stealth.loadShared(). `pathMod` is used by the investigate routing (Phase 4);
+ *  optional so callers/tests that pass only step+movement keep working. */
+function setShared(stepMod, moveMod, pathMod) {
   shared = stepMod;
   movement = moveMod;
+  if (pathMod) pathfind = pathMod;
 }
 
 /** True once setShared has run (stealth gates the robot step on this). */
@@ -124,29 +128,70 @@ function ensureInit(robot, route) {
 }
 
 /**
- * Move toward a world point with obstacle-aware steering + sliding collision,
- * vetoing a step that would land in a hazard (Third Law). Mutates robot.{x,y} and
- * sets facing from the heading actually taken. Used by the investigate branch.
+ * Move toward a world point with GLOBAL A* routing (around walls / through a gate)
+ * plus the local obstacle-aware slide, vetoing a step that would land in a hazard
+ * (Third Law). Mutates robot.{x,y} and sets facing from the heading actually taken.
+ * Used by the investigate branch so a robot rounds a fence to reach a noise behind
+ * it instead of pressing into the wall with one-tile-ahead steering.
+ *
+ * Routes via ctx.followPathToGoal (the shared cached-path helper) to the target's
+ * TILE; the returned waypoint is steered toward with the existing steerAround. If no
+ * route exists (findPath returns []) it falls back to steering toward the raw point
+ * — the original behavior, zero regression on a degenerate map / unreachable spot.
  */
-function moveTowardPoint(robot, tx, ty, dt, speed, rm, worldEntities, entersHazard) {
-  const dx = tx - robot.x;
-  const dy = ty - robot.y;
+function moveTowardPoint(robot, tx, ty, dt, speed, rm, worldEntities, entersHazard, ctx) {
+  // Default heading: straight at the raw point (the fallback when there's no route).
+  let aimX = tx;
+  let aimY = ty;
+  let onPath = false;
+  // GLOBAL route: ask for the next waypoint toward the target tile (cached + cadence-
+  // gated inside the helper). Only when the pathfinder + helpers are wired (Phase 4).
+  if (ctx && pathfind && ctx.followPathToGoal && ctx.scratch) {
+    const goalTx = Math.floor(tx / rm.tile);
+    const goalTy = Math.floor(ty / rm.tile);
+    // Radius-aware so a robot rounds an open-ended barrier without hugging its corner;
+    // followPathToGoal retries point-based if a clearance search comes up empty, so a
+    // wedged robot is never stranded.
+    const clearance = { tile: rm.tile, radius: ROBOT_RADIUS };
+    const wp = ctx.followPathToGoal(robot, rm, ctx.scratch, goalTx, goalTy, ctx.currentTick, clearance);
+    if (wp) { aimX = wp.x; aimY = wp.y; onPath = true; }
+    // wp === null → unreachable: keep the straight-at-point fallback.
+  }
+
+  const dx = aimX - robot.x;
+  const dy = aimY - robot.y;
   const len = Math.hypot(dx, dy) || 1;
-  const heading = movement.steerAround(
-    robot, dx / len, dy / len, dt, speed,
-    rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS,
-  );
-  if (heading.dirX === 0 && heading.dirY === 0) return; // boxed in — hold this tick
+  const ux = dx / len;
+  const uy = dy / len;
+
+  // NEAR A WALL while following a path: feed the heading STRAIGHT to the axis-separated
+  // integrator. The dense path already routes around the wall (the next waypoint is one
+  // tile away and reachable), so steerAround's probe fan would only re-aim it and
+  // oscillate the body against a fence corner — the same "stuck by the gate" failure
+  // the animal return-home path hit. In the OPEN, or with no path, keep steerAround for
+  // reactive avoidance. The hazard veto (Third Law) applies in both branches.
+  const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
+  const nearWall = shared.boxHitsSolid(robot.x, robot.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile);
+
+  let hx;
+  let hy;
+  if (onPath && nearWall) {
+    hx = ux;
+    hy = uy;
+  } else {
+    const heading = movement.steerAround(robot, ux, uy, dt, speed, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+    if (heading.dirX === 0 && heading.dirY === 0) return; // boxed in — hold this tick
+    hx = heading.dirX;
+    hy = heading.dirY;
+  }
+
   const trial = { x: robot.x, y: robot.y };
-  shared.moveWithCollision(
-    trial, heading.dirX, heading.dirY, dt, speed,
-    rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS,
-  );
+  shared.moveWithCollision(trial, hx, hy, dt, speed, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
   if (!entersHazard(trial.x, trial.y, worldEntities)) {
     robot.x = trial.x;
     robot.y = trial.y;
   }
-  robot.facing = shared.facingFromVec(heading.dirX, heading.dirY, robot.facing || 's');
+  robot.facing = shared.facingFromVec(hx, hy, robot.facing || 's');
 }
 
 /**
@@ -164,11 +209,18 @@ function moveTowardPoint(robot, tx, ty, dt, speed, rm, worldEntities, entersHaza
  *
  * @param {object} robot               mutated in place
  * @param {object[]} animals           gatherAnimals() candidates (for investigate)
- * @param {object} ctx                 { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard, guardBounds? }
+ * @param {object} ctx                 { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard, guardBounds?, scratch?, followPathToGoal?, clearPath? }
  */
 function stepRobotIdle(robot, animals, ctx) {
   const { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard, guardBounds } = ctx;
   ensureInit(robot, route);
+
+  // Reset any cached A* path on an FSM transition so a stale investigate route can't
+  // bleed into a resume / a later investigate of a different spot (the helper also
+  // recomputes on a goal-tile change, but an explicit clear on the edge is robust).
+  const resetPathOnTransition = (next) => {
+    if (robot.behavior !== next && ctx.clearPath) ctx.clearPath(robot);
+  };
 
   const target = pickInvestigateTarget(robot, animals);
 
@@ -176,19 +228,20 @@ function stepRobotIdle(robot, animals, ctx) {
     // Break patrol/guard to investigate. Capture where to resume on the edge (a
     // guard has no patrolIndex to keep, but the assignment is harmless).
     if (robot.behavior !== 'investigate') robot.lastPatrolIndex = robot.patrolIndex;
+    resetPathOnTransition('investigate');
     robot.behavior = 'investigate';
     robot.investigateX = target.x;
     robot.investigateY = target.y;
     robot.investigateUntilTick = currentTick + secsToTicks(config.INVESTIGATE.LINGER_SECS);
     const speed = speedFor(robot, lockdown, currentTick);
-    moveTowardPoint(robot, target.x, target.y, dt, speed, rm, worldEntities, entersHazard);
+    moveTowardPoint(robot, target.x, target.y, dt, speed, rm, worldEntities, entersHazard, ctx);
     return;
   }
 
   if (robot.behavior === 'investigate' && currentTick < (robot.investigateUntilTick || 0)) {
     // No fresh target, but still lingering: walk to / wait at the last-known spot.
     const speed = speedFor(robot, lockdown, currentTick);
-    moveTowardPoint(robot, robot.investigateX, robot.investigateY, dt, speed, rm, worldEntities, entersHazard);
+    moveTowardPoint(robot, robot.investigateX, robot.investigateY, dt, speed, rm, worldEntities, entersHazard, ctx);
     return;
   }
 
@@ -197,6 +250,7 @@ function stepRobotIdle(robot, animals, ctx) {
   // keeps the guard off its walls, same as a contained pen animal. Falls back to
   // ambient wander if guardBounds is missing (a degenerate map) — never patrols.
   if (robot.guard) {
+    resetPathOnTransition('guard');
     robot.behavior = 'guard';
     const bx = robot.x;
     const by = robot.y;
@@ -212,8 +266,12 @@ function stepRobotIdle(robot, animals, ctx) {
 
   // RESUME PATROL. On the transition out of investigate, rejoin the loop at the
   // NEAREST waypoint (a chase may have dragged the robot far from lastPatrolIndex).
+  // The patrol LOOP itself stays on the carved spine (patrolStep over patrolRoute) —
+  // the spine is already path-connected, so A* only ever engages for the off-route
+  // investigate goal, not the loop. Clear any stale investigate path on the edge.
   if (robot.behavior !== 'patrol') {
     robot.patrolIndex = route.length > 0 ? nearestWaypointIndex(robot, route) : robot.lastPatrolIndex;
+    resetPathOnTransition('patrol');
   }
   robot.behavior = 'patrol';
 

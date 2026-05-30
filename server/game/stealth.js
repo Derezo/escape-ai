@@ -122,7 +122,10 @@ async function loadShared() {
   // O(1) inBounds containment test the awareness filter uses. Loaded + validated the
   // same fail-loud way so a stale shared/dist trips at boot, not mid-tick.
   const pathMod = await import('../../shared/dist/pathfind.js');
-  const pathRequired = ['findPath', 'makeScratch', 'simplifyPath', 'toWorldWaypoints', 'nextWaypoint', 'inBounds', 'gateInsideTile'];
+  // The exports the server actually calls. (simplifyPath / tileClearsRadius are
+  // shared pathfinding utilities the server doesn't use — the dense path is followed
+  // verbatim — so they're not validated here.)
+  const pathRequired = ['findPath', 'makeScratch', 'toWorldWaypoints', 'nextWaypoint', 'inBounds', 'gateInsideTile'];
   const pathMissing = pathRequired.filter((name) => pathMod[name] === undefined);
   if (pathMissing.length) {
     throw new Error(
@@ -375,6 +378,10 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   // cached per room. A guard robot wanders ONLY inside its building (behaviors.js
   // reads idleCtx.guardBounds); a plain patrol robot has no entry → undefined.
   const guardBoundsById = guardBoundsForRoom(roomName);
+  // The room's reusable A* scratch + the path-follow helpers, handed to behaviors so
+  // a robot routes AROUND walls / through a gate to an off-route goal (investigate a
+  // noise behind a fence) instead of pressing into it with one-tile-ahead steering.
+  const scratch = pathScratchForRoom(roomName, rm);
   const idleCtx = {
     rm,
     route,
@@ -384,6 +391,9 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     dt,
     entersHazard,
     guardBounds: undefined, // set per-robot below before stepRobotIdle
+    scratch,
+    followPathToGoal,
+    clearPath,
   };
 
   // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
@@ -582,33 +592,44 @@ function stepIdleAnimals(dt, roomName, currentTick) {
           : null;
 
         if (waypoint) {
-          // Head toward the next path waypoint. In the OPEN field (far from the gate)
-          // blend a light ambient wander so it still reads as a leisurely return; in
-          // the chokepoint BAND near the gate, follow the path PURELY (no wander) so
-          // the 2-tile gap threads deterministically (no fence-post clip).
+          // Head toward the next (dense, 1-tile) path waypoint. In genuinely OPEN
+          // terrain blend a light ambient wander so the long walk still reads as a
+          // leisurely saunter; whenever a WALL is near (within the gate band) follow
+          // the path PURELY so the body never gets perturbed into a fence corner and
+          // oscillates — this is the fix for the "stuck against the wall by the gate"
+          // case. The wander is cosmetic; the slow cadence (speed + gait) is what
+          // "looks good", and that is preserved either way.
           let dx = waypoint.x - e.x;
           let dy = waypoint.y - e.y;
           let len = Math.hypot(dx, dy) || 1;
           dx /= len; dy /= len;
           const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
-          const distToGoalTiles = goalTile
-            ? Math.hypot(goalTile.tx * rm.tile + rm.tile / 2 - e.x, goalTile.ty * rm.tile + rm.tile / 2 - e.y)
-            : Infinity;
-          if (distToGoalTiles > bandPx) {
-            // Light ambient blend (the "looks good" saunter), weighted toward the path.
+          const nearWall = shared.boxHitsSolid(e.x, e.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile);
+          if (nearWall) {
+            // NEAR A WALL (the gate chokepoint): the dense path already routes around
+            // the wall — the next waypoint is one tile away and reachable — so feed the
+            // heading STRAIGHT to the axis-separated integrator. We deliberately do NOT
+            // run steerAround here: its probe fan would re-aim the clean path heading
+            // and, combined with a diagonal toward a waypoint past a corner, oscillate
+            // the body against the fence (the "stuck by the gate" bug). The slide in
+            // moveWithCollision threads the gap one axis at a time.
+            locomotion.locomotionStep(e, dx, dy, currentTick, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+          } else {
+            // OPEN terrain: blend a light ambient wander (the "looks good" saunter) and
+            // route through steerAround for reactive avoidance of any stray obstacle.
             const wv = shared.wanderVec(e.id, currentTick);
             const w = RETURN_WANDER_BLEND;
             dx = (1 - w) * dx + w * wv.dirX;
             dy = (1 - w) * dy + w * wv.dirY;
             len = Math.hypot(dx, dy) || 1;
             dx /= len; dy /= len;
+            const heading = movement.steerAround(e, dx, dy, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+            const hx = (heading.dirX === 0 && heading.dirY === 0) ? dx : heading.dirX;
+            const hy = (heading.dirX === 0 && heading.dirY === 0) ? dy : heading.dirY;
+            locomotion.locomotionStep(e, hx, hy, currentTick, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
           }
-          const heading = movement.steerAround(e, dx, dy, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
-          const hx = (heading.dirX === 0 && heading.dirY === 0) ? dx : heading.dirX;
-          const hy = (heading.dirX === 0 && heading.dirY === 0) ? dy : heading.dirY;
-          // Commit at the UNCHANGED ambient speed + species gait (cadence preserved —
-          // a returning tortoise still crawls home at ½ speed, a kangaroo hops).
-          locomotion.locomotionStep(e, hx, hy, currentTick, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+          // Commit faces the actual drift; UNCHANGED ambient speed + gait (cadence
+          // preserved — a returning tortoise still crawls home at ½ speed).
           e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
           continue;
         }
@@ -742,7 +763,7 @@ function pathScratchForRoom(roomName, rm) {
  *
  * @returns {{x:number,y:number}|null} the world-unit waypoint, or null if unreachable
  */
-function followPathToGoal(entity, rm, scratch, goalTx, goalTy, currentTick) {
+function followPathToGoal(entity, rm, scratch, goalTx, goalTy, currentTick, clearance) {
   const stale =
     !Array.isArray(entity.path) ||
     entity.path.length === 0 ||
@@ -753,7 +774,17 @@ function followPathToGoal(entity, rm, scratch, goalTx, goalTy, currentTick) {
   if (stale) {
     const startTx = Math.floor(entity.x / rm.tile);
     const startTy = Math.floor(entity.y / rm.tile);
-    const tilePath = pathfind.findPath(rm.collision, rm.w, rm.h, startTx, startTy, goalTx, goalTy, scratch);
+    // `clearance` (optional, {tile,radius}) is radius-aware routing that keeps a
+    // body off wall corners — useful for a robot rounding an OPEN-ended barrier. But
+    // a body that slid into a sub-radius nook mid-journey can have NO clearance-legal
+    // neighbour and would repath to [] and jam, so when a clearance search comes up
+    // empty we RETRY point-based (which the local steering can still follow out). The
+    // gate-return path (animals) omits clearance entirely — the 2-tile gates thread
+    // fine point-based, and point-based never has the nook problem. See callers.
+    let tilePath = pathfind.findPath(rm.collision, rm.w, rm.h, startTx, startTy, goalTx, goalTy, scratch, undefined, clearance);
+    if (tilePath.length === 0 && clearance) {
+      tilePath = pathfind.findPath(rm.collision, rm.w, rm.h, startTx, startTy, goalTx, goalTy, scratch);
+    }
     if (tilePath.length === 0) {
       entity.path = null; // unreachable / over-budget → caller falls back
       entity.pathGoalTx = goalTx;
@@ -762,8 +793,12 @@ function followPathToGoal(entity, rm, scratch, goalTx, goalTy, currentTick) {
       entity.pathRepathTick = currentTick + config.PATHFIND.REPATH_TICKS + (shared.hash32(entity.id) % config.PATHFIND.REPATH_TICKS);
       return null;
     }
-    const simplified = pathfind.simplifyPath(tilePath, [{ tx: goalTx, ty: goalTy }]);
-    entity.path = pathfind.toWorldWaypoints(simplified, rm.tile);
+    // Follow the DENSE tile path (no simplify): consecutive waypoints are one tile
+    // apart and 4-neighbour-adjacent, so a straight step toward the next one is always
+    // wall-clear. Simplifying to turning points let the body steer straight at a
+    // distant waypoint THROUGH a wall corner and oscillate against it (the gate is on
+    // the far face), which stranded animals approaching a pen from the wrong side.
+    entity.path = pathfind.toWorldWaypoints(tilePath, rm.tile);
     entity.pathIndex = 0;
     entity.pathGoalTx = goalTx;
     entity.pathGoalTy = goalTy;

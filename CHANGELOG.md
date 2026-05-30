@@ -4,6 +4,34 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.57: **NPC pathfinding — Phase 4 (robot investigate routing around walls + path-follow hardening).**
+  Robots now route AROUND walls and THROUGH gates to reach an off-route investigate goal (a noise
+  behind a fence) instead of pressing one-tile-ahead into the barrier. Patrol-loop, guard-wander, and
+  pursue are unchanged (pursue stays reactive — a moving quarry can't use a cached path; deferred to a
+  measured follow-up).
+  - **Server (`server/game/behaviors.js`):** `setShared` takes the pathfind module; `moveTowardPoint`
+    (the investigate + linger-to-last-known mover) routes via `ctx.followPathToGoal` to the target tile
+    (radius-aware, with a point-based retry so a wedged robot is never stranded), then commits. `stepRobotIdle`
+    resets the cached path on every FSM transition (investigate↔resume↔guard) so a stale route can't bleed
+    across modes. Falls back to raw `steerAround` toward the point when no route exists.
+  - **Server (`server/game/stealth.js`):** `stepRobots` hands the per-room A* scratch + the
+    `followPathToGoal`/`clearPath` helpers into the robot idle ctx.
+  - **Path-follow hardening (fixes wall-corner oscillation for BOTH robots and animals):** the dense tile
+    path is followed verbatim (no collinear simplification — a simplified waypoint past a wall corner made
+    the body cut the corner and oscillate); `ARRIVE_TILES` lowered to 0.6 so each step targets the
+    immediate next tile center (axis-aligned); and within the gate band of a wall the heading is fed
+    STRAIGHT to the axis-separated integrator (NOT through `steerAround`, whose probe fan re-aimed the
+    clean heading into the fence). `findPath` gained an optional radius-aware `Clearance` (memoized,
+    deterministic) so a robot rounding an OPEN-ended barrier never hugs a corner; animals omit it (the
+    2-tile gates thread point-based and clearance can strand a body wedged in a sub-radius nook mid-walk).
+  - **Dead-code sweep:** `simplifyPath` + `tileClearsRadius` (obsoleted by the dense-path / inline-clearance
+    decisions) removed from `pathfind.ts` and their tests; the server's pathfind export-validation list
+    trimmed to what it actually calls.
+  - Verified: robots route through the gate into a closed enclosure to investigate (38 ticks); all 14
+    species re-enter their pens across **15 map seeds (210/210)**; a 3000-tick full real-map loop (idle +
+    followers + robots) ran clean with all 9 robots traveling; 42 simultaneous returns over a 600-tick loop
+    ran **0.184ms avg / 15.52ms worst** (50ms budget). shared **69/69**, client `tsc && vite build` green.
+
 - 0.2.56: **NPC pathfinding — Phase 3 (return home THROUGH the gate; slow cadence preserved).**
   Fixes the bug where an animal whose follow-leash lapsed drifted toward its enclosure center, jammed
   on the OUTSIDE of the fence, and never found the 2-tile gate — the old code papered over it by

@@ -85,9 +85,11 @@ module.exports = {
     // path waypoint with HIGH FIDELITY (no ambient-wander blend) so the 2-tile gate
     // is threaded deterministically — the open-field drift only applies further out.
     GATE_BAND_TILES: parseFloat(process.env.PATHFIND_GATE_BAND_TILES) || 3,
-    // Arrive radius (tiles) for advancing along the cached waypoint list. Mirrors
-    // the patrol ARRIVE_TILES feel; small so the line hugs the carved route.
-    ARRIVE_TILES: parseFloat(process.env.PATHFIND_ARRIVE_TILES) || 1.25
+    // Arrive radius (tiles) for advancing along the DENSE (1-tile) waypoint list.
+    // Kept BELOW 1 so the body targets the immediate next tile center (an
+    // axis-aligned step the sliding integrator threads cleanly) instead of skipping
+    // ahead to a diagonal waypoint that would clip a wall corner near the gate.
+    ARRIVE_TILES: parseFloat(process.env.PATHFIND_ARRIVE_TILES) || 0.6
   },
 
   // Species abilities (Phase 4). Each species has one edge-triggered power fired

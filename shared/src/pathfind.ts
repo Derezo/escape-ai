@@ -71,6 +71,17 @@ export interface Rect {
   maxY: number;
 }
 
+/**
+ * Radius-aware pathing: when passed to {@link findPath}, a cell is traversable only
+ * if a box of half-extent `radius` centered on it clears all solids — so the route
+ * never hugs a wall corner the body's AABB can't round. `tile` is the world-unit
+ * tile size (for the cell-center math). Omit for point-based pathing (the default).
+ */
+export interface Clearance {
+  tile: number;
+  radius: number;
+}
+
 // ---------------------------------------------------------------------------
 // Reusable scratch — so a per-tick search allocates NOTHING.
 //
@@ -100,6 +111,10 @@ export interface PathScratch {
   heapF: Int32Array;
   /** Parallel heap keys: g-score for heap[k] (tie-break after f). */
   heapG: Int32Array;
+  /** Generation stamp for the radius-clearance memo (valid where === gen). */
+  clearGen: Int32Array;
+  /** Cached clearance result per cell (1 = a radius box clears here); valid where clearGen[i] === gen. */
+  clearOk: Uint8Array;
   /** Current generation; bumped per search. Internal. */
   gen: number;
 }
@@ -117,6 +132,8 @@ export function makeScratch(w: number, h: number): PathScratch {
     heap: new Int32Array(n),
     heapF: new Int32Array(n),
     heapG: new Int32Array(n),
+    clearGen: new Int32Array(n),
+    clearOk: new Uint8Array(n),
     gen: 0,
   };
 }
@@ -202,6 +219,7 @@ function nextGen(scratch: PathScratch): number {
     // Extremely rare (would need ~2^31 searches on one room). Reset once.
     scratch.seenGen.fill(0);
     scratch.closedGen.fill(0);
+    scratch.clearGen.fill(0);
     scratch.gen = 1;
   }
   return scratch.gen;
@@ -228,6 +246,7 @@ export function findPath(
   goalTy: number,
   scratch: PathScratch = makeScratch(w, h),
   maxExpand: number = DEFAULT_MAX_EXPAND,
+  clearance?: Clearance,
 ): Tile[] {
   // Sentinel (or any non-positive value): bound the search to one full grid sweep,
   // so a genuinely-reachable cross-map goal is never abandoned but the search still
@@ -235,6 +254,32 @@ export function findPath(
   const cap = maxExpand > 0 ? maxExpand : w * h;
   if (solid(collision, w, h, startTx, startTy)) return [];
   if (solid(collision, w, h, goalTx, goalTy)) return [];
+
+  // CLEARANCE (radius-aware): when a moving body of half-extent `radius` is given,
+  // a cell is traversable only if a box that size centered on it clears all solids —
+  // so the route never hugs a wall corner the AABB can't actually round (the
+  // radius-vs-cell stall). The 2-tile doors clear at their tile centers, so this
+  // never seals a gate. `passable(cell)` folds collision + clearance into one test,
+  // memoized per cell in the scratch so the box check runs at most once per cell.
+  const tile = clearance ? clearance.tile : 0;
+  const radius = clearance ? clearance.radius : 0;
+  const passable = (cell: number): boolean => {
+    if (collision[cell] === 1) return false;
+    if (!clearance) return true;
+    // Memoize: clearGen stamps "computed this search", clearOk holds the result.
+    if (scratch.clearGen[cell] === scratch.gen) return scratch.clearOk[cell] === 1;
+    const cx = cell % w;
+    const cy = (cell - cx) / w;
+    const ok = !boxHitsSolid(cx * tile + tile / 2, cy * tile + tile / 2, radius, collision, w, h, tile);
+    scratch.clearGen[cell] = scratch.gen;
+    scratch.clearOk[cell] = ok ? 1 : 0;
+    return ok;
+  };
+  // The start/goal cells must themselves be passable for the body (defensive: a goal
+  // wedged in a sub-radius nook would otherwise return an unreachable []). We DON'T
+  // hard-fail here — the caller's goal (a gate-inside tile) is always 2-tile-clear,
+  // and the start is wherever the body legitimately stands — but the neighbour gate
+  // below uses `passable`, so the planned route stays radius-feasible.
 
   const start = startTy * w + startTx;
   const goal = goalTy * w + goalTx;
@@ -282,7 +327,7 @@ export function findPath(
     for (let i = 0; i < 4; i++) {
       const nb = neighbours[i];
       if (nb < 0) continue;
-      if (collision[nb] === 1) continue;
+      if (!passable(nb)) continue; // solid, or (with clearance) a sub-radius nook
       if (closedGen[nb] === gen) continue;
       const known = seenGen[nb] === gen;
       if (!known || ng < gScore[nb]) {
@@ -312,36 +357,15 @@ function reconstruct(scratch: PathScratch, gen: number, goal: number, w: number)
 }
 
 // ---------------------------------------------------------------------------
-// Path post-processing + following
+// Path following
+//
+// The caller follows the DENSE tile path verbatim (no collinear simplification):
+// consecutive waypoints are one tile apart and 4-neighbour-adjacent, so each step
+// heads at the immediate next tile center — an axis-aligned move the sliding
+// integrator threads cleanly through a 2-tile gate. (Collapsing to turning points
+// was tried and removed: it let a body steer straight at a distant waypoint THROUGH
+// a wall corner and oscillate against the fence.)
 // ---------------------------------------------------------------------------
-
-/** Flat-index key for a tile (for the keepTiles allow-list). */
-function tkey(t: Tile): number {
-  return t.ty * 100000 + t.tx;
-}
-
-/**
- * Collapse collinear runs of a tile path down to its turning points, so the cached
- * waypoint list is short (junction-to-junction). A tile is KEPT when it changes the
- * direction of travel, is an endpoint, OR appears in `keepTiles`. `keepTiles` makes
- * the gate threshold cells (outside-tile then inside-tile) MANDATORY axis-aligned
- * waypoints, so the AABB threads the two-tile gap straight-on the way the player
- * does — never cutting the corner of a fence post. Pure; never mutates the input.
- */
-export function simplifyPath(path: Tile[], keepTiles: Tile[] = []): Tile[] {
-  if (path.length <= 2) return path.slice();
-  const keep = new Set(keepTiles.map(tkey));
-  const out: Tile[] = [path[0]];
-  for (let i = 1; i < path.length - 1; i++) {
-    const prev = path[i - 1];
-    const cur = path[i];
-    const next = path[i + 1];
-    const turning = (cur.tx - prev.tx) !== (next.tx - cur.tx) || (cur.ty - prev.ty) !== (next.ty - cur.ty);
-    if (turning || keep.has(tkey(cur))) out.push(cur);
-  }
-  out.push(path[path.length - 1]);
-  return out;
-}
 
 /** Tile-center (world units) of tile `t`. tileCenter(t)=t*tile+tile/2 (mirrors world.ts). */
 export function tileToWorld(t: Tile, tile: number): Point {
@@ -411,24 +435,4 @@ export function inBounds(x: number, y: number, b: Rect): boolean {
  */
 export function gateInsideTile(doorTx: number, doorTy: number): Tile {
   return { tx: doorTx, ty: doorTy - 1 };
-}
-
-/**
- * OPTIONAL radius-aware passability: whether a box of half-extent `radius`
- * centered on tile (tx,ty)'s center clears all solids. Not used by the default
- * point-based findPath (which mirrors floodReachable so reachability==pathability),
- * but exported for callers that want to prune sub-radius slivers from a goal/seed.
- * The canonical 2-tile doors always clear at the tile center, so this never seals a
- * gate. Pure; reuses the SAME boxHitsSolid the integrator commits with.
- */
-export function tileClearsRadius(
-  collision: Uint8Array,
-  w: number,
-  h: number,
-  tile: number,
-  radius: number,
-  tx: number,
-  ty: number,
-): boolean {
-  return !boxHitsSolid(tx * tile + tile / 2, ty * tile + tile / 2, radius, collision, w, h, tile);
 }

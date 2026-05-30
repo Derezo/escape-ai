@@ -15,7 +15,6 @@ import assert from 'node:assert/strict';
 import {
   findPath,
   makeScratch,
-  simplifyPath,
   toWorldWaypoints,
   nextWaypoint,
   inBounds,
@@ -182,28 +181,6 @@ test('findPath: building doors are reachable too (aux + species buildings)', () 
   }
 });
 
-// --- simplify keeps the gate waypoints mandatory -----------------------------
-
-test('simplifyPath: collapses straight runs but never drops a kept gate tile', () => {
-  // A straight horizontal run with one kept middle tile.
-  const path = [];
-  for (let tx = 0; tx < 8; tx++) path.push({ tx, ty: 5 });
-  const keep = [{ tx: 4, ty: 5 }];
-  const simp = simplifyPath(path, keep);
-  // Endpoints + the kept tile survive; the other straight-run interior tiles drop.
-  assert.deepEqual(simp, [{ tx: 0, ty: 5 }, { tx: 4, ty: 5 }, { tx: 7, ty: 5 }]);
-});
-
-test('simplifyPath: keeps turning points', () => {
-  // An L: east then south. The corner is a turning point.
-  const path = [
-    { tx: 0, ty: 0 }, { tx: 1, ty: 0 }, { tx: 2, ty: 0 },
-    { tx: 2, ty: 1 }, { tx: 2, ty: 2 },
-  ];
-  const simp = simplifyPath(path);
-  assert.deepEqual(simp, [{ tx: 0, ty: 0 }, { tx: 2, ty: 0 }, { tx: 2, ty: 2 }]);
-});
-
 // --- waypoint following ------------------------------------------------------
 
 test('nextWaypoint: advances through reached waypoints and reports done', () => {
@@ -257,6 +234,46 @@ test('findPath: a tiny maxExpand budget degrades to [] (caller-fallback contract
   assert.deepEqual(findPath(map.collision, map.w, map.h, startTx, startTy, goal.tx, goal.ty, undefined, 1), []);
   // The sentinel default is non-positive (means "one full grid sweep"), documented.
   assert.ok(DEFAULT_MAX_EXPAND <= 0, 'DEFAULT_MAX_EXPAND is the full-grid sentinel');
+});
+
+// --- radius-aware clearance --------------------------------------------------
+
+test('findPath: clearance routes a body away from wall corners but never seals a 2-tile gate', () => {
+  const w = 40, h = 40, rx = 10, ry = 10, rw = 11, rh = 9;
+  const { collision, gateTx, gateTy } = enclosureGrid(w, h, rx, ry, rw, rh);
+  const goal = gateInsideTile(gateTx, gateTy);
+  const start = { tx: gateTx, ty: gateTy + 6 }; // outside, south of the gate
+
+  // At the true entity clearance (RADIUS), the 2-tile gate must STILL be threadable.
+  const clearance = { tile: TILE, radius: RADIUS };
+  const path = findPath(collision, w, h, start.tx, start.ty, goal.tx, goal.ty, undefined, undefined, clearance);
+  assert.ok(path.length > 0, 'clearance path still reaches the enclosure interior through the gate');
+  assertWalkable(path, collision, w, h);
+  const throughGate = path.some((t) => t.ty === gateTy && (t.tx === gateTx || t.tx === gateTx - 1));
+  assert.ok(throughGate, 'clearance path still passes through the 2-tile gate');
+});
+
+test('findPath: clearance is deterministic and memoized (same path twice, reused scratch)', () => {
+  const { collision, gateTx, gateTy } = enclosureGrid(40, 40, 10, 10, 11, 9);
+  const goal = gateInsideTile(gateTx, gateTy);
+  const scratch = makeScratch(40, 40);
+  const clearance = { tile: TILE, radius: RADIUS };
+  const a = findPath(collision, 40, 40, gateTx, gateTy + 6, goal.tx, goal.ty, scratch, undefined, clearance);
+  const b = findPath(collision, 40, 40, gateTx, gateTy + 6, goal.tx, goal.ty, scratch, undefined, clearance);
+  const c = findPath(collision, 40, 40, gateTx, gateTy + 6, goal.tx, goal.ty, undefined, undefined, clearance);
+  assert.deepEqual(a, b, 'reused-scratch clearance path is stable');
+  assert.deepEqual(a, c, 'fresh-scratch clearance path matches');
+});
+
+test('findPath: an over-radius clearance that would seal a gate yields [] (degrade contract)', () => {
+  const { collision, gateTx, gateTy } = enclosureGrid(40, 40, 10, 10, 11, 9);
+  const goal = gateInsideTile(gateTx, gateTy);
+  // A radius wider than half a tile overlaps the gate's flanking wall at the tile
+  // center → the gate cell fails clearance → the interior is unreachable for that
+  // body. Returning [] (not a corner-clipping path) is the correct degrade.
+  const tooWide = { tile: TILE, radius: TILE * 0.6 };
+  const path = findPath(collision, 40, 40, gateTx, gateTy + 6, goal.tx, goal.ty, undefined, undefined, tooWide);
+  assert.deepEqual(path, [], 'a body too wide for the gate gets [] (caller falls back), not a bad path');
 });
 
 // --- geometry helpers --------------------------------------------------------
