@@ -117,9 +117,10 @@ const DEPTH_QUEST_ARROW = DEPTH_FX - 1;
  * goal and respawns after a beat — a soft, repeating "go this way" cue.
  */
 const QUEST_ARROW = {
-  SPEED: 60, // px/sec travel along the path
+  SPEED: 600, // px/sec travel along the path (a brisk, easy-to-follow dart)
   MAX_ALPHA: 0.25, // peak opacity (translucent, per spec)
-  RAMP_PX: 40, // distance over which alpha eases 0 → MAX_ALPHA as it leaves the player
+  RAMP_PX: 120, // distance over which alpha eases 0 → MAX_ALPHA as it leaves the player
+  // (scaled with SPEED so the fade-in stays visible at the faster travel rate)
   ARRIVE_PX: 100, // begin fading once this close (straight-line) to the goal
   FADE_MS: 320, // fade-out duration once arriving
   RESPAWN_MS: 800, // beat between one arrow fading and the next spawning

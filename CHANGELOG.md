@@ -4,6 +4,12 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.89: **Quest arrow: ~10× faster travel.** The quest-direction arrow crept along its
+  path at 60px/s, which felt sluggish. Bumped `QUEST_ARROW.SPEED` to 600px/s (a brisk dart)
+  and scaled `RAMP_PX` 40→120 so the opacity fade-in still reads at the higher speed instead
+  of popping to full alpha instantly. Client-cosmetic only; one-tunable change in
+  `client/src/render/phaser.ts`.
+
 - 0.2.88: **Pine tree: close the trunk↔canopy gap.** The PINE tile (a canopy cell over a
   trunk cell) had a visible band of grass between the lowest bough and the trunk top: the
   canopy's bottom tier stopped at y≈27 (5px short of its cell bottom) and the trunk started
