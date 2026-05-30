@@ -18,7 +18,6 @@ import type { Entity, WorldState, Dir8 } from '@shared/types';
 import type { InputMsg, PlayerAction } from '@shared/net';
 import { moveWithCollision, moveSpeed, facingFromVec } from '@shared/step';
 import { generateWorld, WORLD_GEN_VERSION, type WorldMap } from '@shared/world';
-import { questForSpecies } from '@shared/quests';
 import { speciesByKey } from '@shared/species';
 
 import { PhaserRenderer } from './render/phaser';
@@ -214,9 +213,13 @@ async function main(): Promise<void> {
   const robotStep = new Map<string, { x: number; y: number; acc: number }>();
   // Quest-complete edge: fire quest_complete once when the quest first reads done.
   let prevQuestComplete = false;
-  // Quest-progress edge: fire quest_progress once each time an 'activate' quest's
-  // done-count climbs (but not on the final step — that's quest_complete's job).
+  // Quest-progress edge: fire quest_progress once each time the current step's
+  // done-count climbs (but not on the final completion — that's quest_complete's job).
+  // Re-derived across step advances: step transitions also count as progress.
   let prevQuestDone = 0;
+  // Step-index edge: fire quest_progress once each time the server advances to a
+  // new step within the same quest (stepIndex rises, done resets to 0).
+  let prevQuestStepIndex = 0;
   // Quest-blocked edge: fire quest_blocked once per gate brush, on the rising edge
   // of the server's questBlocked stamp (not every frame the hint is showing).
   let prevQuestBlocked = false;
@@ -585,31 +588,46 @@ async function main(): Promise<void> {
 
     // --- Side-quest row: surface the active quest + progress (display-only). ---
     // The server owns quest progress (gates the gate on completion); we just mirror
-    // it. Show the title with a ✓ when complete; an 'activate' quest also shows
-    // its N/need tally. If we recently brushed the gate WITHOUT a complete quest
-    // (questBlocked stamped within ~1.5s = ~30 ticks at 20Hz), flash a hint that
-    // the quest must be finished first, and tint the row.
+    // it. Multi-step quests show "step N/total · title · done/need" so the player
+    // always knows which step they're on. If we recently brushed the gate WITHOUT a
+    // complete quest (questBlocked stamped within ~1.5s = ~30 ticks at 20Hz), flash
+    // a hint that the quest must be finished first, and tint the row.
     const quest = me?.quest;
     if (quest) {
+      // New wire fields (added by the server when multi-step quests land; undefined
+      // on an old single-step snapshot until the server is updated). Cast through
+      // unknown first — QuestProgress lacks an index signature, so a direct cast to
+      // Record<string,unknown> is rejected by strict tsc; the double-cast is safe here.
+      const questAny = quest as unknown as Record<string, unknown>;
+      const stepIndex = typeof questAny['stepIndex'] === 'number' ? questAny['stepIndex'] as number : 0;
+      const stepsArr = Array.isArray(questAny['steps']) ? questAny['steps'] as Array<{kind: string; title: string; need: number}> : undefined;
+      const stepCount = stepsArr ? stepsArr.length : 1;
       const blocked =
         typeof me?.questBlocked === 'number' && latestTick - me.questBlocked <= 30;
       if (quest.complete) {
-        hudQuest.textContent = `${quest.title} ✓`;
+        // Whole quest done: show the last step title with a checkmark.
+        const stepLabel = stepCount > 1 ? `step ${stepCount}/${stepCount} · ` : '';
+        hudQuest.textContent = `${stepLabel}${quest.title} ✓`;
       } else if (blocked) {
         hudQuest.textContent = 'finish your quest to escape!';
-      } else if (quest.type === 'activate') {
-        hudQuest.textContent = `${quest.title} ${quest.done}/${quest.need}`;
       } else {
-        hudQuest.textContent = quest.title;
+        // Active step: "step N/total · title" and append "done/need" when need > 1.
+        const stepPrefix = stepCount > 1 ? `step ${stepIndex + 1}/${stepCount} · ` : '';
+        const progress = quest.need > 1 ? ` ${quest.done}/${quest.need}` : '';
+        hudQuest.textContent = `${stepPrefix}${quest.title}${progress}`;
       }
       // Tint: green when done, amber when blocked at the gate, default otherwise.
       hudQuestRow.classList.toggle('quest-done', quest.complete);
       hudQuestRow.classList.toggle('quest-blocked', !quest.complete && blocked);
-      // Quest-progress edge: tick once each time the done-count climbs while the
-      // quest is still short of complete (the final step is quest_complete's job).
+      // Quest-progress edge: tick once each time the current step's done-count
+      // climbs while the quest is still short of complete (the final completion
+      // is quest_complete's job). Also chime on a rising stepIndex — each step
+      // advance counts as progress even though done resets to 0.
       const doneNow = typeof quest.done === 'number' ? quest.done : 0;
       if (!quest.complete && doneNow > prevQuestDone) playSfx('quest_progress');
+      if (!quest.complete && stepIndex > prevQuestStepIndex) playSfx('quest_progress');
       prevQuestDone = doneNow;
+      prevQuestStepIndex = stepIndex;
       // Quest-blocked edge: buzz once on the rising edge of a gate brush without a
       // finished quest — not every frame the "finish your quest" hint is showing.
       if (blocked && !quest.complete && !prevQuestBlocked) playSfx('quest_blocked');
@@ -622,6 +640,7 @@ async function main(): Promise<void> {
       hudQuestRow.classList.remove('quest-done', 'quest-blocked');
       prevQuestComplete = false;
       prevQuestDone = 0;
+      prevQuestStepIndex = 0;
       prevQuestBlocked = false;
     }
 
@@ -769,19 +788,23 @@ function sfxForFx(kind: string): SfxName | undefined {
 
 /**
  * The local player's quest-direction guide for the renderer (or null when there's
- * nothing to point at). The goal depends on the quest mechanic — the server owns
- * completion, this only chooses where the cosmetic arrow points:
- *   - 'fetch'    (ape) → the perimeter gate (carry the prop out there).
- *   - 'activate' (terminal-tappers) → the NEAREST keeper terminal. The client can't
- *               see which terminals were already tapped (server-side Set), so it
- *               points at the closest console and simply turns off once the quest
- *               completes — a good-enough guidance approximation.
- *   - 'reach'    (the rest) → the player's OWN home questObject.
+ * nothing to point at). Quests are now MULTI-STEP, so the goal tracks the CURRENT
+ * step's mechanic (server sets quest.type = steps[stepIndex].kind); the server owns
+ * completion, this only chooses where the cosmetic arrow points for that step:
+ *   - 'fetch'/'escort' → the perimeter gate (courier the prop / lead a herd out).
+ *   - 'activate'/'order' → the NEAREST keeper terminal. The client can't see which
+ *               terminals were already tapped (server-side Set), so it points at the
+ *               closest console and turns off once that step completes.
+ *   - 'collect'  → the NEAREST food source.
+ *   - 'recruit'  → the NEAREST feedable other-species animal not already yours.
+ *   - 'ability'  → no waypoint (self-contained; the arrow points at the player itself
+ *               so no visible route is drawn) — the HUD still shows the step.
+ *   - 'reach'    → the player's OWN home questObject.
  * Returns null when there's no quest, it's already complete, the local entity isn't
  * known yet, or no goal entity can be found.
  *
- * Also reports `questUsesMarker` (true only for 'reach') so the renderer can hide a
- * species' own do-nothing star (the misleading "quest point" the ape saw in its pen).
+ * Also reports `questUsesMarker` (true only on a 'reach' step) so the renderer can
+ * hide a species' own do-nothing star while a non-reach step is active.
  */
 function questGuideFor(
   myId: string | undefined,
@@ -793,23 +816,32 @@ function questGuideFor(
   if (!me || typeof me.x !== 'number' || typeof me.y !== 'number') return null;
   const species = typeof me.species === 'string' ? me.species : '';
   if (!species) return null;
-  const questUsesMarker = questForSpecies(species).type === 'reach';
 
   const quest = me.quest;
   // No quest, or it's complete → no guide (returns null). One intended consequence:
   // once a non-'reach' quest completes, the guide goes null and the renderer's marker
   // filter stops hiding this species' own questObject star, so that star re-appears.
   // That's fine — it was only hidden because it was a MISLEADING active-quest target;
-  // a completed quest's home star is harmless scenery (the HUD already shows the ✓),
-  // and for the ape 'fetch' completion coincides with escaping + respawning as a new
-  // species anyway. So we deliberately don't keep the filter alive past completion.
+  // a completed quest's home star is harmless scenery (the HUD already shows the ✓).
   if (!quest || quest.complete) return null;
 
-  // Pick the goal POINT by quest mechanic. Iterate entities.values() directly (no
-  // array spread) so this stays allocation-free in the per-frame loop.
+  // The server always sets quest.type to steps[stepIndex].kind — so quest.type IS
+  // the current step's mechanic. Switch on it to pick the right goal.
+  // questUsesMarker is true ONLY for 'reach' steps: the home questObject star is the
+  // real target; for every other step the star would be misleading, so hide it.
+  // Widen to string so future step kinds ('escort','collect','recruit','order','ability')
+  // compare cleanly — strict tsc rejects kind==='escort' when the old QuestProgress
+  // type union only lists 'reach'|'fetch'|'activate'. The shared types will widen
+  // once the contract architect updates shared/src/types.ts; this cast bridges the gap.
+  const kind: string = quest.type;
+  const questUsesMarker = kind === 'reach';
+
+  // Pick the goal POINT by current-step mechanic. Iterate entities.values() directly
+  // (no array spread) so this stays allocation-free in the per-frame loop.
   let goal: { x: number; y: number } | undefined;
-  if (quest.type === 'fetch') {
-    // 'fetch' (ape) → the perimeter gate (carry the prop out there).
+
+  if (kind === 'fetch' || kind === 'escort') {
+    // 'fetch' (ape courier) or 'escort' (lead followers out) → the perimeter gate.
     for (const e of entities.values()) {
       if (e.kind === 'gate' && typeof e.x === 'number' && typeof e.y === 'number') {
         goal = { x: e.x, y: e.y };
@@ -817,9 +849,9 @@ function questGuideFor(
       }
     }
     if (!goal) goal = localMap?.gate; // fallback to the static map's gate point
-  } else if (quest.type === 'activate') {
-    // 'activate' → the NEAREST keeper terminal (the client can't see which were
-    // already tapped; it points at the closest and turns off once the quest completes).
+  } else if (kind === 'activate' || kind === 'order') {
+    // 'activate' or 'order' → the NEAREST keeper terminal. The client can't see
+    // which were already tapped; it points at the closest and turns off once done.
     let nearestD2 = Infinity;
     for (const e of entities.values()) {
       if (e.kind !== 'terminal' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
@@ -829,8 +861,46 @@ function questGuideFor(
         goal = { x: e.x, y: e.y };
       }
     }
+  } else if (kind === 'collect') {
+    // 'collect' → the NEAREST food source entity.
+    let nearestD2 = Infinity;
+    for (const e of entities.values()) {
+      if (e.kind !== 'food' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
+      const d2 = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
+      if (d2 < nearestD2) {
+        nearestD2 = d2;
+        goal = { x: e.x, y: e.y };
+      }
+    }
+  } else if (kind === 'recruit') {
+    // 'recruit' → the NEAREST feedable animal that is a different species and not
+    // already following this player. Fallback: nearest any animal.
+    let nearestD2 = Infinity;
+    let fallbackD2 = Infinity;
+    let fallbackGoal: { x: number; y: number } | undefined;
+    for (const e of entities.values()) {
+      if (e.kind !== 'animal' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
+      if (e.id === myId) continue; // skip self
+      const d2 = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
+      // Ideal target: different species AND not already following this player.
+      const isIdeal = e.species !== species && e.followerOf !== myId;
+      if (isIdeal && d2 < nearestD2) {
+        nearestD2 = d2;
+        goal = { x: e.x, y: e.y };
+      }
+      if (d2 < fallbackD2) {
+        fallbackD2 = d2;
+        fallbackGoal = { x: e.x, y: e.y };
+      }
+    }
+    if (!goal) goal = fallbackGoal;
+  } else if (kind === 'ability') {
+    // 'ability' → no waypoint: the action is self-contained (fire your power anywhere).
+    // Point the guide at the player itself so the pathfinder yields a zero-length
+    // route → no visible arrow; the HUD still shows the step title/blurb.
+    return { fromId: myId, goalX: me.x, goalY: me.y, ownerSpecies: species, questUsesMarker: false };
   } else {
-    // 'reach' → this species' own home questObject (which IS its real target).
+    // 'reach' (and unknown future kinds) → this species' own home questObject.
     for (const e of entities.values()) {
       if (e.kind === 'questObject' && e.species === species
         && typeof e.x === 'number' && typeof e.y === 'number') {

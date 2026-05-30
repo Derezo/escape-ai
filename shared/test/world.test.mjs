@@ -22,19 +22,13 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v15: re-pinned because THE RIVER IS NOW A SOLID BARRIER. ALL water-family tiles are
-// solid (tiles.ts flips WATER_SHALLOW, every WATER_EDGE_*/WATER_CORNER_*/WATER_ICORNER_*
-// shore-blend tile, and POND_EDGE to solid; WATER_DEEP/POND_DEEP were already), and a
-// final collision-reconciliation pass re-solidifies the shore ring that blendGroundEdges
-// paints AFTER the collision grid is built. Only BRIDGE_H/BRIDGE_V still cross water.
-// BOTH hashes drift: the COLLISION grid changes (~270 shore-ring cells per map flip
-// walkable→solid), and the entitySpecs change because pen anchors / food slots / quest
-// objects / one aux guard that used to sit on walkable shallow shore relocate onto dry
-// interior tiles (the placement scans pick non-solid cells, and shallow is now solid).
-// Gate-threshold cells are force-opened after the river pass so every home stays
-// enterable. Recomputed from generateWorld(123).
+// v16: THE DISGUISE PROP (Clipboard) RELOCATES from near the gate/spawn (spawnTiles[0])
+// to INSIDE the first aux building's center (auxPlaced[0].centerTx/centerTy). The ape's
+// fetch TARGET stays the gate; the PICKUP location moves inside. entitySpecs re-pins
+// (the 'prop-1' entity moves). The collision grid stays stable (the new location is
+// interior and was already walkable). Recomputed from generateWorld(123).
 const PINNED_COLLISION_HASH = 2912234384;
-const PINNED_ENTITYSPEC_HASH = 2666229100;
+const PINNED_ENTITYSPEC_HASH = 1575395877;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -98,12 +92,10 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v15: the river is now a SOLID barrier — every water-family tile (shallow + the
-  // shore-blend edge/corner ring + POND_EDGE) is solid, and only bridges cross water.
-  // BOTH hashes re-pin (collision: the shore ring flips solid; entitySpecs: anchors/
-  // food/quests off the now-solid shallow shore). The bump is the deliberate cache-bust
-  // so old clients (which assert msg.version === WORLD_GEN_VERSION) fail loud not desync.
-  assert.equal(WORLD_GEN_VERSION, 15, 'version pinned at 15');
+  // v16: the prop relocates inside the first aux building. entitySpecs hash re-pins.
+  // The bump is the deliberate cache-bust so old clients (which assert
+  // msg.version === WORLD_GEN_VERSION) fail loud not desync.
+  assert.equal(WORLD_GEN_VERSION, 16, 'version pinned at 16');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 

@@ -27,6 +27,7 @@
 
 const config = require('../config');
 const world = require('./world');
+const quests = require('./quests');
 const { bumpStat, bumpEscapedSpecies } = require('./stats-delta');
 const { secsToTicks, findPlayerById } = require('./room-utils');
 
@@ -110,6 +111,9 @@ function collectNearbyFood(player, roomName, currentTick) {
   if (!player.inventory) player.inventory = {};
   player.inventory[key] = (player.inventory[key] || 0) + 1;
   bumpStat(player, 'foodCollected');
+  // Quest: a 'collect' step OBSERVES this success edge (it never re-bumps the
+  // foodCollected stat above — only advances the quest's current step).
+  quests.onCollect(player);
   // FX echo so the client can fire a pickup burst/SFX on this player's entity.
   setFx(player, 'collect', currentTick);
   return true;
@@ -171,6 +175,9 @@ function feedNearbyAnimal(player, roomName, currentTick) {
     target.stolen = true;             // worth more at the gate
     bumpStat(player, 'animalsStolen');
     setFx(target, 'steal', currentTick);
+    // Quest: a steal is always a NEW follower for this player (prevOwner was
+    // someone else). OBSERVES the success — never re-bumps animalsStolen above.
+    quests.onRecruit(player, 'stolen', true);
     return 'stolen';
   }
 
@@ -179,11 +186,15 @@ function feedNearbyAnimal(player, roomName, currentTick) {
   const newRemaining = Math.min(cap, remaining + grant);
   target.followUntilTick = currentTick + newRemaining;
   target.followSince = currentTick; // ring refills to full on every feed
-  if (prevOwner !== player.id) {
+  const isNewFollower = prevOwner !== player.id;
+  if (isNewFollower) {
     target.followerOf = player.id; // first feed by this player (a wild capture)
     target.stolen = false;
   }
   setFx(target, 'feed', currentTick);
+  // Quest: a 'recruit' step counts only a NEW follower (a wild capture), not a
+  // pure top-up of one you already own. OBSERVES the result; bumps no stat.
+  quests.onRecruit(player, 'fed', isNewFollower);
   return 'fed';
 }
 

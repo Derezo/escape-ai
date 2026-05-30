@@ -163,10 +163,11 @@ function integratePlayers(dt) {
     // currentTick lets it honor timed effects (chameleon cloak, tortoise shell).
     stealth.stepPlayerHumanLikeness(player, dt, currentTick);
 
-    // Phase 6 side-quest progress: a 'reach' quest completes when the player
-    // stands on its own species' home (questObject) tile. Run BEFORE checkEscape
-    // so arriving home and reaching the gate the same tick still escapes. No-op
-    // for fetch/activate quests (those advance at the gate / on interact).
+    // Side-quest progress (multi-step): advance a CURRENT 'reach' step when the
+    // player stands on its own species' home (questObject) tile. Run BEFORE
+    // checkEscape so arriving home and reaching the gate the same tick still
+    // escapes. stepReach no-ops unless the active step is a 'reach' (other step
+    // kinds advance at the gate / on interact / on their event hooks).
     if (player.quest && !player.quest.complete) {
       quests.stepReach(player, player.room);
     }

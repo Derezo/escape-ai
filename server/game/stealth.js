@@ -959,6 +959,10 @@ function catchPlayer(player, spawn, currentTick) {
   // so the loss is part of the soft-respawn reset. player.room is set at join.
   follow.resetPlayer(player);
   if (player.room) follow.releaseFollowersOf(player.room, player.id);
+  // Quest: a catch RESTARTS the quest for the SAME species (keep the animal,
+  // re-zero stepIndex/done/complete + the distinct-terminal Set). Does NOT roll a
+  // new species — that's the respawnPlayer (escape) path via initPlayer.
+  quests.resetSteps(player);
   // Soft respawn in the player's own species pen (passed by the caller). A short
   // post-respawn GRACE window makes the player catch-immune (see the catch hook),
   // so a robot lingering near the respawn point can't chain-catch into an infinite
@@ -1055,10 +1059,15 @@ function checkEscape(player, roomName, currentTick) {
   const reach = config.RECT_SIZE * 1.5;
   if (shared.dist2(player, gate) > reach * reach) return;
 
-  // Phase 6: the ape's 'fetch' quest completes the instant a CARRYING player
+  // Phase 6: the ape's 'fetch' step completes the instant a CARRYING player
   // reaches the gate (the deposit). Evaluate it BEFORE the gate gating below so
   // the same tick both completes the quest and lets the courier escape.
   quests.stepFetchAtGate(player, gate, reach);
+  // An 'escort' final step (cheetah/kangaroo/chameleon) completes at the gate when
+  // the player arrives with >= need LIVE followers — evaluated here, before the
+  // isComplete gate, so the herd-at-gate waypoint can complete + escape the same
+  // tick. It only OBSERVES the herd; scoreEscape still banks it once below.
+  quests.stepEscort(player, roomName, currentTick);
 
   // GATE GATING: a player may only escape once its per-species quest is complete.
   // If it reaches the gate without a complete quest, stamp questBlocked (a tick
@@ -1183,6 +1192,9 @@ function applyAbility(player, roomName, currentTick) {
     // Persistent stat: only an ability that actually FIRED (not a no-op like an
     // elephant shove with no robot in reach) counts. Decoupled from the DB.
     bumpStat(player, 'abilitiesUsed');
+    // Quest: an 'ability' step OBSERVES this fired edge (never re-bumps the
+    // abilitiesUsed stat above — only advances the quest's current step).
+    quests.onAbility(player);
   }
 }
 
@@ -1585,6 +1597,10 @@ function orderNearestRobot(player, roomName, currentTick) {
   // Persistent stat: an order actually landed (a robot was in range and stood
   // down). Counted only here, past the no-target early-return. Decoupled from DB.
   bumpStat(player, 'ordersIssued');
+  // Quest: an 'order' step OBSERVES this landed-order edge (it fires for BOTH the
+  // terminal-tap order path and a direct 'order' action). Never re-bumps the
+  // ordersIssued stat above — only advances the quest's current step.
+  quests.onOrder(player);
 
   // Stand the robot down for the ordered window.
   nearest.orderedUntilTick = currentTick + Math.round(config.ORDER_DURATION_SECS * config.TICK_RATE);

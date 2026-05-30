@@ -57,23 +57,68 @@ export interface EntityFx {
 
 /**
  * A player's live side-quest progress (Phase 6), as it rides the snapshot. The
- * static quest DEFINITIONS live in quests.ts (QuestDef); this is the per-player
- * mutable view the server owns and the client HUD reads. `done`/`need` drive the
- * progress readout; `complete` gates the escape gate server-side.
+ * static quest DEFINITIONS live in quests.ts (QuestDef + QuestStep); this is the
+ * per-player mutable view the server owns and the client HUD reads. Quests are
+ * now MULTI-STEP: the top-level `type`/`title`/`blurb`/`done`/`need` always mirror
+ * the CURRENT step (steps[stepIndex]) so legacy single-field readers keep working,
+ * while `stepIndex`/`steps` expose the full arc. `complete` (whole-quest done)
+ * gates the escape gate server-side and is the ONLY flag isComplete() reads.
+ *
+ * Plain JSON — no methods, no class instances — so it round-trips on the wire via
+ * Entity.quest's index signature. The step-kind union below MUST stay in lockstep
+ * with QuestStepKind in quests.ts.
  */
 export interface QuestProgress {
-  /** The mechanic: 'reach' your home, 'fetch' the prop to the gate, 'activate' terminals. */
-  type: 'reach' | 'fetch' | 'activate';
-  /** Short HUD title, e.g. "Reach your den". */
+  /**
+   * BACK-COMPAT alias of the CURRENT step's mechanic kind. Kept named `type` and
+   * typed to the (now-widened) union so existing readers (client HUD, the old
+   * star-filter) never break: for a single-step quest this is the same value it
+   * was before; for a multi-step quest it is the kind of step `stepIndex`. Always
+   * equals steps[stepIndex].kind.
+   */
+  type: 'reach' | 'fetch' | 'activate' | 'collect' | 'recruit' | 'order' | 'ability' | 'escort';
+  /**
+   * The CURRENT step's short HUD title (≤ 24 chars). Mirrors steps[stepIndex].title
+   * so a client that only reads `title` shows the right step's name.
+   */
   title: string;
-  /** One-line, ability-themed flavor. */
+  /** The CURRENT step's one-line, ability-themed flavor (steps[stepIndex].blurb). */
   blurb: string;
-  /** Progress so far (0..need). */
+  /** Progress on the CURRENT step (0..need). Re-zeroed on each step advance. */
   done: number;
-  /** Target count (reach/fetch = 1, activate = 3). */
+  /** Target count for the CURRENT step (reach/fetch/ability=1, activate=3, etc.). */
   need: number;
-  /** True once the quest is satisfied — the gate will then let this animal out. */
+  /**
+   * True once the WHOLE quest (every step) is satisfied — the gate-gate condition.
+   * isComplete() reads ONLY this; it flips exactly once, on the final step's
+   * completion, where the single bumpStat('questsCompleted') also fires.
+   */
   complete: boolean;
+  /**
+   * 0-based index of the active step into `steps`. Drives "step i+1/N" in the HUD
+   * and tells the client which step kind to resolve the arrow goal from. Pinned to
+   * steps.length-1 once `complete`. Reset to 0 by resetSteps(player) on a catch.
+   */
+  stepIndex: number;
+  /**
+   * The ordered step list for this species (a per-player COPY of the shared def's
+   * steps, so `done` can be carried per step if ever needed; today only the active
+   * step's done rides the top-level fields). Length 1 for the legacy single-step
+   * species path; 2-3 for the redesigned ones. JSON-serializable.
+   */
+  steps: QuestStepProgress[];
+}
+
+/** One step of a multi-step quest, as it rides the snapshot (plain JSON). */
+export interface QuestStepProgress {
+  /** This step's mechanic kind (one of the QuestProgress.type union members). */
+  kind: 'reach' | 'fetch' | 'activate' | 'collect' | 'recruit' | 'order' | 'ability' | 'escort';
+  /** ≤ 24-char HUD title for this step. */
+  title: string;
+  /** One-line ability-themed flavor for this step. */
+  blurb: string;
+  /** Target count for this step. */
+  need: number;
 }
 
 /**

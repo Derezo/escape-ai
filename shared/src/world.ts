@@ -64,8 +64,13 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  pen anchors / food slots / quest objects / one aux guard that previously sat on the
  *  now-solid shallow shore relocate onto dry interior (the deterministic junction +
  *  spawn relocation walks them off solid water). Every spec is proven off-solid by the
- *  no-spec-on-solid + reachability tests, so both hashes are re-pinned on purpose. */
-export const WORLD_GEN_VERSION = 15;
+ *  no-spec-on-solid + reachability tests, so both hashes are re-pinned on purpose.
+ *  v16: the DISGUISE PROP (Clipboard) RELOCATES from near the gate/spawn (spawnTiles[0])
+ *  to INSIDE the first aux building's center (auxPlaced[0].centerTx/centerTy). The ape's
+ *  fetch TARGET stays the gate; the PICKUP location moves inside. entitySpecs re-pins
+ *  (the 'prop-1' entity moves). The collision grid stays stable (the new location is
+ *  interior and was already walkable). */
+export const WORLD_GEN_VERSION = 16;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -2386,9 +2391,13 @@ export function generateWorld(seed: number): WorldMap {
   const entitySpecs: WorldEntitySpec[] = [];
   entitySpecs.push({ id: 'gate-1', kind: 'gate', x: gate.x, y: gate.y });
 
-  // The disguise prop (Clipboard) near the first spawn.
-  const propTile = spawnTiles[0] ?? { tx: gateTx - 2, ty: gateTy };
-  entitySpecs.push({ id: 'prop-1', kind: 'prop', x: tileCenter(propTile.tx, tile), y: tileCenter(propTile.ty, tile) });
+  // The disguise prop (Clipboard) inside the first aux building (commissary center).
+  // auxPlaced[0] is deterministic (first AUX_BUILDINGS item placed); centerTx/centerTy
+  // is the aux building's interior center. Add a reach target so the interior prop is
+  // guaranteed walkable + reachable on every seed.
+  const propAux = auxPlaced[0];
+  reachTargets.push({ tx: propAux.centerTx, ty: propAux.centerTy });
+  entitySpecs.push({ id: 'prop-1', kind: 'prop', x: tileCenter(propAux.centerTx, tile), y: tileCenter(propAux.centerTy, tile) });
 
   // Terminals at path junctions (forecourt + zone centers). The junction order is
   // fixed by carveOrganicPaths, so this is deterministic. One terminal per

@@ -4,6 +4,41 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.102: **Multi-step side-quests (the 10 "reach home" quests become 2–3 step objectives).**
+  The trivially-simple "walk back to your cage / reptile house" quests are now ordered multi-step
+  objectives that draw on the full gameplay loop — food gathering, recruiting fellow animals to
+  follow, ordering keeper robots, using your species ability, and escorting a herd out the gate —
+  before the final reach-home / escort step. ape keeps its courier `fetch` (now preceded by an
+  `order` step) and elephant/peacock/parrot keep their 3-terminal `activate` (each gains a second
+  step). The arrow indicator always points at the **current step's** target, in order, and the HUD
+  shows `step N/total · title · done/need`. Every quest still completes exactly once and tracks in
+  the leaderboard via `questsCompleted`.
+  - **Shared contract** (`shared/src/quests.ts`, `shared/src/types.ts`): `QuestDef` is now an
+    ordered `steps[]` list (kinds `reach`/`fetch`/`activate`/`collect`/`recruit`/`order`/`ability`/
+    `escort`); `questForSpecies` stays a pure, stable-ref lookup. `QuestProgress` gains `stepIndex`
+    + a compact `steps` summary and mirrors the current step at the top level (legacy
+    `type`/`title`/`done`/`need` aliases preserved, so old readers still work). No `net.ts` change —
+    it rides `Entity.quest` through the index signature. `shared/test/quests.test.mjs` rewritten to
+    the multi-step invariants.
+  - **Server step engine** (`server/game/quests.js` + wiring in `stealth.js`/`follow.js`/`engine.js`):
+    every mechanic funnels completion through one `bumpCurrent`, which rolls `stepIndex` forward and
+    fires the single `bumpStat('questsCompleted')` **exactly once** on the final step. New
+    observe-only hooks `onCollect`/`onRecruit`/`onOrder`/`onAbility` (they never re-bump the
+    underlying foodCollected/animalsStolen/ordersIssued/abilitiesUsed counters), plus `stepEscort`
+    (gate + live-herd check) and per-step gating of `stepReach`/`stepFetchAtGate`. **Catch rule:**
+    `catchPlayer` calls `resetSteps`, restarting the quest at step 0 **without** changing species.
+  - **Client** (`client/src/main.ts`, `client/src/help.ts`): step-aware HUD readout + `quest_progress`
+    SFX on a rising step; `questGuideFor` resolves the arrow goal from the current step kind
+    (`fetch`/`escort`→gate, `activate`/`order`→nearest terminal, `collect`→nearest food,
+    `recruit`→nearest other-species non-follower animal, `ability`→no arrow, `reach`→own home star),
+    with `questUsesMarker` derived per-step so the home star only shows on a `reach` step.
+  - **World-gen** (`shared/src/world.ts`): the ape's disguise **Clipboard relocates from the
+    gate/spawn area into the commissary (aux building) interior**, so the courier must fetch it from
+    inside before walking it out. `WORLD_GEN_VERSION` 15 → 16; `shared/test/world.test.mjs`
+    entitySpec hash re-pinned (collision hash unchanged — the interior was already walkable).
+  Shared + client builds green; 89/89 shared tests pass; server step engine verified end-to-end
+  (per-step ordering, single `questsCompleted`, escort herd-gating, catch reset).
+
 - 0.2.101: **Spawn hardening + dead-code cleanup (spawning audit follow-up).** With the river now
   solid, hardened the robot "top-up" spawn anchor in `world.ts`: it offset x by 3 off a junction and
   clamped only to map bounds, so a future seed could have parked it on a now-solid water tile —
