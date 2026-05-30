@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.44: **NPC movement refactor — Phase 1: shared movement base + locomotion registry.**
+  First phase of the layered NPC-movement overhaul (shared pure primitives → server behavior
+  strategies → per-species modifiers). No behavior change yet — this lays the deterministic core:
+  - `shared/src/movement.ts` (new): `steerAround` (deterministic probe-and-rotate obstacle
+    avoidance — the fix for NPCs stalling flush against walls), `patrolStep` (looping waypoint
+    follower), `chainFollowStep` (trail-a-leader targeting), `speedBoost` (deterministic occasional
+    speed burst), and `wanderAvoid` (ambient wander that rounds walls instead of pinning). All pure
+    (`dt`/`tick` in, no RNG/clock) — server authority + client prediction agree bit-for-bit.
+  - `shared/src/locomotion.ts` (new): a data-driven `LOCOMOTION` registry keyed by species
+    (tortoise=½-speed crawl, kangaroo=hop cadence, bird=fast glide + flutter), `locomotionFor`,
+    `gaitSpeed` (per-tick gait speed; kangaroo burst conserves mean distance, phased per entity),
+    and `locomotionStep` (the single entry point every animal move routes through). Extensible: a
+    new species/gait is one table row, no code branch.
+  - `shared/src/step.ts`: exported `boxHitsSolid` (so the steering layer probes with the EXACT
+    integrator test — no edge-case stutter); added `WANDER.HOME_BIAS` + `homeBiasedWanderStep`
+    (wander blended toward a home target for the post-follow drift-home behavior).
+  - `shared/src/types.ts`: typed the new optional `Entity` behavior-state fields (`behavior`,
+    `patrolIndex`, `chainIndex`, `returningHome`, `homeX/Y`, investigate/grace timers) — all ride
+    the snapshot delta via the index signature, **no `net.ts` change**.
+  - Verified: shared **48/48** (+28 new determinism/behavior tests covering steering un-stick,
+    patrol looping, chain trailing, boost bounds, the three gaits, and home-drift convergence),
+    `tsc` clean.
+
 - 0.2.43: **Merge: organic map overhaul × animal-collection feature.** The `game/map-overhaul`
   branch (organic biome layout, gatehouse plaza, per-pen NPC animals + containment — 0.2.39–0.2.42
   below) merged into `game/caves-of-steel` (which had independently grown the animal-collection

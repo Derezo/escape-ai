@@ -129,6 +129,39 @@ export interface Entity {
   /** For `animal` (player): the running session/round score (persists across respawns). */
   scoreTotal?: number;
 
+  // --- NPC movement / behavior state (server-authoritative) ----------------
+  // Mutated only by the single server orchestrator that owns the NPC (robots by
+  // behaviors.js, animals by follow.js / stealth.js — single-writer, like the
+  // follower fields above). They ride the snapshot delta via the index signature,
+  // only on the ticks they change. The client doesn't need any of these to render
+  // (it derives gait from `species` via the shared locomotion registry); they're
+  // typed here purely for server-side safety, not because they're a wire contract.
+
+  /** Behavior FSM state. Robots: 'patrol'|'investigate'|'pursue'. Animals: 'wander'|'return-home'. */
+  behavior?: string;
+  /** For `robot`: current target waypoint index into the room's patrolRoute (looping). */
+  patrolIndex?: number;
+  /** For `robot`: the patrolIndex captured when patrol was broken, to resume the loop. */
+  lastPatrolIndex?: number;
+  /** For `robot` (investigating): last-known world position of the suspicious target. */
+  investigateX?: number;
+  investigateY?: number;
+  /** For `robot` (investigating): the tick the investigate/linger window expires. */
+  investigateUntilTick?: number;
+  /** For an `animal` follower: its 0-based position in its owner's follow chain
+   *  (0 = closest to the player). Derived + rewritten each tick by stepFollowers
+   *  (client-cosmetic cache; gameplay recomputes from followSince every tick). */
+  chainIndex?: number;
+  /** For an `animal` follower: the tick a lapsed follow's GRACE window ends. A
+   *  re-feed before this snaps it back into the chain; after it, it drifts home. */
+  graceUntilTick?: number;
+  /** For an `animal` released from following: true while it drifts back toward its
+   *  home enclosure (home-biased wander). Cleared once back inside its home bounds. */
+  returningHome?: boolean;
+  /** For a `returningHome` animal: world-unit center of its home enclosure to drift toward. */
+  homeX?: number;
+  homeY?: number;
+
   [key: string]: unknown;
 }
 

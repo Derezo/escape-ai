@@ -118,6 +118,13 @@ export const WANDER = {
   HEADING_HOLD_TICKS: 40,
   /** Distance (units) from a bound at which a wanderer biases its heading back inward. */
   EDGE_MARGIN: 40,
+  /**
+   * Fraction of a returning animal's heading pulled toward its home enclosure during the
+   * post-follow drift-home behavior (0..1). Low enough that it still reads as wandering,
+   * high enough that the long-run average net-converges on home rather than a beeline.
+   * Used by {@link homeBiasedWanderStep}.
+   */
+  HOME_BIAS: 0.45,
 } as const;
 
 /**
@@ -175,6 +182,43 @@ export function wanderStep(
   return {
     x: clamp(entity.x + dirX * speed * dt, bounds.minX, bounds.maxX),
     y: clamp(entity.y + dirY * speed * dt, bounds.minY, bounds.maxY),
+  };
+}
+
+/**
+ * One home-return drift step for an animal released from following: blend the
+ * deterministic wander heading ({@link wanderVec}) with a unit vector toward `home`,
+ * weighted by `biasWeight`, then integrate at `speed` clamped to `bounds`. The blend is
+ * `normalize((1 - w)·wander + w·toHome)`, so the animal still jitters like a wanderer
+ * per tick but its long-run average drifts home — "returning over time", not a beeline.
+ * Degrades to {@link wanderStep} once it sits on home (the toward-home term goes to ~0).
+ * Pure given `(entity, tick, dt)`: no RNG, no clock. Returns the new `{x, y}` for the
+ * caller to write back (it does not mutate `entity`).
+ */
+export function homeBiasedWanderStep(
+  entity: { id: string; x: number; y: number },
+  tick: number,
+  dt: number,
+  speed: number,
+  bounds: Bounds,
+  home: { x: number; y: number },
+  biasWeight: number = WANDER.HOME_BIAS,
+): { x: number; y: number } {
+  const { dirX: wx, dirY: wy } = wanderVec(entity.id, tick);
+  let hx = home.x - entity.x;
+  let hy = home.y - entity.y;
+  const hlen = Math.hypot(hx, hy) || 1;
+  hx /= hlen; // unit vector toward home
+  hy /= hlen;
+  // Linear blend then renormalize so the step speed is constant regardless of weight.
+  let bx = (1 - biasWeight) * wx + biasWeight * hx;
+  let by = (1 - biasWeight) * wy + biasWeight * hy;
+  const blen = Math.hypot(bx, by) || 1;
+  bx /= blen;
+  by /= blen;
+  return {
+    x: clamp(entity.x + bx * speed * dt, bounds.minX, bounds.maxX),
+    y: clamp(entity.y + by * speed * dt, bounds.minY, bounds.maxY),
   };
 }
 
@@ -427,8 +471,11 @@ function cellSolid(collision: Uint8Array, mapW: number, mapH: number, tx: number
 /**
  * Whether an axis-aligned box centered at (cx, cy) with half-extent `radius`
  * overlaps any solid tile. Samples every tile cell the box's extent touches.
+ * Exported so the steering layer (movement.ts) probes obstacles with the EXACT
+ * same test the integrator uses — two implementations could disagree at a tile
+ * edge and stutter an NPC against a wall.
  */
-function boxHitsSolid(
+export function boxHitsSolid(
   cx: number,
   cy: number,
   radius: number,
