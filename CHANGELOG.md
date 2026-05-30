@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.71: **Audio pipeline — fix Cloudflare 403 (error 1010) on every Suno request.**
+  `api.sunoapi.org` sits behind Cloudflare bot protection, which bans the default
+  `Python-urllib` User-Agent before the request reaches Suno's auth layer (the symptom is a
+  403 with body `error code: 1010`, NOT an API-key failure). `scripts/sunoapi/client.py` now
+  sends a browser-like header set (`User-Agent`/`Accept`/`Accept-Language`/`Origin`/`Referer`,
+  matching the captured Firefox playground request) on `_post`, `_get`, and the audio
+  `download()` (rewritten from `urlretrieve` to a streamed `urlopen` so it can carry headers
+  and clean up its `.tmp` on failure). A dedicated 403/1010 error message now explains it is a
+  signature/header block, not a bad key. Verified: the actual `Request` objects carry the
+  headers; imports and both zero-spend dry-runs stay green.
+
 - 0.2.70: **Audio pipeline Phase 5 — validation remediation.** Two fixes from the
   `/plan-validation-and-review` gate: (1) `scripts/sunoapi/core.py` now catches `SunoShapeError`
   explicitly (it was imported but only hit the generic handler) and prints an actionable message

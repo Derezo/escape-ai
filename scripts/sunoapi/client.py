@@ -38,6 +38,42 @@ TIMEOUT_SEC = 30
 MAX_RETRIES = 1
 RETRY_SLEEP_SEC = 6
 
+# api.sunoapi.org sits behind Cloudflare bot protection, which BANS the default
+# Python-urllib User-Agent with a 403 "error code: 1010" before the request ever
+# reaches Suno's auth layer. We send a browser-like header set (matching the
+# captured Firefox request from the playground) so the call is accepted. The
+# Authorization/Content-Type headers are added per-request on top of these.
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://sunoapi.org",
+    "Referer": "https://sunoapi.org/",
+}
+
+
+def _headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """Browser-like base headers (to pass Cloudflare) plus any per-request extras."""
+    headers = dict(_BROWSER_HEADERS)
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def _http_error(e: "urllib.error.HTTPError") -> "SunoApiError":
+    """Build a SunoApiError from an HTTPError, flagging the Cloudflare 1010 ban."""
+    body = e.read().decode("utf-8", errors="replace")
+    if e.code == 403 and "1010" in body:
+        return SunoApiError(
+            "HTTP 403 (Cloudflare error 1010): the request signature was blocked "
+            "before reaching Suno. This is NOT an API-key problem — it usually means "
+            "the browser-like headers in client.py need updating, or the request came "
+            "from a blocked IP/region."
+        )
+    return SunoApiError(f"HTTP {e.code}: {body}")
+
 
 def _api_key() -> str:
     """
@@ -77,10 +113,10 @@ def _post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
         url,
         data=data_bytes,
         method="POST",
-        headers={
+        headers=_headers({
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
-        },
+        }),
     )
 
     for attempt in range(MAX_RETRIES + 1):
@@ -94,7 +130,7 @@ def _post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
             if e.code in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
                 time.sleep(RETRY_SLEEP_SEC)
                 continue
-            raise SunoApiError(f"HTTP {e.code}: {e.read().decode('utf-8', errors='replace')}")
+            raise _http_error(e)
         except urllib.error.URLError as e:
             raise SunoApiError(f"Network error: {e}")
         except json.JSONDecodeError as e:
@@ -132,7 +168,7 @@ def _get(path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     req = urllib.request.Request(
         url,
         method="GET",
-        headers={"Authorization": f"Bearer {key}"},
+        headers=_headers({"Authorization": f"Bearer {key}"}),
     )
 
     for attempt in range(MAX_RETRIES + 1):
@@ -146,7 +182,7 @@ def _get(path: str, params: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
             if e.code in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
                 time.sleep(RETRY_SLEEP_SEC)
                 continue
-            raise SunoApiError(f"HTTP {e.code}: {e.read().decode('utf-8', errors='replace')}")
+            raise _http_error(e)
         except urllib.error.URLError as e:
             raise SunoApiError(f"Network error: {e}")
         except json.JSONDecodeError as e:
@@ -279,6 +315,9 @@ def download(url: str, dest: Path) -> None:
     """
     Download a file from URL to dest (atomic: .tmp + rename).
 
+    Streams the body with the browser-like headers (urlretrieve can't set them,
+    and the audio CDN may also bot-filter the default Python User-Agent).
+
     Args:
         url: URL to download from.
         dest: destination path (Path object).
@@ -290,9 +329,19 @@ def download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
 
+    req = urllib.request.Request(url, method="GET", headers=_headers())
     try:
-        urllib.request.urlretrieve(url, str(tmp))
-        tmp.replace(dest)
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as resp, open(tmp, "wb") as f:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                f.write(chunk)
+        tmp.replace(dest)  # atomic on the same filesystem
+    except urllib.error.HTTPError as e:
+        if tmp.exists():
+            tmp.unlink()
+        raise _http_error(e)
     except Exception as e:
         if tmp.exists():
             tmp.unlink()
