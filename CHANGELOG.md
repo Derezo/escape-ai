@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.54: **Spawn players in their own species pen + post-catch grace (fixes the spawn-on-robot
+  catch loop).** Players spawned in the gate-side block where robots patrol, so landing on a robot
+  caused an instant re-catch every tick — an infinite loop.
+  - **Server (`server/game/world.js`):** new `spawnForSpecies(roomName, species, jitterSeed)` —
+    resolves the spawn to the player's OWN pen center (`getHomeCentersBySpecies`) with a
+    bounds-clamped deterministic jitter (local FNV `hashStr`, no rng) so same-species players don't
+    stack. Falls back to the gate spawn only if a species somehow has no home. Exported.
+  - **Server (`server/game/stealth.js`):** `catchPlayer` + `respawnPlayer` now take `currentTick`
+    and stamp a `spawnSafeUntilTick` GRACE window; the catch hook's `uncatchable` test skips a
+    player still within grace, so a robot at the respawn point can't chain-catch. All three spawn
+    paths (catch, escape-respawn, initial join) route through `spawnForSpecies`; `respawnPlayer`
+    resolves the pen AFTER its species roll (lands in the new animal's pen).
+  - **Server (`server/socket/lobby.js`):** initial join spawns via `world.spawnForSpecies`
+    (resolved after the species pick; the player id is generated up front so the jitter keys to it).
+  - **Config:** `SPAWN_GRACE_SECS` (2s).
+  - Verified: server modules `node --check` + boot clean (`listening on :3000`, 0 errors); client
+    `tsc && vite build` green; shared **53/53**. Live-module tests: a caught player respawns at its
+    own pen center (mole → (274,2966) vs center) with grace stamped exactly (`1000 → 1040 =
+    +secsToTicks(2)`); the catch hook's `uncatchable` predicate skips a graced player and re-arms
+    after it expires; `spawnForSpecies` lands on a non-solid interior tile (12/12 distinct positions
+    from real UUIDs); a 200-seed sweep confirms NO robot ever spawns inside a species pen.
+
 - 0.2.53: **Auxiliary buildings — Phase 5 validation remediation (`/plan-validation-and-review`).**
   The validation pass (requirements trace, connectivity audit, dedup scan, code comprehension,
   build/test) found all 9 requirements implemented + connected, zero dead code, the net contract

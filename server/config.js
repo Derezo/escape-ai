@@ -33,6 +33,11 @@ module.exports = {
   // player-animal to catch it, and how close a player must be to a robot/terminal
   // to issue a Second-Law order or interact. Roughly one entity rect.
   RECT_SIZE: parseFloat(process.env.RECT_SIZE) || 32,
+  // Post-spawn safety window (seconds). After a catch-respawn or escape-respawn a
+  // player is catch-immune for this long, so a robot near the respawn point can't
+  // chain-catch the player into an infinite loop. The player can still act — only
+  // catch-immune. (No join grace needed: the species-pen spawn is robot-free.)
+  SPAWN_GRACE_SECS: parseFloat(process.env.SPAWN_GRACE_SECS) || 2,
   // How many seconds a robot stays stood-down after being ordered (Second Law).
   ORDER_DURATION_SECS: parseFloat(process.env.ORDER_DURATION_SECS) || 2,
   // After reaching the gate, how many seconds the player holds the "ESCAPED!"

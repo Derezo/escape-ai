@@ -73,16 +73,10 @@ function register(socket, deps) {
     // before the first player starts receiving snapshots for it.
     world.getOrCreateRoomWorld(room);
 
-    // Deterministically spread spawns over the MAP's spawn points (just inside
-    // the gate) so players don't all stack on one tile. The per-room join counter
-    // (climbs across leaves) keeps concurrent joiners off the same slot; we cycle
-    // through the spawns list by join index.
+    // Per-room join counter (climbs across leaves) — used to cycle the species
+    // roster evenly for un-picked joiners.
     const joinIndex = joinCountByRoom.get(room) || 0;
     joinCountByRoom.set(room, joinIndex + 1);
-    const rm = world.getRoomMap(room);
-    const spawn = rm.spawns.length
-      ? rm.spawns[joinIndex % rm.spawns.length]
-      : { x: 50, y: 50 };
 
     // Species: honor the player's pick (payload.species, or the one stashed at
     // auth time) when it's a valid playable species; otherwise assign one off the
@@ -93,9 +87,18 @@ function register(socket, deps) {
       ? pick
       : roster[joinIndex % roster.length];
 
+    // Spawn the player in their OWN species' pen (with a stable per-player jitter),
+    // NOT the gate-side block — the gate is where robots patrol, and spawning there
+    // could drop the player onto a robot and chain-catch them. Resolved AFTER the
+    // species above so the pen matches the avatar. (A post-spawn grace window —
+    // player.spawnSafeUntilTick below — is the second guard against re-catch.)
+    const playerId = uuidv4();
+    const spawn = world.spawnForSpecies(room, species, playerId);
+
     // Create / reset the player as a fresh movable point at its spawn slot.
     const player = {
-      id: uuidv4(),
+      // Reuse the id generated above (the spawn jitter is keyed to it).
+      id: playerId,
       socketId: socket.id,
       room,
       name,
@@ -126,6 +129,10 @@ function register(socket, deps) {
       dashUntilTick: 0,       // cheetah: speed-burst multiplier
       shellUntilTick: 0,      // tortoise: immovable + uncatchable + likeness held
       abilityCdUntilTick: 0,  // generic per-ability cooldown gate
+      // Post-respawn catch-immunity deadline (set by stealth.catchPlayer /
+      // respawnPlayer). 0 at join — the pen spawn is robot-free, so no join grace
+      // is needed; it guards the catch→respawn→catch chain.
+      spawnSafeUntilTick: 0,
       fx: null,               // active ability-effect echo for the client FX layer
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated

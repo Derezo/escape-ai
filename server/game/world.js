@@ -332,6 +332,54 @@ function getHomeCentersBySpecies(roomName) {
   return centers;
 }
 
+/** Tiny deterministic 32-bit string hash (FNV-1a) for spawn jitter — local so this
+ *  module needs no shared import (world.js loads shared only via dynamic import). */
+function hashStr(s) {
+  let h = 0x811c9dc5;
+  const str = String(s);
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/**
+ * The spawn point for a player of `species` in a room: the CENTER of that species'
+ * OWN pen/home (world units), with a small deterministic per-player jitter so two
+ * same-species players don't stack exactly. Spawning in the home pen — not the
+ * gate-side block — keeps the player clear of the robot patrol cluster around the
+ * entrance, the source of the spawn-on-robot re-catch loop (a short post-spawn
+ * grace window in stealth.js is the second guard). Falls back to the gate-side
+ * map.spawns[0] when the species has no home (shouldn't happen for a playable
+ * species). The jitter is clamped to the pen interior so it can't cross the
+ * barrier ring; world-gen proves every pen center is non-solid + reachable and the
+ * interior is >= 6x6 tiles, so a sub-tile offset stays walkable. No rng (hashStr).
+ *
+ * @param {string} roomName
+ * @param {string} species
+ * @param {string} [jitterSeed]  e.g. a player id; same seed → same offset
+ * @returns {{ x: number, y: number }}
+ */
+function spawnForSpecies(roomName, species, jitterSeed) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const center = species ? getHomeCentersBySpecies(roomName).get(species) : null;
+  if (!center) {
+    return (map.spawns && map.spawns[0]) || { x: 50, y: 50 };
+  }
+  const bounds = getHomeBoundsBySpecies(roomName).get(species);
+  let x = center.x;
+  let y = center.y;
+  if (bounds) {
+    const h = hashStr(jitterSeed || species);
+    const jx = (h % 33) - 16; // -16..16 world units
+    const jy = ((h >>> 8) % 33) - 16;
+    x = Math.min(Math.max(center.x + jx, bounds.minX + 4), bounds.maxX - 4);
+    y = Math.min(Math.max(center.y + jy, bounds.minY + 4), bounds.maxY - 4);
+  }
+  return { x, y };
+}
+
 /**
  * The aux Building (`aux-commissary` / `aux-washroom` / `aux-maintenance`) for an
  * id in a room, or null for an unknown / non-aux id. Only buildings carrying an
@@ -536,6 +584,7 @@ module.exports = {
   getPatrolRoute,
   getHomeBoundsBySpecies,
   getHomeCentersBySpecies,
+  spawnForSpecies,
   getGuardBoundsByRobotId,
   auxBuildingById,
   isDoorLocked,

@@ -451,10 +451,16 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
         const ref = target.ref;
         const uncatchable = ref && (
           (ref.flitUntilTick || 0) > currentTick ||
-          (ref.shellUntilTick || 0) > currentTick
+          (ref.shellUntilTick || 0) > currentTick ||
+          // Post-spawn grace: a freshly (re)spawned player is catch-immune for a
+          // short window, so a robot near the spawn point can't chain-catch it.
+          (ref.spawnSafeUntilTick || 0) > currentTick
         );
         if (!uncatchable && shared.dist2(robot, target) <= touchR2) {
-          catchPlayer(target.ref, firstSpawn(rm));
+          // Respawn the player in THEIR OWN species pen (away from the gate-side
+          // robot cluster), not the shared gate spawn — the other half of the
+          // anti-loop fix, paired with the grace window stamped in catchPlayer.
+          catchPlayer(target.ref, spawnForSpecies(roomName, target.ref.species, target.ref), currentTick);
           catches++;
         }
       }
@@ -680,13 +686,38 @@ function firstSpawn(rm) {
 }
 
 /**
+ * The spawn point for a player of `species` in a room: the CENTER of that species'
+ * own pen/home (world units), with a small deterministic per-player jitter so two
+ * same-species players don't stack exactly. Spawning in the home pen — not the
+ * gate-side block — keeps the player clear of the robot patrol cluster around the
+ * entrance, which was the source of the spawn-on-robot infinite catch loop (a
+ * post-spawn grace window, stamped by the callers, is the second guard).
+ *
+ * Falls back to the gate-side firstSpawn when the species has no home (shouldn't
+ * happen for a playable species, but keeps the path total). The jitter is bounded
+ * to the pen interior bounds so the offset can never push the player into a wall;
+ * world-gen proves every pen center is non-solid + reachable, and the interior is
+ * >= 6x6 tiles, so a sub-tile jitter stays walkable.
+ *
+ * @param {string} roomName
+ * @param {string} species
+ * @param {object} [player]  used only for a stable per-player jitter seed (id)
+ * @returns {{ x: number, y: number }}
+ */
+function spawnForSpecies(roomName, species, player) {
+  // Delegates to world.spawnForSpecies (the ONE place that owns pen-center +
+  // bounded jitter), keyed by the player id so the per-player offset is stable.
+  return world.spawnForSpecies(roomName, species, player && player.id);
+}
+
+/**
  * Soft catch (Phase 2): the player loses its built-up disguise and is teleported
  * back to a spawn point. Phase 3 escalates this (lockdown / elimination).
  * @param {object} player
  * @param {{x:number,y:number}} spawn  the room's spawn point to reset to (caller
  *   resolves it from world.getRoomMap(roomName).spawns[0]).
  */
-function catchPlayer(player, spawn) {
+function catchPlayer(player, spawn, currentTick) {
   if (!player) return;
   // Persistent stat: count this capture. The single capture chokepoint — an
   // escaped player is never a catch target (gatherAnimals skips player.escaped),
@@ -707,10 +738,14 @@ function catchPlayer(player, spawn) {
   // so the loss is part of the soft-respawn reset. player.room is set at join.
   follow.resetPlayer(player);
   if (player.room) follow.releaseFollowersOf(player.room, player.id);
-  // Soft respawn at the room's first map spawn point (just inside the gate).
+  // Soft respawn in the player's own species pen (passed by the caller). A short
+  // post-respawn GRACE window makes the player catch-immune (see the catch hook),
+  // so a robot lingering near the respawn point can't chain-catch into an infinite
+  // loop. The grace is stamped here (one place every catch funnels through).
   const at = spawn || { x: 50, y: 50 };
   player.x = at.x;
   player.y = at.y;
+  player.spawnSafeUntilTick = (currentTick || 0) + secsToTicks(config.SPAWN_GRACE_SECS);
 }
 
 /**
@@ -725,7 +760,7 @@ function catchPlayer(player, spawn) {
  * @param {{x:number,y:number}} spawn  the room's spawn point to reset to (caller
  *   resolves it from world.getRoomMap(roomName).spawns[0]).
  */
-function respawnPlayer(player, spawn) {
+function respawnPlayer(player, spawn, currentTick) {
   const roster = speciesRoster.getKeys();
   if (roster.length > 0) {
     // Pick a species other than the current one when we can, so the respawn
@@ -756,10 +791,13 @@ function respawnPlayer(player, spawn) {
   // window). scoreTotal is NOT reset — it's the running round score, persisted.
   follow.resetPlayer(player);
   if (player.room) follow.releaseFollowersOf(player.room, player.id);
-  // Back to the room's first map spawn point (mirrors catchPlayer).
-  const at = spawn || { x: 50, y: 50 };
+  // Into the NEW species' pen (resolved here, after the species roll above), with
+  // the same post-respawn grace window so the fresh run can't be instantly
+  // re-caught at the spawn point. Mirrors catchPlayer.
+  const at = spawnForSpecies(roomName, player.species, player);
   player.x = at.x;
   player.y = at.y;
+  player.spawnSafeUntilTick = (currentTick || 0) + secsToTicks(config.SPAWN_GRACE_SECS);
 }
 
 /**
@@ -780,7 +818,7 @@ function checkEscape(player, roomName, currentTick) {
   // then respawn into a fresh run at the room's first map spawn point.
   if (player.escaped) {
     if (currentTick >= (player.escapeUntilTick || 0)) {
-      respawnPlayer(player, firstSpawn(world.getRoomMap(roomName)));
+      respawnPlayer(player, roomName, currentTick);
     }
     return;
   }
