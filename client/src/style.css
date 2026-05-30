@@ -867,6 +867,8 @@ body {
 #cue[data-kind='feed']    { border-color: #6fcf97; color: #c8f5da; }
 #cue[data-kind='steal']   { border-color: #e0a526; color: #ffe0a0; }
 #cue[data-kind='lost']    { border-color: #e05a5a; color: #ffc9c9; }
+/* Rebirth toast: a celebratory teal-green, slightly bolder than the action cues. */
+#cue[data-kind='reborn']  { border-color: #7fe0c0; color: #d8fff0; font-weight: 700; }
 
 /* Win-banner score subtitle (added under the existing #win-banner title). */
 #win-title {

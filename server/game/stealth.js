@@ -992,10 +992,12 @@ function catchPlayer(player, spawn, currentTick) {
  * The new species is rolled from the ONE shared roster (species-roster.js); we
  * avoid handing back the same species so a respawn visibly changes the animal.
  * @param {object} player
- * @param {{x:number,y:number}} spawn  the room's spawn point to reset to (caller
- *   resolves it from world.getRoomMap(roomName).spawns[0]).
+ * @param {string} roomName  the room to respawn into; the spawn point is resolved
+ *   here via spawnForSpecies AFTER the species roll, so the pen matches the NEW
+ *   species (not the old one).
+ * @param {number} currentTick
  */
-function respawnPlayer(player, spawn, currentTick) {
+function respawnPlayer(player, roomName, currentTick) {
   const roster = speciesRoster.getKeys();
   if (roster.length > 0) {
     // Pick a species other than the current one when we can, so the respawn

@@ -19,6 +19,7 @@ import type { InputMsg, PlayerAction } from '@shared/net';
 import { moveWithCollision, moveSpeed, facingFromVec } from '@shared/step';
 import { generateWorld, WORLD_GEN_VERSION, type WorldMap } from '@shared/world';
 import { questForSpecies } from '@shared/quests';
+import { speciesByKey } from '@shared/species';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -120,12 +121,16 @@ async function main(): Promise<void> {
   cue.id = 'cue';
   document.body.appendChild(cue);
   let cueHideTimer: ReturnType<typeof setTimeout> | undefined;
-  const flashCue = (text: string, kind: 'collect' | 'feed' | 'steal' | 'lost'): void => {
+  const flashCue = (
+    text: string,
+    kind: 'collect' | 'feed' | 'steal' | 'lost' | 'reborn',
+    holdMs = 900,
+  ): void => {
     cue.textContent = text;
     cue.dataset.kind = kind;
     cue.classList.add('active');
     if (cueHideTimer) clearTimeout(cueHideTimer);
-    cueHideTimer = setTimeout(() => cue.classList.remove('active'), 900);
+    cueHideTimer = setTimeout(() => cue.classList.remove('active'), holdMs);
   };
 
   // --- In-game help (H / ?). Built hidden; the splash handles first-run intro
@@ -178,6 +183,10 @@ async function main(): Promise<void> {
   // Whether the victory banner is currently shown. Tracks the server's `escaped`
   // edges: set true on escape, back to false when the server respawns us.
   let shownWin = false;
+  // Our species last frame, to detect the REBIRTH edge: an escape respawn rolls us
+  // into the next species server-side, so a change while the win banner was up means
+  // "you've been reborn" — we toast the new species' label once on that change.
+  let prevSpecies: string | undefined;
   // The size of our herd last frame (animals whose followerOf === myId), so a DROP
   // (a rival stole one) fires a flavor "lost a follower" cue. Derived client-side.
   let prevHerd = 0;
@@ -520,7 +529,11 @@ async function main(): Promise<void> {
     if (escapedNow && !shownWin) {
       shownWin = true;
       winBanner.classList.add('active');
+      // Fanfare: the gate-open thunk PLUS a celebratory chime stacked on it; the
+      // victory_sting music swells underneath (selectMusic returns it while escaped,
+      // and the server now holds the celebration window long enough for it to play).
       playSfx('gate_open');
+      playSfx('quest_complete', 0.8);
       // Score subtitle: the server stamps `lastScore` on the escape edge (the same
       // moment `escaped` flips). Report the points + herd; call out a stolen bonus.
       const ls = me?.lastScore as { points: number; herd: number; stolen: number } | undefined;
@@ -533,9 +546,22 @@ async function main(): Promise<void> {
         winSub.textContent = '';
       }
     } else if (!escapedNow && shownWin) {
+      // Respawn edge: the server cleared `escaped` and rolled us into the next
+      // species in its pen. Drop the banner and announce the REBIRTH — the species
+      // we now are vs the one we escaped as (prevSpecies, tracked below).
       shownWin = false;
       winBanner.classList.remove('active');
+      const nowSpecies = typeof me?.species === 'string' ? me.species : undefined;
+      if (nowSpecies && nowSpecies !== prevSpecies) {
+        const label = speciesByKey(nowSpecies)?.label ?? nowSpecies;
+        const article = /^[aeiou]/i.test(label) ? 'an' : 'a';
+        flashCue(`Reborn as ${article} ${label}!`, 'reborn', 2200);
+        playSfx('confirm', 0.7);
+      }
     }
+    // Track our species every frame so the rebirth edge above sees the OLD species
+    // (it's updated after the win-edge check, so the change is detected once).
+    prevSpecies = typeof me?.species === 'string' ? me.species : prevSpecies;
 
     const hl = typeof me?.humanLikeness === 'number' ? me.humanLikeness : undefined;
     // Caught: the server zeroes humanLikeness on capture, so a sharp drop from a

@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.91: **Escape actually respawns you now (was a silent crash) + rebirth fanfare.** Escaping
+  did nothing — the avatar stayed stranded at the gate, no species switch, no sound. Root cause:
+  `respawnPlayer` in `server/game/stealth.js` declared its 2nd param `spawn` but the body calls
+  `spawnForSpecies(roomName, …)` while the caller passes `roomName` — so `roomName` was undefined,
+  `respawnPlayer` threw `ReferenceError` every tick the celebration window elapsed, the engine
+  swallowed it, and `escaped` never cleared. Renamed the param to `roomName` (one-line scope fix);
+  now escape → roll to the next species → respawn in THAT species' pen → clear `escaped` works as
+  designed (rotation/quest-reset/grace were all already correct, just dead behind the crash).
+  Client (`client/src/main.ts`): the escape edge now stacks a celebratory `quest_complete` chime
+  on `gate_open` (victory_sting music already swells underneath, and now actually plays since the
+  4s window completes), and the respawn edge fires a "Reborn as a Bird!" toast — a new `flashCue`
+  `'reborn'` kind (teal, ~2.2s) using the shared species label — when the species changes. (Session
+  persistence so a rejoin resumes the new species is a separate follow-up commit.)
+
 - 0.2.90: **Quest arrow: string-pulled path (clean angles, not a staircase).** The shared A*
   is 4-connected (E/W/S/N only), so the arrow's raw route was a tile-by-tile staircase that
   read as jagged axis-aligned hops. Added a client-side line-of-sight smoothing pass
