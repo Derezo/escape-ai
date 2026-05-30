@@ -81,7 +81,12 @@ async function loadShared() {
     // Phase 4: collision-aware movement for players AND robots/idle animals.
     'moveWithCollision',
     // NPC movement refactor: home-return drift for released followers.
-    'homeBiasedWanderStep'
+    'homeBiasedWanderStep',
+    // Pathfinding plan: the return-home / robot path-follow uses these step.js
+    // primitives directly in the hot loop — validate them at boot so a stale
+    // shared/dist fails LOUD here, not mid-tick. (boxHitsSolid: near-wall test;
+    // wanderVec: open-field saunter blend; hash32: per-entity repath phasing.)
+    'boxHitsSolid', 'wanderVec', 'hash32'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -122,10 +127,9 @@ async function loadShared() {
   // O(1) inBounds containment test the awareness filter uses. Loaded + validated the
   // same fail-loud way so a stale shared/dist trips at boot, not mid-tick.
   const pathMod = await import('../../shared/dist/pathfind.js');
-  // The exports the server actually calls. (simplifyPath / tileClearsRadius are
-  // shared pathfinding utilities the server doesn't use — the dense path is followed
-  // verbatim — so they're not validated here.)
-  const pathRequired = ['findPath', 'makeScratch', 'toWorldWaypoints', 'nextWaypoint', 'inBounds', 'gateInsideTile'];
+  // The exports the server actually calls. (gateInsideTile is a shared/test helper —
+  // world.js computes the gate-inside goal tile inline — so it's not validated here.)
+  const pathRequired = ['findPath', 'makeScratch', 'toWorldWaypoints', 'nextWaypoint', 'inBounds'];
   const pathMissing = pathRequired.filter((name) => pathMod[name] === undefined);
   if (pathMissing.length) {
     throw new Error(

@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.58: **NPC pathfinding — Phase 5 (`/plan-validation-and-review`).**
+  Validation pass: requirements trace (6/6 implemented + connected), connectivity audit (zero dead code),
+  dedup scan, code-comprehension review of the determinism-critical pathfinder + the server integration,
+  full build/test. The pathfinder core was reviewed as ship-ready (total-order open set, correct heap +
+  generation-stamp scratch, deterministic clearance, guaranteed termination). Three items fixed:
+  - **Server (`server/game/stealth.js`):** `loadShared` now also fail-loud-validates the step.js
+    primitives the new hot-loop code calls directly — `boxHitsSolid` (near-wall test), `wanderVec`
+    (open-field saunter blend), `hash32` (per-entity repath phasing) — so a stale `shared/dist` trips at
+    boot, not mid-tick.
+  - **Server (`server/game/stealth.js`):** dropped `gateInsideTile` from the pathfind export-validation
+    list — it's a shared/test helper (`world.js` computes the gate-inside goal tile inline), so validating
+    it as a server dependency was misleading.
+  - **`FINDINGS_OUTSIDE_SCOPE.md`:** filed the deliberately-deferred robot **pursue** pathing (a moving
+    quarry has no fixed goal tile; both design critiques + the user opted to defer it) with a reproducer
+    pointer and a suggested approach.
+  - Verified: shared **69/69**, client `tsc && vite build` green, server boots clean (validates the added
+    exports), a 2500-tick full real-map loop (idle + followers + robots) returned all animals home with no
+    throw. Working tree clean. **Result: Pass with Caveats** (one documented deferral: pursue pathing).
+
 - 0.2.57: **NPC pathfinding — Phase 4 (robot investigate routing around walls + path-follow hardening).**
   Robots now route AROUND walls and THROUGH gates to reach an off-route investigate goal (a noise
   behind a fence) instead of pressing one-tile-ahead into the barrier. Patrol-loop, guard-wander, and

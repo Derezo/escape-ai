@@ -6,6 +6,31 @@ the audit trail).
 
 ## Open
 
+### Robot PURSUE chase is still reactive (no A* around walls)
+- **Status:** open — deliberately deferred (user decision during the pathfinding plan).
+- **Surfaced:** NPC pathfinding plan (Phases 1–4), 2026-05-30. Phase 4 routed robot
+  PATROL-resume + INVESTIGATE through the new A* (`followPathToGoal`), but left the
+  `pursue` branch on the original reactive `steerAround`.
+- **Detail:** when a robot is actively chasing a moving player/animal
+  (`decision.mode === 'pursue'` in `server/game/stealth.js` `stepRobots`), it steers
+  straight at the live target with `steerAround` (one-tile-ahead probe). If the quarry
+  rounds a wall/fence, the robot can press into the barrier and lag rather than routing
+  around to a gate. Short-range open chases (the common case) work fine.
+- **Why deferred:** a MOVING target has no fixed goal tile, so the cached-path model
+  doesn't apply directly — pursue would need a per-tick (or fast-cadence) repath to the
+  target's current tile, which is more cost + risk of jittery near-corner chasing. Both
+  adversarial design critiques recommended deferring it to a measured follow-up; the user
+  confirmed "defer pursue."
+- **Suggested approach if picked up:** in the pursue branch, when the straight-line
+  heading to the target is wall-blocked (a cheap `boxHitsSolid` look-ahead), fast-repath
+  A* to the target's current tile (cadence ~3–5 ticks) and follow the first waypoint via
+  the SAME dense-path + near-wall-direct logic Phase 4 added; keep the raw `steerAround`
+  for the open-line case. Reuse `followPathToGoal` with the target tile as the goal.
+- **Refs:** `server/game/stealth.js` `stepRobots` (the `decision.mode === 'pursue'`
+  block); `server/game/behaviors.js` `moveTowardPoint` (the pattern to mirror);
+  `shared/src/pathfind.ts` `findPath`.
+- **Effort:** M.
+
 ### Stat-field names enumerated across four server files (low-priority DRY)
 - **Status:** open — deliberate deferral, low risk.
 - **Surfaced:** `/plan-validation-and-review` of the AI-Escape accounts plan, 2026-05-29
