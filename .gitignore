@@ -46,5 +46,10 @@ android/capacitor-cordova-android-plugins/
 *.keystore
 *.jks
 
-# Claude Code session scratch (worktrees, locks) — never commit
-.claude/
+# Claude Code session scratch (worktrees, locks) — never commit.
+# Ignore the CONTENTS (not the dir itself) so git still descends and the
+# negation below can re-include the one tracked subtree.
+.claude/*
+# …except the project-level subagent definitions: shared tooling that every
+# contributor should get on clone, so they are tracked.
+!.claude/agents/

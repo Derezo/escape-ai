@@ -4,6 +4,37 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.64: **Project-level Claude Code subagents (`.claude/agents/`, new).** Added a
+  focused roster of 7 tech-stack-aware subagents, authored from a parallel survey of
+  the real codebase and adversarially reviewed for accuracy against it. They partition
+  the project along its actual trust/ownership boundaries with minimal overlap, and
+  each encodes the project's non-negotiables (server-authoritative; `shared/` is the
+  single source of truth, never duplicated into `client/`/`server/`; net events are a
+  contract in `shared/src/net.ts` changed on both sides in one commit; renderer swappable
+  via `IRenderer`; Capacitor-safe `base:'./'`; TS strict; build `shared` before consumers;
+  per-phase feature-branch commits, never `main`; CHANGELOG every commit; the
+  `/plan-validation-and-review` gate):
+  - **`shared-contract-architect`** (opus) — owns `shared/`: net contract, serializable
+    types, deterministic core (`step.ts`/`movement.ts`/`locomotion.ts`/`pathfind.ts`/
+    `rng.ts`), seed-deterministic world gen + `WORLD_GEN_VERSION`.
+  - **`authoritative-server-engineer`** (opus) — the fixed-tick engine, Socket.IO
+    orchestration, and all server-owned gameplay (stealth/Three-Laws, behaviors, follow,
+    quests, spawn, panic/lockdown).
+  - **`client-netcode-engineer`** (sonnet) — Phaser/Vite/TS client: prediction +
+    reconciliation, input, `NetClient`, HUD, rendering behind `IRenderer`, Capacitor build.
+  - **`asset-pipeline-engineer`** (haiku) — the zero-dep sprite/tile/atlas/tileset/SFX
+    generators and their `verify-*` drift gates.
+  - **`multiplayer-debug-tester`** (sonnet, read+run only) — reproduces desync via the
+    e2e/sim harnesses and the determinism/parity tests; hands root causes to the implementers.
+  - **`multiplayer-security-auditor`** (opus) — the authoritative trust boundary: input
+    validation, the per-socket rate limiter, anti-cheat, auth/token flows, secret hygiene,
+    `npm audit` triage.
+  - **`release-and-deploy-engineer`** (sonnet) — build order, clean-clone judge-readiness,
+    Android/Capacitor APK, VPS deploy, git/CHANGELOG/commit-hook discipline, validation gate.
+
+  `.gitignore` now keeps `.claude/` session scratch ignored but tracks `.claude/agents/`
+  via a `!.claude/agents/**` negation, so the roster ships to every contributor on clone.
+
 - 0.2.63: **Rejuvenation Phase 3 — robustness + hardening.** Three audit-agreed fixes:
   - **`server/index.js` — `unhandledRejection` now shuts down cleanly.** It previously
     only logged, unlike `uncaughtException` (which stops the engine, closes the db + http
