@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.70: **Audio pipeline Phase 5 — validation remediation.** Two fixes from the
+  `/plan-validation-and-review` gate: (1) `scripts/sunoapi/core.py` now catches `SunoShapeError`
+  explicitly (it was imported but only hit the generic handler) and prints an actionable message
+  pointing at the dumped provenance JSON + `extract.py` to patch if the Suno response shape ever
+  changes. (2) `quest_complete` (a `must`-priority SFX that was defined in the manifest but not yet
+  played) now fires on the quest-row false→true completion edge in `main.ts`. The remaining unwired
+  SFX/music keys are all `nice`-priority and intentionally deferred. Full green: shared + client build,
+  `tsc --noEmit`, the drift gate, Python imports, and both zero-spend dry-runs.
+
 - 0.2.69: **Audio pipeline Phase 4 — docs (`docs/AUDIO_PIPELINE.md`, new).** The best-practices
   deliverable: data-flow overview, **cost-consciousness** (user-run generation, free `--dry-run`/`--list`,
   skip-unless-`--force`, raw-reuse, `--credits`, rate/latency/retention), the theme system, **Suno prompt

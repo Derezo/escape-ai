@@ -258,6 +258,16 @@ def run(kind: str, argv: List[str]) -> int:
     except SunoAuthError as e:
         print(f"Auth error: {e}", file=sys.stderr)
         return 2
+    except SunoShapeError as e:
+        # The API succeeded but the result shape was unexpected — the raw response
+        # was dumped to the asset's <key>.json. Point the user at extract.py to patch.
+        print(
+            f"Response shape error: {e}\n"
+            f"The raw API response was saved next to the asset's output dir; "
+            f"inspect it and update sunoapi/extract.py if the Suno API shape changed.",
+            file=sys.stderr,
+        )
+        return 3
     except SunoApiError as e:
         print(f"API error: {e}", file=sys.stderr)
         return 3

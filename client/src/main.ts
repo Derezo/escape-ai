@@ -182,6 +182,8 @@ async function main(): Promise<void> {
   let prevPanicHigh = false;
   // Per-robot mode seen last frame, so entering 'pursue' fires robot_alert once.
   const robotModeSeen = new Map<string, string>();
+  // Quest-complete edge: fire quest_complete once when the quest first reads done.
+  let prevQuestComplete = false;
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -537,9 +539,13 @@ async function main(): Promise<void> {
       // Tint: green when done, amber when blocked at the gate, default otherwise.
       hudQuestRow.classList.toggle('quest-done', quest.complete);
       hudQuestRow.classList.toggle('quest-blocked', !quest.complete && blocked);
+      // Quest-complete edge: chime once when the objective first reads done.
+      if (quest.complete === true && !prevQuestComplete) playSfx('quest_complete');
+      prevQuestComplete = quest.complete === true;
     } else {
       hudQuest.textContent = '…';
       hudQuestRow.classList.remove('quest-done', 'quest-blocked');
+      prevQuestComplete = false;
     }
 
     // Carrying row: shown only while we actually hold the disguise prop.
