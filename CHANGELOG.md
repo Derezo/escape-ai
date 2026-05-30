@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.68: **Audio pipeline Phase 3 — client music layer + state machine (`client/src/music.ts`, new).**
+  Background music, wired to gameplay. `music.ts` is a renderer-agnostic Web Audio crossfade manager
+  sharing the one `AudioContext` from `audio.ts` (so the menu's first-gesture `unlockAudio()` unblocks
+  music too): `initMusic()`, `playMusicState(track|null, {fadeMs?,volume?})` (the single per-frame
+  entry-point — idempotent, ≤2 voices during a 1.2s linear crossfade, one-shot stings auto-return to the
+  loop), `setMusicVolume`/`duckMusic`/`unduckMusic`. Missing `.mp3` (the state until the user generates
+  audio) → silent 404, never throws into the frame loop. `main.ts` calls `initMusic()` at boot and
+  `playMusicState(selectMusic())` every frame; `selectMusic()` derives the track from wire-guaranteed
+  state — menu (`!myId`) → title; `escaped` → victory sting; `world.lockdown` → lockdown loop; panic
+  ≥85% → panic loop; a robot in `mode === 'pursue'` or panic ≥66% → tension loop; else explore loop.
+  (Robot `mode` is confirmed on the wire — the engine serializes the full entity and the renderer already
+  reads it.) New themed SFX replace the old generic blips at their edges: lockdown engage now plays
+  `lockdown_alarm` + `door_lock` (was `error`), lift plays `lockdown_clear` (was `confirm`), escape plays
+  `gate_open` (was `confirm`); `panic_warning` fires on the 66% up-edge; `robot_alert` fires when any
+  robot enters `pursue`. All new SFX play their committed placeholder WAV until the real `.mp3` lands.
+  Client typechecks strict and builds; the drift gate stays green.
+
 - 0.2.67: **Audio pipeline Phase 2 — Python generation CLIs (`scripts/sunoapi/` + wrappers, new).**
   The credit-spending half of the pipeline, **stdlib-only** (urllib/json/argparse/os/shutil/pathlib/time —
   zero pip installs; Python 3.8+). A shared `scripts/sunoapi/` package (`client.py` urllib HTTP +

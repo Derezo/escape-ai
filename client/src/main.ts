@@ -30,6 +30,8 @@ import { PhaserRenderer } from './render/phaser';
 import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
 import { preloadSfx, playSfx, type SfxName } from './audio';
+import { initMusic, playMusicState } from './music';
+import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
 import { createInventory } from './inventory';
 import { runMenu } from './menu';
@@ -132,6 +134,7 @@ async function main(): Promise<void> {
   // — we deliberately do NOT register our own once-listeners here, so audio is
   // unlocked exactly once (no double-unlock). ---
   preloadSfx();
+  initMusic();
 
   // --- Net: connect, then run the splash → login flow. We do NOT join until the
   // player has authenticated. runMenu resolves with the authoritative username
@@ -175,6 +178,10 @@ async function main(): Promise<void> {
   // (on ANY player/robot) fires its sound once — the audio twin of the renderer's
   // visual fx edge. Distance-scaled so 20 players don't make a cacophony.
   const fxSfxSeen = new Map<string, number>();
+  // Panic-warning edge: fire once when panic crosses the high threshold.
+  let prevPanicHigh = false;
+  // Per-robot mode seen last frame, so entering 'pursue' fires robot_alert once.
+  const robotModeSeen = new Map<string, string>();
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -458,10 +465,11 @@ async function main(): Promise<void> {
       lockdownOverlay.classList.toggle('active', lockedNow);
       if (lockedNow) {
         // false -> true: panic overflowed, the room seals — sound the klaxon.
-        playSfx('error', 0.8);
+        playSfx('lockdown_alarm');
+        playSfx('door_lock');
       } else {
         // true -> false: panic drained below the hysteresis floor — the all-clear.
-        playSfx('confirm', 0.7);
+        playSfx('lockdown_clear');
       }
       prevLockdown = lockedNow;
     }
@@ -479,7 +487,7 @@ async function main(): Promise<void> {
     if (escapedNow && !shownWin) {
       shownWin = true;
       winBanner.classList.add('active');
-      playSfx('confirm', 0.9);
+      playSfx('gate_open');
       // Score subtitle: the server stamps `lastScore` on the escape edge (the same
       // moment `escaped` flips). Report the points + herd; call out a stolen bonus.
       const ls = me?.lastScore as { points: number; herd: number; stolen: number } | undefined;
@@ -537,9 +545,50 @@ async function main(): Promise<void> {
     // Carrying row: shown only while we actually hold the disguise prop.
     hudCarryRow.classList.toggle('active', me?.carrying === true);
 
+    // --- Panic-warning edge: fire once when panic crosses the 66% threshold. ---
+    const panicHigh =
+      world && world.panicCapacity > 0 ? world.panic / world.panicCapacity >= 0.66 : false;
+    if (panicHigh && !prevPanicHigh) playSfx('panic_warning');
+    prevPanicHigh = panicHigh;
+
+    // --- Robot-alert edge: fire once when any robot enters 'pursue' mode. ---
+    for (const e of list) {
+      if (e.kind !== 'robot') continue;
+      const modeNow = typeof e.mode === 'string' ? e.mode : '';
+      const modePrev = robotModeSeen.get(e.id) ?? '';
+      if (modePrev !== 'pursue' && modeNow === 'pursue') {
+        playSfx('robot_alert');
+      }
+      robotModeSeen.set(e.id, modeNow);
+    }
+
+    // --- Music state machine: select and crossfade the appropriate track. ---
+    playMusicState(selectMusic());
+
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  /**
+   * Select the appropriate music track based on current game state.
+   * Closes over the live `entities`, `world`, `myId`, and `me` vars from main().
+   * Called every frame from the tail of frame(); playMusicState() is idempotent
+   * so it only acts when the track actually changes.
+   */
+  function selectMusic(): MusicName | null {
+    if (!myId) return 'title_theme'; // pre-join / menu
+    const localMe = myId ? entities.get(myId) : undefined;
+    if (localMe?.escaped === true) return 'victory_sting';
+    if (world?.lockdown === true) return 'lockdown_loop';
+    const panicFrac =
+      world && world.panicCapacity > 0 ? world.panic / world.panicCapacity : 0;
+    const pursued = [...entities.values()].some(
+      (e) => e.kind === 'robot' && (typeof e.mode === 'string' ? e.mode : '') === 'pursue',
+    );
+    if (panicFrac >= 0.85) return 'panic_loop';
+    if (pursued || panicFrac >= 0.66) return 'tension_loop';
+    return 'explore_loop';
+  }
 }
 
 /**
