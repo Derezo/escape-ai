@@ -83,12 +83,22 @@ function restore(player, snap) {
     player.x = snap.x;
     player.y = snap.y;
   }
-  if (snap.quest && player.quest) {
-    // Restore progress onto the freshly-derived quest (same species → same type/need).
-    player.quest.done = Number(snap.quest.done) || 0;
-    player.quest.complete = snap.quest.complete === true;
+  // Restore progress onto the freshly-derived quest. The species (and thus the
+  // quest type/need) is the same on a version-matched resume, but DEFEND against a
+  // quest-definition change that wasn't coupled to a worldVersion bump: only adopt
+  // the saved progress when the saved quest type still matches, and clamp `done` to
+  // the CURRENT `need` (so a shrunk need can't leave done>need / a stale `complete`
+  // on a quest that now needs more). A type mismatch → keep the fresh zero progress.
+  const sameQuest = snap.quest && player.quest && snap.quest.type === player.quest.type;
+  if (sameQuest) {
+    player.quest.done = Math.max(0, Math.min(player.quest.need, Number(snap.quest.done) || 0));
+    player.quest.complete = snap.quest.complete === true && player.quest.done >= player.quest.need;
   }
-  player.questTerminals = new Set(Array.isArray(snap.questTerminals) ? snap.questTerminals : []);
+  // The tapped-terminal Set only means anything for the current 'activate' quest;
+  // drop it on a type mismatch so it can't desync done from the set size.
+  player.questTerminals = new Set(
+    sameQuest && Array.isArray(snap.questTerminals) ? snap.questTerminals : [],
+  );
   player.inventory =
     snap.inventory && typeof snap.inventory === 'object' ? { ...snap.inventory } : {};
   player.scoreTotal = Number(snap.scoreTotal) || 0;

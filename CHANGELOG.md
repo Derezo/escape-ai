@@ -20,8 +20,12 @@ All notable changes to TINS 2026. Update this file in every commit.
   `spawnSafeUntilTick` grace so a mid-field restore can't be instantly re-caught), and falls back
   to a clean pen spawn for the saved species on a version mismatch. Client: a returning player
   (stored token) auto-logs-in, the menu **skips the species picker**, and joins with no species so
-  the server's saved session wins. Verified: DB round-trip + UPSERT + unknown-user guards;
-  shared 74/74; client tsc/vite green; clean server boot.
+  the server's saved session wins. `session.restore` hardens the quest rehydrate against a future
+  quest-def change: it only adopts saved progress when the saved quest type still matches, clamps
+  `done` to the current `need`, and drops a stale `complete` (so a redefined quest can't resume
+  inconsistent). Verified: DB round-trip + UPSERT + unknown-user guards + quest-restore clamp/
+  type-mismatch cases; shared 74/74; client tsc/vite green; clean server boot; trust boundary +
+  determinism reviewed clean.
 
 - 0.2.91: **Escape actually respawns you now (was a silent crash) + rebirth fanfare.** Escaping
   did nothing — the avatar stayed stranded at the gate, no species switch, no sound. Root cause:
