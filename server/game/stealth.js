@@ -68,7 +68,7 @@ async function loadShared() {
   const mod = await import('../../shared/dist/step.js');
   const required = [
     'STEALTH', 'updateHumanLikeness', 'firstLawProtects',
-    'freezeThreshold', 'robotDecision', 'dist2', 'wanderStep', 'facingFromVec',
+    'freezeThreshold', 'robotDecision', 'dist2', 'facingFromVec',
     // Phase 4: collision-aware movement for players AND robots/idle animals.
     'moveWithCollision',
     // NPC movement refactor: home-return drift for released followers.
@@ -198,10 +198,10 @@ function facingFromVec(dx, dy, prev) {
 
 /**
  * The real world-unit bounds for a room's map, for the ambient wander clamp. The
- * shared wanderStep defaults to WORLD (1000²); the tilemap is MAP_W*TILE = 4096²,
- * so passing these lets a patrolling robot / drifting decoy turn inward at the
- * actual edge. Falls back to undefined (→ shared's WORLD default) if dims are
- * missing, which is harmless since the collision grid is the hard backstop.
+ * shared wanderAvoid defaults to WORLD (1000²); the tilemap is MAP_W*TILE = 4096²,
+ * so passing these lets a drifting decoy turn inward (soft edge bias) at the actual
+ * edge. Falls back to undefined (→ shared's WORLD default) if dims are missing,
+ * which is harmless since the collision grid is the hard backstop.
  * @param {{ w?:number, h?:number, tile?:number }} rm  a getRoomMap() result
  */
 function mapBounds(rm) {
@@ -471,7 +471,7 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
 
 /**
  * Drift every idle world-animal in a room one step along its deterministic
- * wander heading (shared.wanderStep). These decoys have no input; making them
+ * wander heading (movement.wanderAvoid). These decoys have no input; making them
  * MOVE turns them into live cover + distractions — one that drifts within a
  * robot's perception while looking like prey (humanLikeness 0) will be chased,
  * peeling the robot off the players. Mutated in place in the world entity map,

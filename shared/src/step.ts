@@ -155,35 +155,11 @@ export function wanderVec(id: string, tick: number): { dirX: number; dirY: numbe
   return { dirX: Math.cos(angle), dirY: Math.sin(angle) };
 }
 
-/**
- * Advance an ambient (input-less) entity one step along its deterministic wander
- * heading at `speed`, clamped to `bounds`. Near an edge (within
- * {@link WANDER.EDGE_MARGIN}) the heading is biased back inward so the entity
- * turns away rather than pinning to the wall; the `clamp` is the hard backstop.
- * Pure given `(entity, tick, dt)`. Returns the new `{x, y}` for the caller to
- * write back (it does not mutate `entity`). Used by BOTH robot idle-patrol and
- * idle-animal drift — one source of truth for ambient motion.
- */
-export function wanderStep(
-  entity: { id: string; x: number; y: number },
-  tick: number,
-  dt: number,
-  speed: number,
-  bounds: Bounds = WORLD,
-): { x: number; y: number } {
-  let { dirX, dirY } = wanderVec(entity.id, tick);
-
-  // Turn inward near a bound (sign forced by position only, so it stays pure).
-  if (entity.x < bounds.minX + WANDER.EDGE_MARGIN) dirX = Math.abs(dirX);
-  else if (entity.x > bounds.maxX - WANDER.EDGE_MARGIN) dirX = -Math.abs(dirX);
-  if (entity.y < bounds.minY + WANDER.EDGE_MARGIN) dirY = Math.abs(dirY);
-  else if (entity.y > bounds.maxY - WANDER.EDGE_MARGIN) dirY = -Math.abs(dirY);
-
-  return {
-    x: clamp(entity.x + dirX * speed * dt, bounds.minX, bounds.maxX),
-    y: clamp(entity.y + dirY * speed * dt, bounds.minY, bounds.maxY),
-  };
-}
+// (The old `wanderStep` — return-a-target ambient drift that the caller dropped if
+// the destination was solid — was removed once the NPC movement refactor replaced
+// every caller with `movement.wanderAvoid`, which steers around walls instead of
+// stalling against them. Its deterministic heading + inward edge-bias live on in
+// `wanderVec` (above) and `wanderAvoid` (movement.ts), which both callers now use.)
 
 /**
  * One home-return drift step for an animal released from following: blend the
@@ -191,7 +167,7 @@ export function wanderStep(
  * weighted by `biasWeight`, then integrate at `speed` clamped to `bounds`. The blend is
  * `normalize((1 - w)·wander + w·toHome)`, so the animal still jitters like a wanderer
  * per tick but its long-run average drifts home — "returning over time", not a beeline.
- * Degrades to {@link wanderStep} once it sits on home (the toward-home term goes to ~0).
+ * Degrades to a plain wander once it sits on home (the toward-home term goes to ~0).
  * Pure given `(entity, tick, dt)`: no RNG, no clock. Returns the new `{x, y}` for the
  * caller to write back (it does not mutate `entity`).
  */
@@ -421,10 +397,10 @@ export function clamp(v: number, min: number, max: number): number {
 }
 
 /**
- * Default world bounds for the ambient `wanderStep` drift (robot patrol / idle
- * decoys). The tilemap world's real movement clamp is the per-tile solidity grid
- * (out-of-bounds is solid in `moveWithCollision`), not these literals — they're
- * just a sane fallback for the input-less wander helper.
+ * Default world bounds for the ambient `wanderAvoid` drift (idle decoys) and the
+ * `homeBiasedWanderStep` clamp. The tilemap world's real movement clamp is the
+ * per-tile solidity grid (out-of-bounds is solid in `moveWithCollision`), not these
+ * literals — they're just a sane fallback for the input-less wander helpers.
  */
 export const WORLD = {
   minX: 0,
@@ -443,7 +419,8 @@ export interface Bounds {
 // (The old bounds-clamping `applyInput` was removed once the tilemap world made
 // movement collision-aware: both server and client now integrate through
 // `moveWithCollision` against the generated solidity grid. `WORLD`/`Bounds` above
-// remain — they're still the default clamp for the ambient `wanderStep` drift.)
+// remain — they're the default clamp for the ambient `wanderAvoid` /
+// `homeBiasedWanderStep` drift.)
 
 // ---------------------------------------------------------------------------
 // Collision-aware movement against a tile solidity grid (both sides, identical)

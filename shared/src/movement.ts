@@ -251,20 +251,20 @@ export function speedBoost(id: string, tick: number): number {
 // ---------------------------------------------------------------------------
 // wanderAvoid — ambient wander that SLIDES off walls instead of stalling.
 //
-// The current callers compute a wanderStep target then drop the whole move if
-// the destination tile is solid (it pins the NPC to the wall until the 40-tick
-// heading re-roll). wanderAvoid keeps the same deterministic heading + inward
-// edge bias as wanderStep, but routes it through steerAround so it rounds the
-// wall, then commits via moveWithCollision (which also slides). wanderStep is
-// kept in step.ts for soft-bounds-only callers; server NPCs move to this.
+// The prior approach computed an ambient drift target then dropped the whole move
+// if the destination tile was solid — which pinned the NPC to the wall until its
+// heading re-rolled (up to 40 ticks). wanderAvoid keeps the same deterministic
+// heading (wanderVec) + inward edge bias, but routes it through steerAround so it
+// rounds the wall, then commits via moveWithCollision (which also slides). This is
+// now the ONE ambient-drift helper — it replaced the old return-a-target wanderStep.
 // ---------------------------------------------------------------------------
 
 /**
  * One ambient wander step that avoids walls. Derives the deterministic heading
- * from wanderVec(id, tick), applies the same inward edge bias as wanderStep
- * (turn away from a soft bound within EDGE_MARGIN), then steers around any solid
- * ahead and integrates with moveWithCollision. Mutates `entity.x/y` in place
- * (like moveWithCollision). Pure given `(entity, tick, dt, grid)`.
+ * from wanderVec(id, tick), applies an inward edge bias (turn away from a soft
+ * bound within EDGE_MARGIN), then steers around any solid ahead and integrates
+ * with moveWithCollision. Mutates `entity.x/y` in place (like moveWithCollision).
+ * Pure given `(entity, tick, dt, grid)`.
  */
 export function wanderAvoid(
   entity: { id: string; x: number; y: number },
@@ -279,8 +279,8 @@ export function wanderAvoid(
   bounds: Bounds = WORLD,
 ): void {
   let { dirX, dirY } = wanderVec(entity.id, tick);
-  // Bias inward near a soft bound (sign forced by position only → stays pure),
-  // identical to wanderStep so contained animals turn away from their fence.
+  // Bias inward near a soft bound (sign forced by position only → stays pure) so
+  // a contained animal turns away from its fence before reaching the gate row.
   if (entity.x < bounds.minX + WANDER.EDGE_MARGIN) dirX = Math.abs(dirX);
   else if (entity.x > bounds.maxX - WANDER.EDGE_MARGIN) dirX = -Math.abs(dirX);
   if (entity.y < bounds.minY + WANDER.EDGE_MARGIN) dirY = Math.abs(dirY);

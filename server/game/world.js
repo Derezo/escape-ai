@@ -245,8 +245,8 @@ function getPatrolRoute(roomName) {
 /**
  * Per-species home CONTAINMENT bounds in world units, for keeping a pen's idle
  * NPC animals inside their enclosure (Phase C). For each housing/building, the
- * bounds are the interior wall-ring inset by one tile, so the ambient wander clamp
- * (shared.wanderStep(bounds)) turns an animal inward before it reaches the barrier
+ * bounds are the interior wall-ring inset by one tile, so the ambient wander bias
+ * (movement.wanderAvoid(bounds)) turns an animal inward before it reaches the barrier
  * and never lets it drift out the 2-tile (non-solid) enclosure gate. The gatehouse
  * (species == null) is skipped — it has no animals. Computed once per map; the
  * caller keys it to animal ids (`pen-${species}` / `pen-${species}-n`).

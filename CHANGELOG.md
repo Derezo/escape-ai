@@ -4,6 +4,24 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.50: **NPC movement refactor — validation remediation (`/plan-validation-and-review`).** The
+  validation pass (requirements trace, connectivity audit, dedup scan, determinism audit,
+  build/test) found all 6 requirements implemented + connected, every new shared export wired,
+  determinism clean (zero RNG/clock in `shared/`), no `net.ts` change, no require cycles, no
+  duplicate-of-shared violations, no orphan config. It surfaced one real cleanup, fixed here:
+  - **Dead code removed:** `shared/src/step.ts`'s `wanderStep` had zero code callers after the
+    refactor replaced both its call sites with `movement.wanderAvoid` (which steers around walls
+    instead of stalling). Removed the function, its stale entry in `stealth.loadShared`'s `required`
+    export-guard list, and updated the doc comments in `stealth.js`/`world.js`/`step.ts`/`movement.ts`
+    that still referenced it (its deterministic heading + edge-bias live on in `wanderVec` +
+    `wanderAvoid`). Per CLAUDE.md's no-dead-code rule.
+  - The 3× "steerAround → move → hazard-veto → facing" sequence (behaviors/stealth/follow) was
+    assessed and kept — the variations are intentional (robot raw move vs animal gait), each is
+    small and in a different orchestrator, and the shared math is correctly centralized.
+  - Verified: shared **50/50**, client `tsc && vite build` clean, server boots, and a full behavior
+    regression sim (robot fleet patrol coverage, idle no-stall, 3-link chain line, fox return-home)
+    all green after the removal.
+
 - 0.2.49: **NPC movement refactor — Phase 6: species locomotion (client bob + wiring complete).**
   Completes the per-species gait system. The server-side gait (tortoise ½-speed, kangaroo
   hop-pause) was wired into follower + idle-wander movement in Phase 5; this phase finishes it:
