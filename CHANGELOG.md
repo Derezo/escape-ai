@@ -4,7 +4,19 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
-- 0.2.92: **Session persistence — rejoin resumes your current species mid-run (no more
+- 0.2.93: **Leaderboard, phase 1 — shared score + net contract.** Groundwork for the
+  real-time leaderboard (press **L**). New `shared/src/score.ts` defines the ONE composite
+  player **score**, derived purely from the persisted stat counters (escapes, quests, steals,
+  food, by-species variety, time-efficiency, a capped capture penalty) — Parasite-style
+  shaping that rewards efficient, varied, skilled play over raw grind. It's pure +
+  deterministic so the SERVER computes the authoritative number and the client imports the
+  same function only to preview/explain it (never to inflate its own rank); no score is
+  persisted, so every existing account ranks fairly with zero backfill. `shared/src/net.ts`
+  gains the `leaderboard:request` / `leaderboard:data` events, a `LeaderboardSort` union, and
+  the `LeaderboardRequest` / `LeaderboardRow` / `LeaderboardMsg` payload shapes (top-N rows +
+  the asker's own ranked row + total), wired into the typed socket maps. New
+  `shared/test/score.test.mjs` covers the floor, per-term weights, the efficiency cap,
+  variety + full-roster bonuses, the capped capture penalty, and NaN coercion. Shared 85/85. **Session persistence — rejoin resumes your current species mid-run (no more
   ape-pen reset).** Previously only account-level stats + a menu-pick `last_species` survived a
   disconnect, so a rejoining player always restarted as a fresh menu species at the original
   pen — never as the species they'd been reborn into. Added a full mid-run **session snapshot**

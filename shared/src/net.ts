@@ -17,6 +17,9 @@ export const CLIENT_EVENTS = {
   LOBBY_JOIN: 'lobby:join',
   INPUT: 'input',
   PING: 'ping',
+  /** Ask the server for the current leaderboard (sent on opening the L panel and
+   *  re-sent on a sort change / while the panel is open — see LeaderboardRequest). */
+  LEADERBOARD_REQUEST: 'leaderboard:request',
 } as const;
 
 /** Event names the SERVER emits (client listens for these). */
@@ -26,6 +29,8 @@ export const SERVER_EVENTS = {
   SNAPSHOT: 'snapshot',
   PONG: 'pong',
   MAP: 'map',
+  /** The leaderboard reply to LEADERBOARD_REQUEST (top-N rows + the asker's rank). */
+  LEADERBOARD_DATA: 'leaderboard:data',
 } as const;
 
 export type ClientEvent = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
@@ -89,6 +94,36 @@ export interface InputMsg extends Input {
 /** Payload for `ping`. `t` is the client clock stamp echoed back in `pong`. */
 export interface Ping {
   t: number;
+}
+
+/**
+ * Which column the leaderboard sorts by, descending (best first). 'score' is the
+ * composite (shared/src/score.ts); the rest sort by a single raw counter so a
+ * reviewer can rank by any metric the datatable shows. The server validates the
+ * key against this set and falls back to 'score' on anything unknown.
+ */
+export type LeaderboardSort =
+  | 'score'
+  | 'escapes'
+  | 'questsCompleted'
+  | 'animalsStolen'
+  | 'foodCollected'
+  | 'caught'
+  | 'ordersIssued'
+  | 'abilitiesUsed'
+  | 'playSeconds'
+  | 'games';
+
+/**
+ * Payload for `leaderboard:request`. The client asks for the top `limit` rows by
+ * `sort`. Both optional — the server clamps `limit` to a sane max and defaults
+ * `sort` to 'score'. The asker's OWN row is always returned (in `you`) even when
+ * it falls outside the top-N, so a player can always see their standing.
+ */
+export interface LeaderboardRequest {
+  sort?: LeaderboardSort;
+  /** How many top rows to return (server-clamped, e.g. 1..200). Default ~100. */
+  limit?: number;
 }
 
 // --- Server -> client payloads ---------------------------------------------
@@ -199,6 +234,55 @@ export interface MapMsg {
 }
 
 /**
+ * One row in the leaderboard datatable: a player's display name, all persisted
+ * stat counters (so the client can render — and re-sort — every column without a
+ * second round-trip), and the SERVER-COMPUTED composite `score` + its 1-based
+ * `rank` under the active sort. The server is authoritative for both `score` and
+ * `rank`; the client never recomputes rank (it only mirrors `score` for a preview
+ * via the shared scorer). `escapesBySpecies` rides along for the expandable
+ * per-species breakdown. No user ids / tokens — purely public, display-only data.
+ */
+export interface LeaderboardRow {
+  /** 1-based rank under the active sort (1 = top). Server-assigned. */
+  rank: number;
+  /** Public display name (the account username). */
+  name: string;
+  /** The composite score (shared/src/score.ts), computed server-side. */
+  score: number;
+  escapes: number;
+  caught: number;
+  ordersIssued: number;
+  abilitiesUsed: number;
+  playSeconds: number;
+  foodCollected: number;
+  animalsStolen: number;
+  questsCompleted: number;
+  games: number;
+  /** Per-species escape counts, for the expandable breakdown. */
+  escapesBySpecies?: Record<string, number>;
+  /** Species used most recently (a small avatar in the row), when known. */
+  lastSpecies?: string;
+}
+
+/**
+ * Payload for `leaderboard:data` — the reply to `leaderboard:request`. Carries the
+ * top-`limit` rows under `sort`, the `total` number of ranked accounts (so the UI
+ * can show "rank N of total"), and the asker's OWN row in `you` (present even when
+ * it's outside the returned `rows`, so the player always sees their standing). The
+ * `sort` is echoed so a client that changed sorts mid-flight can ignore a stale reply.
+ */
+export interface LeaderboardMsg {
+  /** The sort the rows are ordered by (echoes the request, server-validated). */
+  sort: LeaderboardSort;
+  /** Top-N rows, already ranked + ordered best-first under `sort`. */
+  rows: LeaderboardRow[];
+  /** Total number of ranked accounts in the store (for "of N"). */
+  total: number;
+  /** The requesting player's own ranked row, or null if they have no account/stats. */
+  you: LeaderboardRow | null;
+}
+
+/**
  * Optional typed maps for socket.io's generic ServerToClientEvents /
  * ClientToServerEvents. Importing these is not required but documents the wire.
  */
@@ -207,6 +291,7 @@ export interface ClientToServerEvents {
   [CLIENT_EVENTS.LOBBY_JOIN]: (payload: LobbyJoin) => void;
   [CLIENT_EVENTS.INPUT]: (payload: InputMsg) => void;
   [CLIENT_EVENTS.PING]: (payload: Ping) => void;
+  [CLIENT_EVENTS.LEADERBOARD_REQUEST]: (payload: LeaderboardRequest) => void;
 }
 
 export interface ServerToClientEvents {
@@ -215,4 +300,5 @@ export interface ServerToClientEvents {
   [SERVER_EVENTS.SNAPSHOT]: (payload: SnapshotMsg) => void;
   [SERVER_EVENTS.PONG]: (payload: Pong) => void;
   [SERVER_EVENTS.MAP]: (payload: MapMsg) => void;
+  [SERVER_EVENTS.LEADERBOARD_DATA]: (payload: LeaderboardMsg) => void;
 }
