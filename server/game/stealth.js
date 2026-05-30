@@ -86,7 +86,10 @@ async function loadShared() {
     // primitives directly in the hot loop — validate them at boot so a stale
     // shared/dist fails LOUD here, not mid-tick. (boxHitsSolid: near-wall test;
     // wanderVec: open-field saunter blend; hash32: per-entity repath phasing.)
-    'boxHitsSolid', 'wanderVec', 'hash32'
+    'boxHitsSolid', 'wanderVec', 'hash32',
+    // Anti-vibration: the idle-wander facing commit uses the deadband helper +
+    // its WANDER tuning, so validate both at boot (stale dist fails LOUD here).
+    'facingFromVecDeadband', 'WANDER'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -677,8 +680,15 @@ function stepIdleAnimals(dt, roomName, currentTick) {
       e, currentTick, dt, gaitWanderSpeed(e, currentTick),
       rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, bounds,
     );
-    // Face the actual drift direction (zero delta on a boxed-in tick holds facing).
-    e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
+    // Face the actual drift direction — but with a DEADBAND so a pen-corner grind
+    // doesn't make the animal vibrate. wanderAvoid holds one desired heading for
+    // ~40 ticks, yet when the body is pinned in a corner steerAround's probe fan
+    // finds a DIFFERENT clear micro-slide every tick; deriving facing from each
+    // sub-pixel displacement snapped it to wildly different dirs tick-to-tick
+    // (the visible vibration). facingFromVecDeadband HOLDS the prior facing when
+    // the actual move is below WANDER.FACING_DEADBAND, so facing only turns on a
+    // real step. Deterministic + pure (no RNG/clock) like facingFromVec.
+    e.facing = shared.facingFromVecDeadband(e.x - bx, e.y - by, e.facing || 's', shared.WANDER.FACING_DEADBAND);
   }
 }
 

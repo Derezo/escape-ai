@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.85: **Pen animals no longer vibrate against their fences (facing deadband).** Idle
+  penned animals flipped facing rapidly — appearing to vibrate — whenever they were pinned
+  against a pen wall or corner. Root cause: `wanderAvoid` holds one desired heading for ~40
+  ticks, but when the body is boxed in, `steerAround`'s probe fan finds a *different* clear
+  micro-slide every tick, so deriving facing from each sub-pixel displacement snapped the
+  sprite to wildly different directions tick-to-tick (net motion ≈ 0, but the facing churned).
+  Fix: a new pure, deterministic `facingFromVecDeadband(dx, dy, prev, minDelta)` in
+  `shared/src/step.ts` that HOLDS the previous facing when the actual per-tick move is below
+  `WANDER.FACING_DEADBAND` (0.75 units — well under a normal ~2 u/tick step, above corner
+  jitter), only turning on a real step. Wired into the containment/idle-wander facing commit in
+  `server/game/stealth.js` (the return-home commits are deliberately left untouched). `loadShared`
+  now boot-validates `facingFromVecDeadband` + `WANDER` so a stale `shared/dist` fails loud, not
+  mid-tick. No change to `wanderVec`/`steerAround`/`wanderAvoid`/`moveWithCollision` — facing-only,
+  fully deterministic. 74/74 shared tests green (4 new deadband tests, incl. a corner-grind
+  no-flip case); `check-facing.js` still passes.
+
 - 0.2.84: **Map-readability overhaul (WORLD_GEN_VERSION 14): sparse straight paths, a
   connected river, water that only touches grass.** Three fixes to `shared/src/world.ts`,
   all deterministic. (1) **Paths are now sparse + straight.** The winding per-zone spaghetti

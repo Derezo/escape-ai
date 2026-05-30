@@ -97,6 +97,31 @@ export function facingFromVec(dx: number, dy: number, prev: Dir8 = 's'): Dir8 {
   return DIR8[idx];
 }
 
+/**
+ * Like {@link facingFromVec}, but with a minimum-displacement DEADBAND that holds
+ * the previous facing on a sub-threshold move. This kills the "pen-corner
+ * vibration" bug: an idle animal pinned in a corner of its enclosure barely moves
+ * each tick (steerAround's probe fan finds a DIFFERENT clear micro-slide every
+ * tick as the body shifts a fraction of a pixel), so naively deriving facing from
+ * each tiny displacement snapped facing to wildly different directions tick after
+ * tick — the animal looked like it was flipping/vibrating even though net motion
+ * was ~0. The fix: only commit a NEW facing when the body actually traveled a
+ * meaningful distance (>= minDelta); below that, HOLD prev and don't turn.
+ *
+ * Pure + deterministic (no RNG/clock): same (dx, dy, prev, minDelta) → same Dir8,
+ * so server authority and any client prediction can't disagree. Consistent with
+ * facingFromVec's contract — a too-small move (including the exact zero vector,
+ * which has magnitude 0 < any positive minDelta) returns prev; a real move defers
+ * to facingFromVec. Pass minDelta from the caller's tuning (e.g.
+ * {@link WANDER.FACING_DEADBAND}) so the threshold stays a single tunable.
+ */
+export function facingFromVecDeadband(dx: number, dy: number, prev: Dir8, minDelta: number): Dir8 {
+  // Magnitude below the deadband ⇒ corner-grinding / barely moving: HOLD facing.
+  if (Math.hypot(dx, dy) < minDelta) return prev;
+  // Real step ⇒ turn to face it, identical to the no-deadband path.
+  return facingFromVec(dx, dy, prev);
+}
+
 // ---------------------------------------------------------------------------
 // Ambient NPC drift — deterministic patrol (robots) + wander (idle animals)
 //
@@ -125,6 +150,16 @@ export const WANDER = {
    * Used by {@link homeBiasedWanderStep}.
    */
   HOME_BIAS: 0.45,
+  /**
+   * Minimum per-tick displacement (units) required to RE-DERIVE an idle animal's
+   * facing from its drift. Below this, {@link facingFromVecDeadband} holds the
+   * previous facing — the anti-vibration deadband for pen-corner grinding. Tuned
+   * well under a normal step (full-speed drift ≈ 2 units/tick at ANIMAL_SPEED=40,
+   * dt=0.05) so real movement still turns the animal, but above the sub-pixel
+   * jitter a boxed-in wanderer produces when steerAround slides it a fraction of a
+   * unit in a fresh direction each tick. Same value on every server (deterministic).
+   */
+  FACING_DEADBAND: 0.75,
 } as const;
 
 /**

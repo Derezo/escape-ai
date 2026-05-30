@@ -26,7 +26,12 @@ import {
   locomotionStep,
   DEFAULT_LOCOMOTION,
 } from '../dist/locomotion.js';
-import { homeBiasedWanderStep, WANDER } from '../dist/step.js';
+import {
+  homeBiasedWanderStep,
+  facingFromVec,
+  facingFromVecDeadband,
+  WANDER,
+} from '../dist/step.js';
 
 const TILE = 32;
 const RADIUS = 11; // ~ RECT_SIZE * 0.4 (server uses the same value)
@@ -281,4 +286,62 @@ test('homeBiasedWanderStep: deterministic and respects the HOME_BIAS default', (
   const a = homeBiasedWanderStep({ id: 'h', x: 1000, y: 1000 }, 5, DT, 60, bounds, home);
   const b = homeBiasedWanderStep({ id: 'h', x: 1000, y: 1000 }, 5, DT, 60, bounds, home, WANDER.HOME_BIAS);
   assert.deepEqual(a, b, 'explicit default weight matches implicit');
+});
+
+// --- facingFromVecDeadband (anti pen-corner vibration) -----------------------
+
+test('facingFromVecDeadband: a sub-deadband move HOLDS prev facing', () => {
+  // A displacement whose magnitude is below FACING_DEADBAND must not turn the
+  // animal, no matter which way the sub-pixel slide points (the vibration fix).
+  const tiny = WANDER.FACING_DEADBAND * 0.5; // well under the deadband
+  // Point this tiny move EAST — naive facingFromVec would snap to 'e'…
+  const naive = facingFromVec(tiny, 0, 'n');
+  assert.equal(naive, 'e', 'sanity: without the deadband a tiny east move would flip to e');
+  // …but the deadband holds the previous 'n'.
+  const held = facingFromVecDeadband(tiny, 0, 'n', WANDER.FACING_DEADBAND);
+  assert.equal(held, 'n', 'sub-deadband move holds prev facing');
+});
+
+test('facingFromVecDeadband: an above-deadband move matches facingFromVec', () => {
+  // A real step (>= deadband) must behave EXACTLY like the no-deadband path so
+  // genuine movement still turns the animal.
+  const big = WANDER.FACING_DEADBAND * 4; // a clear, meaningful step
+  for (const [dx, dy] of [[big, 0], [0, big], [-big, big], [big, -big]]) {
+    assert.equal(
+      facingFromVecDeadband(dx, dy, 'n', WANDER.FACING_DEADBAND),
+      facingFromVec(dx, dy, 'n'),
+      `above-deadband (${dx},${dy}) defers to facingFromVec`,
+    );
+  }
+});
+
+test('facingFromVecDeadband: deterministic — same inputs, same output twice', () => {
+  const a = facingFromVecDeadband(0.3, -0.2, 'sw', WANDER.FACING_DEADBAND);
+  const b = facingFromVecDeadband(0.3, -0.2, 'sw', WANDER.FACING_DEADBAND);
+  assert.equal(a, b, 'pure: identical args → identical Dir8');
+  // And a real step is likewise stable across two calls.
+  const c = facingFromVecDeadband(3, 4, 'n', WANDER.FACING_DEADBAND);
+  const d = facingFromVecDeadband(3, 4, 'n', WANDER.FACING_DEADBAND);
+  assert.equal(c, d, 'pure on the real-step path too');
+});
+
+test('facingFromVecDeadband: a corner grind never flips facing, then a real step turns it', () => {
+  // Simulate the bug: a boxed-in animal gets a DIFFERENT tiny slide every tick
+  // (steerAround's probe fan picking a fresh clear micro-direction as the body
+  // shifts a fraction of a unit). Each is below the deadband, so facing must NOT
+  // change across the whole grind — the vibration is gone.
+  const tiny = WANDER.FACING_DEADBAND * 0.4;
+  const grind = [
+    [tiny, 0], [-tiny, 0], [0, tiny], [0, -tiny],
+    [tiny, tiny], [-tiny, tiny], [tiny, -tiny], [-tiny, -tiny],
+    [tiny * 0.5, tiny * 0.3], [-tiny * 0.2, -tiny * 0.7],
+  ];
+  let facing = 's'; // the animal's settled facing before it got boxed in
+  for (const [dx, dy] of grind) {
+    facing = facingFromVecDeadband(dx, dy, facing, WANDER.FACING_DEADBAND);
+    assert.equal(facing, 's', `grind slide (${dx.toFixed(2)},${dy.toFixed(2)}) must hold facing`);
+  }
+  // Now it breaks free with a real westward step — facing finally turns.
+  facing = facingFromVecDeadband(-(WANDER.FACING_DEADBAND * 3), 0, facing, WANDER.FACING_DEADBAND);
+  assert.equal(facing, 'w', 'a real step past the deadband turns the animal');
 });
