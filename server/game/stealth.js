@@ -20,6 +20,7 @@ const quests = require('./quests');
 const follow = require('./follow');
 const speciesRoster = require('../socket/species-roster');
 const { bumpStat } = require('./stats-delta');
+const { secsToTicks, findPlayerById } = require('./room-utils');
 
 // The cached shared module (resolved by loadShared() before the loop starts).
 let shared = null;
@@ -188,11 +189,6 @@ function setFx(entity, kind, currentTick, durationTicks) {
   entity.fx = { kind, startTick: currentTick, untilTick: currentTick + Math.max(1, durationTicks) };
 }
 
-/** Seconds -> whole ticks (deterministic; no wall clock). */
-function secsToTicks(secs) {
-  return Math.round(secs * config.TICK_RATE);
-}
-
 /**
  * Third-Law hazard avoidance: would a step to (nx,ny) land a robot inside any
  * active hazard zone (a skunk stink-cloud)? Robots refuse to enter, so the
@@ -270,24 +266,6 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, current
 }
 
 /**
- * Find a connected player by its game id within a room. Used by the prop-follow
- * step to resolve a prop's carrierId back to the live player object.
- * @param {string} roomName
- * @param {string} playerId
- * @returns {object|null}
- */
-function findPlayerById(roomName, playerId) {
-  if (!connectedPlayers || !rooms) return null;
-  const members = rooms.get(roomName);
-  if (!members) return null;
-  for (const socketId of members) {
-    const p = connectedPlayers.get(socketId);
-    if (p && p.id === playerId) return p;
-  }
-  return null;
-}
-
-/**
  * Step every robot in one room for this tick: run the shared Three-Laws
  * decision, move pursuers, decay suspicion, honor Second-Law orders, and fire
  * the catch hook. Robot objects are mutated in place inside the world's entity
@@ -317,7 +295,7 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   // courier). If the carrier has vanished (disconnect), free the prop in place.
   const prop = worldEntities.find((e) => e.kind === 'prop');
   if (prop && prop.carrierId) {
-    const carrier = findPlayerById(roomName, prop.carrierId);
+    const carrier = findPlayerById(connectedPlayers, rooms, roomName, prop.carrierId);
     if (carrier && carrier.carrying) {
       // Still held: ride along with the carrier.
       prop.x = carrier.x;

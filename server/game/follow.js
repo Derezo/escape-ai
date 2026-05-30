@@ -28,6 +28,7 @@
 const config = require('../config');
 const world = require('./world');
 const { bumpStat, bumpEscapedSpecies } = require('./stats-delta');
+const { secsToTicks, findPlayerById } = require('./room-utils');
 
 // The cached shared module (handed over by stealth.loadShared via setShared).
 let shared = null;
@@ -45,11 +46,6 @@ function setShared(mod) {
 function setRefs(players, roomsMap) {
   connectedPlayers = players;
   rooms = roomsMap;
-}
-
-/** Seconds → whole ticks (deterministic; mirrors stealth.secsToTicks). */
-function secsToTicks(secs) {
-  return Math.round(secs * config.TICK_RATE);
 }
 
 // --- player state -----------------------------------------------------------
@@ -209,7 +205,7 @@ function stepFollowers(dt, roomName, currentTick) {
     // OWNER GONE: disconnected / no longer in this room → release. (Disconnect /
     // catch / escape free followers at their own chokepoints; this is the per-tick
     // backstop so a follower never chases a ghost.)
-    const owner = findPlayerById(roomName, e.followerOf);
+    const owner = findPlayerById(connectedPlayers, rooms, roomName, e.followerOf);
     if (!owner || owner.escaped) {
       releaseFollower(e);
       continue;
@@ -290,19 +286,6 @@ function releaseFollowersOf(roomName, playerId) {
 }
 
 // --- helpers ----------------------------------------------------------------
-
-/** Resolve a player by its game id within a room (mirrors stealth.findPlayerById,
- *  using the refs handed over at init so follow.js doesn't reach into stealth). */
-function findPlayerById(roomName, playerId) {
-  if (!connectedPlayers || !rooms) return null;
-  const members = rooms.get(roomName);
-  if (!members) return null;
-  for (const socketId of members) {
-    const p = connectedPlayers.get(socketId);
-    if (p && p.id === playerId) return p;
-  }
-  return null;
-}
 
 /** Stamp the render-echo of a collect/feed/steal event onto an entity. Mirrors
  *  stealth.setFx: startTick is the client's one-shot edge; a short untilTick drives

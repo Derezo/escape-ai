@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.38: **Animal collection — Phase 6 validation remediation (`/plan-validation-and-review`).**
+  The validation pass (requirements trace, connectivity audit, dedup scan, build/test) found
+  all 17 requirements implemented + connected, `engine.toEntity` forwarding every new field,
+  the `feed` verb wired end-to-end, and the old 4-key stat literals fully migrated. It
+  surfaced three fixable items, all fixed here:
+  - **Duplicate helpers removed:** `secsToTicks` and `findPlayerById` were byte-identical in
+    both `server/game/stealth.js` and `server/game/follow.js` (a config-drift / sync hazard).
+    Extracted to a new leaf module `server/game/room-utils.js` (depends only on `config`, so no
+    require cycle — `stealth` requires `follow`, so `follow` can't require `stealth`, but both
+    require `room-utils`). `findPlayerById` now takes the maps as args (stateless).
+  - **Unused shared exports wired:** `FOOD_COUNT` and `isFoodKey` in `shared/src/food.ts` had no
+    callers. Rather than drop them (they mirror `quests.ts`'s `QUEST_COUNT` and `species.ts`'s
+    `isPlayableSpecies` — the parity-invariant + validation surface of a shared lookup table),
+    added `shared/test/food.test.mjs` (mirrors `quests.test.mjs`) that exercises them: 1:1
+    species↔food coverage, unique keys (skunk ≠ mole), total/deterministic `foodForSpecies`,
+    round-trip `foodByKey`, and `isFoodKey` membership. This also gives the new module the same
+    test coverage as its siblings.
+  - **False positive dismissed:** a dedup agent flagged `foodByKey` as an unused import in
+    `phaser.ts`; it is used at the food `createView` tint lookup — no change.
+  - Verified: shared 20/20 (was 15; +5 food tests), client build clean, server boots, the
+    collect/feed/steal/score integration harness green, e2e wire check 4/4.
+
 - 0.2.37: **Animal collection — Phase 5: client rendering + UI.** The feature becomes
   visible + playable. No `IRenderer`/shared signature change — new server fields ride the
   `Entity` index signature into `syncEntities`, and client-only derivations ride underscore
