@@ -333,6 +333,34 @@ function getHomeCentersBySpecies(roomName) {
 }
 
 /**
+ * Per-species home GATE-INSIDE goal TILE, for the return-home pathfinder (the A*
+ * goal — one row inside the enclosure gate / building door, guaranteed non-solid
+ * and inside the inset containment bounds, so a solid pond/den core can never make
+ * the goal unreachable). Housing's gate is south-center (gateTx = rx+floor(rw/2),
+ * gateTy = ry+rh-1) — the same geometry stampHousing carves; a species building
+ * carries doorTx/doorTy directly. The gatehouse (species == null) is skipped.
+ * Computed once per map; the caller keys it by species. An animal whose species
+ * isn't here (a transient fox decoy) gets no entry → no path goal (it drifts).
+ * @param {string} roomName
+ * @returns {Map<string, {tx:number, ty:number}>}
+ */
+function getHomeGateInsideBySpecies(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tiles = new Map();
+  for (const h of map.housing) {
+    if (!h.species) continue;
+    const gateTx = h.rx + Math.floor(h.rw / 2);
+    const gateTy = h.ry + h.rh - 1;
+    tiles.set(h.species, { tx: gateTx, ty: gateTy - 1 }); // one row inside the gate
+  }
+  for (const b of map.buildings) {
+    if (!b.species) continue;
+    tiles.set(b.species, { tx: b.doorTx, ty: b.doorTy - 1 }); // one row inside the door
+  }
+  return tiles;
+}
+
+/**
  * The aux Building (`aux-commissary` / `aux-washroom` / `aux-maintenance`) for an
  * id in a room, or null for an unknown / non-aux id. Only buildings carrying an
  * `auxKind` are aux buildings; the gatehouse + species homes are excluded.
@@ -559,6 +587,7 @@ module.exports = {
   getPatrolRoute,
   getHomeBoundsBySpecies,
   getHomeCentersBySpecies,
+  getHomeGateInsideBySpecies,
   getGuardBoundsByRobotId,
   getAuxInteriorRects,
   auxBuildingById,

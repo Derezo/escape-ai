@@ -4,6 +4,32 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.56: **NPC pathfinding — Phase 3 (return home THROUGH the gate; slow cadence preserved).**
+  Fixes the bug where an animal whose follow-leash lapsed drifted toward its enclosure center, jammed
+  on the OUTSIDE of the fence, and never found the 2-tile gate — the old code papered over it by
+  declaring the animal "home" while merely pressed against the outer wall. It now PATHS back in.
+  - **Server (`server/game/world.js`):** new `getHomeGateInsideBySpecies(roomName)` — the per-species
+    gate-INSIDE goal tile (one row inside the enclosure gate / building door, always non-solid and
+    inside the inset bounds, so a solid pond/den core can never make the goal unreachable), exported.
+  - **Server (`server/config.js`):** new `PATHFIND` block — `REPATH_TICKS` (recompute cadence, ~1.5s),
+    `GATE_BAND_TILES` (chokepoint band width), `ARRIVE_TILES` (waypoint advance radius).
+  - **Server (`server/game/stealth.js`):** `followPathToGoal` (ensure + follow a cached A* route to a
+    goal tile — recomputed only on goal-change / exhaustion / the slow phased cadence; route simplified
+    to turning points with the gate goal kept mandatory) + `clearPath` + per-room gate-tile & A*-scratch
+    caches. `stepIdleAnimals` returningHome branch rewritten: A* to the gate-inside tile, an open-field
+    ambient-wander blend (`RETURN_WANDER_BLEND`) so the long walk still reads as a saunter, switching to
+    PURE path-following inside the gate band so the 2-tile gap threads deterministically (no fence-post
+    clip). Commit is via the EXISTING `steerAround` + `locomotionStep` at the UNCHANGED
+    `WANDER_ANIMAL_SPEED` + species gait — so the slow cadence is preserved (a returning tortoise still
+    crawls, a kangaroo hops). Arrival is now a TRUE re-entry test (`pathfind.inBounds` of the interior
+    bounds), not a proximity guess. The `homeArrivalRadius` hack is DELETED; `homeBiasedWanderStep` is
+    KEPT as the documented fallback for the rare unreachable-goal / degenerate-seed case.
+  - Verified live: ALL 14 species path from the far spawn corner across the map, through their gate, and
+    re-enter their pen (`returningHome` clears only when genuinely inside the inset bounds); gait cadence
+    preserved per species; 42 animals returning simultaneously over a 600-tick full loop (idle +
+    followers + robots) ran in **0.167ms avg / 14.97ms worst tick** (50ms budget). Paths are per-entity
+    server-only scratch, never serialized. shared **68/68**, client `tsc && vite build` green.
+
 - 0.2.55: **NPC pathfinding — Phase 2 (situational awareness: contained animals invisible to robots).**
   Fixes the bug where robots froze/investigated/pursued idle animals sitting INSIDE their own
   enclosures — peeling patrols pointlessly into pens. An animal that is "where it belongs" is no longer
