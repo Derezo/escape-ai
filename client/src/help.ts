@@ -202,6 +202,10 @@ export function createHelp(): HelpHandle {
       ['Caught', String(stats.caught)],
       ['Orders issued', String(stats.ordersIssued)],
       ['Abilities used', String(stats.abilitiesUsed)],
+      // Animal-collection counters (?? 0 so older records without them read as 0).
+      ['Food collected', String(stats.foodCollected ?? 0)],
+      ['Animals stolen', String(stats.animalsStolen ?? 0)],
+      ['Quests completed', String(stats.questsCompleted ?? 0)],
       ['Play time', formatPlayTime(stats.playSeconds)],
     ];
     pane.innerHTML = `<h2>Stats</h2>`;
@@ -217,6 +221,30 @@ export function createHelp(): HelpHandle {
       grid.append(l, v);
     }
     pane.appendChild(grid);
+
+    // Escapes by species: a small breakdown, in roster order, of how many of each
+    // species this account has walked out the gate (your own escapes + every
+    // follower you led out). Only shown when there's at least one.
+    const bySpecies = stats.escapesBySpecies ?? {};
+    const escapedKeys = SPECIES.filter((s) => (bySpecies[s.key] ?? 0) > 0);
+    if (escapedKeys.length > 0) {
+      const heading = document.createElement('h3');
+      heading.className = 'stats-species-heading';
+      heading.textContent = 'Escaped by species';
+      pane.appendChild(heading);
+      const speciesGrid = document.createElement('div');
+      speciesGrid.className = 'stats-species-grid';
+      for (const s of escapedKeys) {
+        const cell = document.createElement('div');
+        cell.className = 'stats-species-cell';
+        const caption = document.createElement('span');
+        caption.className = 'stats-species-count';
+        caption.textContent = `${s.label} ×${bySpecies[s.key]}`;
+        cell.append(createSpeciesSprite(s.key, { size: 32 }), caption);
+        speciesGrid.appendChild(cell);
+      }
+      pane.appendChild(speciesGrid);
+    }
 
     // Last species: a small animated sprite + its label, when known.
     if (stats.lastSpecies) {

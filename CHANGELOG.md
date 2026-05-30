@@ -4,6 +4,37 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.37: **Animal collection — Phase 5: client rendering + UI.** The feature becomes
+  visible + playable. No `IRenderer`/shared signature change — new server fields ride the
+  `Entity` index signature into `syncEntities`, and client-only derivations ride underscore
+  fields stamped in `main.ts` (like `_local`).
+  - **`client/src/render/phaser.ts`:** a `kind:'food'` `createView` case (a food-tinted
+    6-point pip + label, Y-sorted, tint from the shared `foodByKey`). A **decaying follow
+    ring** over a followed animal: a partial-sweep `Graphics` (new `EntityView.followRing`),
+    redrawn each frame at the entity's interpolated position, with a green→amber→red colour
+    ramp, a subtle pulse under 18%, and the local player's herd drawn brighter/thicker than
+    rivals'. New `fireFx` cases for `collect`/`feed`/`steal` (gold sparkle / green confirm
+    ring / contested burst+flash).
+  - **`client/src/inventory.ts` (new):** a standalone toggle-`I` overlay listing collected
+    food (`×count`) and which species each feeds, read from the local player's
+    server-authoritative `inventory`; a cached signature so it rebuilds only on change.
+  - **`client/src/main.ts`:** `f` → `feed` action key; `i` kept out of the movement key set;
+    per-frame stamping of `_followFrac = (followUntilTick − latestTick)/(followUntilTick −
+    followSince)` and `_followMine` (main owns `latestTick`; the renderer stays tick-blind);
+    inventory refresh; press-confirmation + `fx`-edge SFX for collect/feed/steal; a `#cue`
+    toast (`+1 food` / `following you!` / `stolen — following you!`) plus a herd-count-drop
+    "a follower was stolen!" cue for the victim; and a `#win-sub` score subtitle ("+N pts ·
+    herd of K (J stolen)") populated from `lastScore` on the escape edge.
+  - **`client/src/help.ts`:** Stats tab gains Food collected / Animals stolen / Quests
+    completed rows, plus an **escapes-by-species** breakdown (animated sprite + count per
+    species, from the parsed JSON stat).
+  - **`client/src/style.css`:** chrome for the inventory panel, the cue toast, the win
+    subtitle, and the species breakdown.
+  - **`scripts/e2e-follow.js` (new):** a wire regression check — all 14 food sources ride the
+    snapshot with `foodKey`/`name`, and the server accepts the `feed` verb. PASS.
+  - Verified: shared 15/15, client build clean; e2e wire check green; the collect/feed/
+    accumulate/steal/score MECHANICS were proven by the Phase-3 server integration harness.
+
 - 0.2.36: **Animal collection — Phase 4: stat persistence + DB migration.** The new
   counters now survive across sessions (`server/db.js`).
   - **Guarded in-place migration:** `init()` runs `ALTER TABLE stats ADD COLUMN` for

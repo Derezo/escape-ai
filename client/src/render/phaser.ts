@@ -23,6 +23,7 @@ import type { IRenderer, Entity, WorldMap } from '@shared/renderer';
 import type { Dir8 } from '@shared/types';
 import { facingFromVec } from '@shared/step';
 import { TILE_BY_INDEX } from '@shared/tiles';
+import { foodByKey } from '@shared/food';
 
 /** Visual size of a mobile entity (animal/robot), in pixels. */
 const RECT_SIZE = 28;
@@ -130,6 +131,13 @@ interface EntityView {
   fxStartTick?: number;
   /** A sustained glow/overlay (cloak/carry/shell/stink), cleared when fx ends. */
   fxGlow?: Phaser.GameObjects.Arc;
+  /** Decaying follow-time ring over a followed animal (a partial-sweep Graphics,
+   *  redrawn each frame from the client-stamped _followFrac). Lazily created. */
+  followRing?: Phaser.GameObjects.Graphics;
+  /** Last follow fraction + ownership stamped on the view, so interpolate() can
+   *  re-issue the ring draw at the entity's fresh position each frame. */
+  followFrac?: number;
+  followMine?: boolean;
   /** True for the local player's view (drives camera-follow + roof-fade probe). */
   isLocal?: boolean;
   /** Whether this kind Y-sorts (mobile entities + quest objects in the world band). */
@@ -494,6 +502,7 @@ class WorldScene extends Phaser.Scene {
         this.updateAnimation(view, e);
         this.restyle(view, e);
         this.updateFx(view, e);
+        this.updateFollowRing(view, e);
       } else {
         if (view) this.destroyView(view);
         const created = this.createView(e);
@@ -501,6 +510,7 @@ class WorldScene extends Phaser.Scene {
         this.updateAnimation(created, e);
         this.restyle(created, e);
         this.updateFx(created, e);
+        this.updateFollowRing(created, e);
         this.views.set(e.id, created);
         if (e._local === true) this.startFollow(created);
       }
@@ -528,6 +538,9 @@ class WorldScene extends Phaser.Scene {
       view.ring?.setPosition(x, y);
       view.halo?.setPosition(x, y);
       view.fxGlow?.setPosition(x, y);
+      // The follow ring is a Graphics drawn at absolute coords + (re)animated for
+      // its pulse, so redraw it at the fresh position each frame while active.
+      if (view.followRing && view.followFrac !== undefined) this.drawFollowRing(view);
       // Y-SORT: once a tilemap world exists, a mobile entity's depth is its world
       // Y, so it draws in front of things above it (smaller Y) and behind things
       // below it — including the canopy layer at mid-band, giving the walk-behind
@@ -691,6 +704,61 @@ class WorldScene extends Phaser.Scene {
   }
 
   /**
+   * Draw / update the decaying follow-time ring over a followed animal. The
+   * remaining FRACTION is stamped client-side in main.ts (the only place holding
+   * the server tick) onto `e._followFrac` (0..1), with `e._followMine` flagging
+   * the local player's own herd. The ring is a partial sweep that shrinks as the
+   * follow lapses (Graphics, not Arc — Arc can't redraw a sweep each frame), with
+   * a green→amber→red colour ramp and a subtle pulse near expiry. Drawn at the
+   * entity's interpolated position in interpolate(); torn down in destroyView.
+   */
+  private updateFollowRing(view: EntityView, e: Entity): void {
+    const frac = typeof e._followFrac === 'number' ? e._followFrac : undefined;
+    if (frac === undefined || frac <= 0) {
+      // Not following (or lapsed): drop the ring if one exists.
+      if (view.followRing) { view.followRing.destroy(); view.followRing = undefined; }
+      view.followFrac = undefined;
+      view.followMine = undefined;
+      return;
+    }
+    if (!view.followRing) {
+      view.followRing = this.add.graphics().setDepth(DEPTH_FX);
+    }
+    // Stash the data; the actual draw happens in drawFollowRing() — called here on
+    // a data change AND every frame from interpolate() so the ring tracks the
+    // entity's moving position (a Graphics arc is drawn at absolute coords).
+    view.followFrac = frac;
+    view.followMine = e._followMine === true;
+    this.drawFollowRing(view);
+  }
+
+  /** Redraw the follow ring at the view's current render position from its stashed
+   *  fraction/ownership. Cheap; called each frame from interpolate() while active. */
+  private drawFollowRing(view: EntityView): void {
+    const g = view.followRing;
+    const frac = view.followFrac;
+    if (!g || frac === undefined) return;
+    // Colour ramp: full = green, half = amber, empty = red.
+    const color = frac > 0.5
+      ? blendColors(0xffd24a, 0x6fcf97, (frac - 0.5) * 2) // amber → green
+      : blendColors(0xe05a5a, 0xffd24a, Math.max(0, frac) * 2); // red → amber
+    const mine = view.followMine === true;
+    // A subtle pulse on alpha + radius once it's nearly out (< 18%).
+    const pulse = frac < 0.18 ? 0.75 + 0.25 * Math.sin(this.time.now / 90) : 1;
+    const alpha = (mine ? 0.95 : 0.7) * pulse;
+    const width = mine ? 4 : 2.5;
+    const r = SPRITE_SIZE * 0.62 * pulse;
+    // Sweep clockwise from the top (−90°) proportional to the remaining fraction.
+    const start = -Math.PI / 2;
+    const end = start + Math.PI * 2 * frac;
+    g.clear();
+    g.lineStyle(width, color, alpha);
+    g.beginPath();
+    g.arc(view.renderX, view.renderY, r, start, end, false);
+    g.strokePath();
+  }
+
+  /**
    * Detect a NEW ability activation (the fx.startTick rising edge) and fire a
    * one-shot burst; manage sustained glows (cloak/carry/shell/stink) that last
    * for the effect's duration. Cheap no-op when fx is absent/unchanged.
@@ -834,6 +902,18 @@ class WorldScene extends Phaser.Scene {
       case 'decoy': // fox: orange spawn puff
         this.burst(view, 0xd2691e, { count: 12, speed: 80, life: 360 });
         break;
+      case 'collect': // food pickup: a small gold sparkle rising off the player
+        this.burst(view, 0xffd24a, { count: 8, speed: 50, life: 320, gravityY: -40 });
+        break;
+      case 'feed': // recruited a follower: a warm green confirm ring + soft burst
+        this.ring(view, 0x6fcf97, { r0: 8, r1: 56, life: 300, width: 3 });
+        this.burst(view, 0x9be0b0, { count: 8, speed: 50, life: 320 });
+        break;
+      case 'steal': // stole a follower: a contested red/gold burst + a quick flash
+        this.burst(view, 0xe05a5a, { count: 14, speed: 110, life: 360 });
+        this.burst(view, 0xffd24a, { count: 8, speed: 70, life: 300 });
+        this.pendingFlash = true;
+        break;
       default:
         break;
     }
@@ -930,6 +1010,23 @@ class WorldScene extends Phaser.Scene {
           { ysorted: true, label: this.makeLabel(e) },
         );
 
+      case 'food': {
+        // A per-species food source: a small rounded pip tinted to its food, with
+        // a label naming the food. Y-sorted so it tucks into the enclosure among
+        // the entities. Collected food never depletes the source (renewable), so
+        // the view just lives until the entity leaves the snapshot. Vector-only.
+        const foodKey = typeof e.foodKey === 'string' ? e.foodKey : undefined;
+        const tint = (foodKey !== undefined ? foodByKey(foodKey)?.tint : undefined) ?? 0xffcf6a;
+        return base(
+          this.add
+            .star(e.x, e.y, 6, MARKER_SIZE * 0.22, MARKER_SIZE * 0.5, tint)
+            .setStrokeStyle(2, 0xfff0c0, 0.9)
+            .setOrigin(0.5)
+            .setDepth(DEPTH_PROP),
+          { ysorted: true, label: this.makeLabel(e) },
+        );
+      }
+
       case 'animal':
       default: {
         const species = typeof e.species === 'string' ? e.species : 'ape';
@@ -1024,6 +1121,7 @@ class WorldScene extends Phaser.Scene {
     view.ring?.destroy();
     view.halo?.destroy();
     view.fxGlow?.destroy();
+    view.followRing?.destroy();
   }
 }
 

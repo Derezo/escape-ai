@@ -747,3 +747,163 @@ body {
 .stats-empty {
   color: #9aa3ad;
 }
+
+/* ----- Animal collection: inventory overlay (I), cue toast, win subtitle,
+   escapes-by-species breakdown. Mirrors the help/win-banner chrome. ----- */
+
+/* Inventory overlay — same centered-modal pattern as #help-overlay. */
+#inv-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.82);
+  user-select: none;
+}
+#inv-overlay.open {
+  display: flex;
+}
+#inv-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: 460px;
+  width: 100%;
+  max-height: 80vh;
+  padding: 18px 24px 14px;
+  border-radius: 12px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  box-shadow: 0 0 40px rgba(230, 168, 38, 0.14);
+  color: #cde7ff;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#inv-panel h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+  color: #ffd24a;
+}
+#inv-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  background: #1a212c;
+  color: #cde7ff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+#inv-body {
+  overflow-y: auto;
+}
+.inv-empty {
+  color: #9aa3ad;
+}
+.inv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.inv-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #161c26;
+  border: 1px solid #232c38;
+}
+.inv-icon {
+  font-size: 20px;
+  text-align: center;
+}
+.inv-name {
+  font-weight: 600;
+}
+.inv-count {
+  color: #ffd24a;
+  font-variant-numeric: tabular-nums;
+}
+.inv-feeds {
+  color: #9aa3ad;
+  font-size: 12px;
+}
+
+/* Action cue — a brief centered toast for collect / feed / steal / lost. */
+#cue {
+  position: fixed;
+  top: 32%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.85);
+  z-index: 24;
+  padding: 8px 20px;
+  border-radius: 999px;
+  background: rgba(8, 12, 18, 0.88);
+  border: 1px solid #2b3340;
+  color: #e9f3ff;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+#cue.active {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+#cue[data-kind='collect'] { border-color: #ffd24a; color: #ffe9a8; }
+#cue[data-kind='feed']    { border-color: #6fcf97; color: #c8f5da; }
+#cue[data-kind='steal']   { border-color: #e0a526; color: #ffe0a0; }
+#cue[data-kind='lost']    { border-color: #e05a5a; color: #ffc9c9; }
+
+/* Win-banner score subtitle (added under the existing #win-banner title). */
+#win-title {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 3px;
+}
+#win-sub {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: #9be0b0;
+  text-shadow: none;
+}
+
+/* Escapes-by-species breakdown in the Stats tab. */
+.stats-species-heading {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  color: #4cc9f0;
+}
+.stats-species-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 8px;
+}
+.stats-species-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #161c26;
+  border: 1px solid #232c38;
+}
+.stats-species-count {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}

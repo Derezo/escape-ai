@@ -31,6 +31,7 @@ import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
 import { preloadSfx, playSfx, type SfxName } from './audio';
 import { createHelp } from './help';
+import { createInventory } from './inventory';
 import { runMenu } from './menu';
 
 // Client prediction uses the SAME collision-aware integration as the server
@@ -94,14 +95,37 @@ async function main(): Promise<void> {
   document.body.appendChild(lockdownOverlay);
 
   // --- Victory banner: shown once the local player reaches the gate (escaped). ---
+  // A title line + a subtitle that reports the points + herd earned this escape.
   const winBanner = document.createElement('div');
   winBanner.id = 'win-banner';
-  winBanner.textContent = '🦊 ESCAPED!';
+  const winTitle = document.createElement('div');
+  winTitle.id = 'win-title';
+  winTitle.textContent = '🦊 ESCAPED!';
+  const winSub = document.createElement('div');
+  winSub.id = 'win-sub';
+  winBanner.append(winTitle, winSub);
   document.body.appendChild(winBanner);
+
+  // --- Action cue: a brief centered toast for collect / feed / steal events. ---
+  const cue = document.createElement('div');
+  cue.id = 'cue';
+  document.body.appendChild(cue);
+  let cueHideTimer: ReturnType<typeof setTimeout> | undefined;
+  const flashCue = (text: string, kind: 'collect' | 'feed' | 'steal' | 'lost'): void => {
+    cue.textContent = text;
+    cue.dataset.kind = kind;
+    cue.classList.add('active');
+    if (cueHideTimer) clearTimeout(cueHideTimer);
+    cueHideTimer = setTimeout(() => cue.classList.remove('active'), 900);
+  };
 
   // --- In-game help (H / ?). Built hidden; the splash handles first-run intro
   // now, so the help widget no longer opens on load. H or ? toggles it. ---
   createHelp();
+
+  // --- Inventory overlay (I). Built hidden; lists the collected food + which
+  // species each feeds. Reads the local player's server-authoritative inventory. ---
+  const inventory = createInventory();
 
   // --- SFX. Preload the catalogue; the AudioContext starts suspended until a
   // user gesture. The splash's first-gesture handler (menu.ts) calls unlockAudio()
@@ -144,6 +168,9 @@ async function main(): Promise<void> {
   // Whether the victory banner is currently shown. Tracks the server's `escaped`
   // edges: set true on escape, back to false when the server respawns us.
   let shownWin = false;
+  // The size of our herd last frame (animals whose followerOf === myId), so a DROP
+  // (a rival stole one) fires a flavor "lost a follower" cue. Derived client-side.
+  let prevHerd = 0;
   // Per-entity last fx.startTick we played an SFX for, so an ability activation
   // (on ANY player/robot) fires its sound once — the audio twin of the renderer's
   // visual fx edge. Distance-scaled so 20 players don't make a cacophony.
@@ -231,9 +258,10 @@ async function main(): Promise<void> {
   // gates the keydown so OS key-repeat doesn't enqueue the action every tick
   // while the key is held down.
   const ACTION_KEYS: Record<string, PlayerAction> = {
-    e: 'interact', // use nearest terminal / pick up the disguise prop
+    e: 'interact', // use nearest terminal / pick up the disguise prop / collect food
     q: 'order', // issue the Second-Law order to the nearest robot
     ' ': 'ability', // trigger this species' special
+    f: 'feed', // give the nearest feedable animal its liked food → it follows you
   };
   let queuedAction: PlayerAction | undefined;
   const actionHeld = new Set<string>();
@@ -251,9 +279,9 @@ async function main(): Promise<void> {
       }
       return;
     }
-    // The help toggle keys are handled in help.ts; don't let them leak into
-    // the movement key set (nothing reads them today, but it avoids stale state).
-    if (key === 'h' || key === '?') return;
+    // The help (H/?) and inventory (I) toggle keys are handled in their own
+    // modules; don't let them leak into the movement key set.
+    if (key === 'h' || key === '?' || key === 'i') return;
     keys.add(key);
   });
   window.addEventListener('keyup', (e) => {
@@ -296,8 +324,13 @@ async function main(): Promise<void> {
       input.action = queuedAction;
       // Audible feedback per action verb (the server is still authority for the
       // effect; this is just the press confirmation). order → assertive select,
-      // ability → jump, interact → blip.
-      playSfx(queuedAction === 'order' ? 'select' : queuedAction === 'ability' ? 'jump' : 'blip');
+      // ability → jump, feed → confirm, interact → blip.
+      playSfx(
+        queuedAction === 'order' ? 'select'
+        : queuedAction === 'ability' ? 'jump'
+        : queuedAction === 'feed' ? 'confirm'
+        : 'blip',
+      );
       queuedAction = undefined;
     }
     net.sendInput(input);
@@ -340,9 +373,43 @@ async function main(): Promise<void> {
     // Tag our own entity as local (client-only field; never crosses the wire) so
     // the renderer snaps it to the predicted position while interpolating remote
     // entities for smoothness. Cleared on others implicitly (only one is set).
+    //
+    // Also stamp the decaying follow-ring inputs on any FOLLOWING animal: the
+    // renderer has no server tick, but main.ts owns `latestTick`, so we derive the
+    // remaining FRACTION here as a client-only underscore field (like _local) and
+    // hand it down via syncEntities — no IRenderer/shared signature change. We also
+    // count our own herd this frame to drive the "stolen from me" cue below.
     const list = [...entities.values()];
-    for (const e of list) e._local = myId !== undefined && e.id === myId;
+    let herdNow = 0;
+    for (const e of list) {
+      e._local = myId !== undefined && e.id === myId;
+      // Follow ring: active iff this animal has an owner and an un-lapsed timer.
+      const until = typeof e.followUntilTick === 'number' ? e.followUntilTick : undefined;
+      const since = typeof e.followSince === 'number' ? e.followSince : undefined;
+      if (e.followerOf && until !== undefined && until > latestTick) {
+        const span = since !== undefined && until > since ? until - since : 1;
+        e._followFrac = Math.max(0, Math.min(1, (until - latestTick) / span));
+        e._followMine = myId !== undefined && e.followerOf === myId;
+        if (e._followMine) herdNow += 1;
+      } else if (e._followFrac !== undefined) {
+        // No longer following — clear the stamps so the renderer drops the ring.
+        e._followFrac = undefined;
+        e._followMine = undefined;
+      }
+    }
     renderer.syncEntities(list);
+
+    // Steal-from-me cue (flavor only): our herd shrank between frames → a rival fed
+    // one of our followers away. Derived from the herd count, not a server event.
+    if (herdNow < prevHerd) {
+      flashCue('a follower was stolen!', 'lost');
+      playSfx('error', 0.55);
+    }
+    prevHerd = herdNow;
+
+    // Inventory overlay: refresh from our own server-authoritative bag (no-op
+    // unless it changed). Cheap to call every frame.
+    inventory.render(myId ? (entities.get(myId)?.inventory as Record<string, number> | undefined) : undefined);
 
     // Ability SFX for ANY entity, on the fx.startTick rising edge (mirrors the
     // renderer's visual fx edge). Volume falls off with distance to the local
@@ -353,6 +420,14 @@ async function main(): Promise<void> {
       if (!fx || typeof fx.startTick !== 'number') continue;
       if (fxSfxSeen.get(e.id) === fx.startTick) continue;
       fxSfxSeen.set(e.id, fx.startTick);
+      // Animal-collection cue toast for OUR OWN actions: 'collect' fx rides our
+      // player entity; 'feed'/'steal' ride the animal we just claimed (followerOf
+      // === myId by now). Flavor only — the press already played its sound.
+      if (fx.kind === 'collect' && e.id === myId) {
+        flashCue('+1 food', 'collect');
+      } else if ((fx.kind === 'feed' || fx.kind === 'steal') && e.followerOf === myId) {
+        flashCue(fx.kind === 'steal' ? 'stolen — following you!' : 'following you!', fx.kind as 'feed' | 'steal');
+      }
       const name = sfxForFx(fx.kind as string);
       if (!name) continue;
       let vol = 0.6;
@@ -405,6 +480,17 @@ async function main(): Promise<void> {
       shownWin = true;
       winBanner.classList.add('active');
       playSfx('confirm', 0.9);
+      // Score subtitle: the server stamps `lastScore` on the escape edge (the same
+      // moment `escaped` flips). Report the points + herd; call out a stolen bonus.
+      const ls = me?.lastScore as { points: number; herd: number; stolen: number } | undefined;
+      if (ls && typeof ls.points === 'number') {
+        const herd = ls.herd > 0
+          ? `herd of ${ls.herd}${ls.stolen > 0 ? ` (${ls.stolen} stolen)` : ''}`
+          : 'solo escape';
+        winSub.textContent = `+${ls.points} pts · ${herd}`;
+      } else {
+        winSub.textContent = '';
+      }
     } else if (!escapedNow && shownWin) {
       shownWin = false;
       winBanner.classList.remove('active');
@@ -475,6 +561,10 @@ function sfxForFx(kind: string): SfxName | undefined {
     case 'skitter': case 'mimic': return 'blip';
     case 'carry': case 'decoy': return 'pickup';
     case 'stink': case 'shell': return 'select';
+    // Animal-collection events (echoed on the acting player / fed animal).
+    case 'collect': return 'pickup';
+    case 'feed': return 'confirm';
+    case 'steal': return 'dazzle';
     default: return undefined;
   }
 }
