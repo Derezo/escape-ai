@@ -4,6 +4,19 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.43: **Merge: organic map overhaul × animal-collection feature.** The `game/map-overhaul`
+  branch (organic biome layout, gatehouse plaza, per-pen NPC animals + containment — 0.2.39–0.2.42
+  below) merged into `game/caves-of-steel` (which had independently grown the animal-collection
+  feature — food sources, feed/follow/score — 0.2.33–0.2.38 below). The two are orthogonal and
+  compose: the per-species `foodSource` spec is now emitted inside the overhaul's restructured
+  `penAnchor → foodSource → questObject` loop (co-located with the quest tile, with its
+  TROUGH_FOOD marker stamped after the reachability carve and before the new edge-blend pass), and
+  `stepIdleAnimals` both skips a following animal (collection) AND contains a non-following pen
+  animal to its enclosure (overhaul). The merged generator output differs from both parents, so
+  `WORLD_GEN_VERSION` was bumped to **8** and both parity hashes re-pinned from the combined
+  `generateWorld(123)`. Verified: shared **26/26** (the full union of both branches' tests), server
+  boot, client build, and a 42-animal containment sim (0 escaped, 0 frozen) all green.
+
 - 0.2.38: **Animal collection — Phase 6 validation remediation (`/plan-validation-and-review`).**
   The validation pass (requirements trace, connectivity audit, dedup scan, build/test) found
   all 17 requirements implemented + connected, `engine.toEntity` forwarding every new field,
@@ -165,6 +178,105 @@ All notable changes to TINS 2026. Update this file in every commit.
   - No behavior yet — food sources, feeding, following, stealing, scoring, the inventory UI
     and DB columns land in later phases. Verified: shared builds + 14/14 tests green; server
     boots, ticks at 20Hz, `/health` ok.
+- 0.2.42: **Map overhaul validation remediation (post-`/plan-validation-and-review`).** The
+  validation pass (requirements trace, connectivity audit, dedup scan, three-group code review,
+  build/test) found the overhaul complete and connected — every requirement implemented, zero
+  dead/duplicate code, determinism clean. It surfaced two defensive gaps, both fixed here (neither
+  changes generator output, so the pinned hashes / `WORLD_GEN_VERSION` are untouched):
+  - **Fail loud on home-placement failure (`shared/src/world.ts`):** if `findFreeRect` ever
+    exhausted all fallbacks, the loop `continue`d and silently dropped a species — breaking the
+    one-home-per-species invariant the parity test relies on. It now throws (mirroring the
+    reachability-non-convergence throw), so the invariant is enforced, not assumed. Unreachable at
+    128² with 14 homes ≤ 11×10, but no longer silent.
+  - **Clamp containment bounds (`server/game/world.js`):** `getHomeBoundsBySpecies` now clamps
+    `maxX/maxY ≥ minX/minY` so a degenerate home rect could never hand `wanderStep` an inverted
+    bound (which would freeze an animal). World-gen already guarantees rw/rh ≥ 8, so this is
+    belt-and-suspenders.
+  - One out-of-scope, pre-existing finding (the spawn fallback can add a still-solid tile that the
+    reachability carve then rescues) logged to `FINDINGS_OUTSIDE_SCOPE.md` — not fixed here.
+  - Verified: shared 20/20, client build, server boot, and a 2000-tick 42-animal containment sim
+    (0 escaped, 0 frozen, 0 inverted bounds) all green.
+
+- 0.2.41: **Map overhaul Phase C — per-enclosure NPC animals + containment.** Every enclosure is
+  now inhabited by 2–3 wandering NPC animals of its species, kept inside their pen.
+  `WORLD_GEN_VERSION` 6 → 7; hashes re-pinned. The wire shape of an animal is byte-identical to
+  before (verified) — containment data lives server-side, never on the entity.
+  - **`shared/src/world.ts` — `populateEnclosure`/`animalCountFor`:** each home gets
+    `animalCountFor = clampInt(2 + floor(interiorArea/24), 2, 3)` animals. The canonical
+    `pen-${species}` anchor (home center) is animal 1; `populateEnclosure` shuffles the home's
+    non-solid interior tiles ONCE (one rng draw-set per home, in roster order → stream stays
+    fixed) and emits the remaining animals as extra `pen-${species}-2..N` penAnchors. They
+    reuse the existing `penAnchor` kind, so `spawnFromMap` materializes them with **no new spec
+    kind or server case**, and the coverage test (which counts homes/quests, never penAnchors)
+    stays green at exactly one home + one quest per species.
+  - **`server/game/world.js` — `getHomeBoundsBySpecies`:** derives each species' enclosure
+    interior rect (world units, inset one tile inside the barrier ring) from the map's
+    housing/buildings. The gatehouse (species == null) is skipped.
+  - **`server/game/stealth.js` — containment in `stepIdleAnimals`:** a pen animal
+    (`pen-${species}` / `pen-${species}-n`) now wanders ONLY within its enclosure interior rect
+    (passed as the `shared.wanderStep` bounds), so the clamp turns it inward at the pen edge and
+    it can never drift out the 2-tile non-solid gate. Bounds live in a per-room server-side cache
+    keyed by id — **NOT a field on the entity** (the engine `JSON.stringify`s the whole world
+    entity onto the wire, so a `homeRect` field would leak). The fox lure (`decoy-N`, no `pen-`
+    id) and any future free animal fall back to whole-map bounds and roam, unchanged.
+  - **Verified:** a 2000-tick (~100s) simulation — 42 animals, **0 escaped their pen, 0 frozen**,
+    and the animal wire payload is byte-identical to a v4 animal (no containment field leaked).
+  - **Tests:** new `world.test.mjs` invariants — 2–3 animals per species; every penAnchor on a
+    non-solid tile strictly inside its home interior (off the gate ring → no leak); every home
+    interior ≥6×6 (so the wander bias can't collapse and freeze an animal). 20/20 green; shared
+    build, server boot, client build all green.
+
+- 0.2.40: **Map overhaul Phase B — entrance gatehouse plaza + tile-style accuracy
+  (`shared/src/world.ts`).** The bare 1-tile east gate becomes a believable main entrance, and
+  the long-unused blend tiles feather every grass↔path / grass↔water seam. `WORLD_GEN_VERSION`
+  5 → 6; hashes re-pinned. Reuse-only — no new tiles, no renderer change.
+  - **Gatehouse plaza (`stampEntrancePlaza`, replaces `stampPerimeter`):** a roofed gatehouse
+    hall (a species-less `Building`, so the renderer's fade-on-enter roof reads as walking
+    through the entrance and the coverage test still counts exactly one home per species) over a
+    cobble forecourt, framed with a sign arrow, banner, lamp posts, a bench, a bin and planting.
+    The perimeter wall is opened at **exactly one tile** — the single escape gate
+    (`gate = tileCenter(w-1, gateTy)`, byte-stable for `checkEscape`) — so the chokepoint the
+    game relies on is preserved. The plaza owns the east band and hands the layout its forecourt
+    spine anchor + a reserved rect, so the organic zones stay clear of the entrance.
+  - **Autotiled edges (`blendGroundEdges`/`classOf`/`pickBlendTile`):** a pure, row-major,
+    8-neighbour pass that rewrites a grass cell bordering a path/water region into the matching
+    `PATH_EDGE_*`/`WATER_EDGE_*` blend tile (25–48) — feathering the seams that used to be hard
+    edges. Path wins over water on a shoreline-path cell; ambiguous slivers (region on opposite
+    sides) stay base grass. All blend tiles are non-solid and solid water/walls are never
+    rewritten, so **collision is unchanged** (no rebuild). Runs after the reachability carve so
+    fallback corridors blend too.
+  - **Tests:** new `world.test.mjs` invariants — the gatehouse exists, is species-less, and has a
+    reachable non-solid door; and every single-edge/outer-corner grass border was blended (proving
+    the pass total over its claimed cases + idempotent). 17/17 green.
+
+- 0.2.39: **Map overhaul Phase A — organic layout + biome zones + water feature
+  (`shared/src/world.ts`).** The rigid 3×3 PAVED avenue grid and uniform rectangular plots
+  are replaced by an organic, real-zoo layout while keeping the generator pure + deterministic
+  and every reach target reachable. `WORLD_GEN_VERSION` 4 → 5; hashes re-pinned.
+  - **Biome zones (`partitionZones`):** the interior west of a reserved entrance band is split
+    into five themed zones (savanna / aviary / forest / wetland / rockyDen) via a fixed-topology,
+    jittered BSP — stable themes, per-seed shapes. `SPECIES_ZONE` assigns each species to a
+    sensible zone (pond→wetland, dens→forest/rocky, fliers→aviary, grazers/runners→savanna),
+    consistent with `SPECIES_HOUSING`, so homes cluster by biome.
+  - **Organic enclosures (`findFreeRect`/`claimPlot`):** one irregular home per species placed by
+    a deterministic free-rect scan inside its zone, with jittered footprints. Minimum interior is
+    pinned to ≥6×6 tiles so Phase C's animal-containment wander bias can't collapse and freeze
+    animals in a tiny box.
+  - **Water feature (`carveRiver`/`bridgeRiverCrossings`):** a meandering river runs down the
+    wetland zone (integer Bresenham + ±1 jitter — **no trig**, which isn't bit-stable across the
+    browser and server V8s) with a shallow walkable shore and a solid deep core. Paths route
+    around the bed and bridge it only where they meet both banks; an invariant + test keep every
+    reach target off/away from deep water so the reachability backstop never paves across the river.
+  - **Winding paths (`carveOrganicPaths`/`carveWindingPath`):** a jittered spine loop visits the
+    forecourt + every zone center, with a spur from each home to the spine, so the zoo reads as
+    curving avenues instead of a grid. The pass returns path **junctions** that now anchor the
+    terminals + robot spawns (the old placement read the deleted avenue lines — rewritten in the
+    same change so the build never breaks between phases).
+  - **Determinism discipline:** every branching helper draws its rng unconditionally per iteration
+    and all iteration order is fixed, so `generateWorld(seed)` stays byte-identical client↔server.
+  - **Tests:** new `world.test.mjs` invariant "no reach target on/adjacent to deep water" across
+    8 seeds; reachability + determinism + one-home/one-quest-per-species all still green (15/15).
+    No new tiles, no renderer change (blend tiles 25–48 already render via `TILE_BY_INDEX`).
 
 - 0.2.32: **Plan-validation remediation (post-`/plan-validation-and-review`).** The validation
   pass (requirements trace, connectivity audit, dedup scan, three-group code review, build/test)

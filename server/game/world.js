@@ -227,6 +227,39 @@ function getRoomMap(roomName) {
 }
 
 /**
+ * Per-species home CONTAINMENT bounds in world units, for keeping a pen's idle
+ * NPC animals inside their enclosure (Phase C). For each housing/building, the
+ * bounds are the interior wall-ring inset by one tile, so the ambient wander clamp
+ * (shared.wanderStep(bounds)) turns an animal inward before it reaches the barrier
+ * and never lets it drift out the 2-tile (non-solid) enclosure gate. The gatehouse
+ * (species == null) is skipped — it has no animals. Computed once per map; the
+ * caller keys it to animal ids (`pen-${species}` / `pen-${species}-n`).
+ *
+ * @param {string} roomName
+ * @returns {Map<string, {minX:number,minY:number,maxX:number,maxY:number}>}
+ */
+function getHomeBoundsBySpecies(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tile = map.tile;
+  const bounds = new Map();
+  const add = (species, rx, ry, rw, rh) => {
+    if (!species) return; // gatehouse has no species → no animals
+    // Interior wall ring inset by one tile (the barrier ring is the outer edge).
+    // World-gen guarantees rw>=8/rh>=8 (interior >=6x6), so the inset never
+    // inverts; clamp defensively anyway so a degenerate rect can't hand wanderStep
+    // an inverted bound (which would pin/freeze an animal) — keep min<=max.
+    const minX = (rx + 1) * tile;
+    const minY = (ry + 1) * tile;
+    const maxX = Math.max((rx + rw - 1) * tile, minX);
+    const maxY = Math.max((ry + rh - 1) * tile, minY);
+    bounds.set(species, { minX, minY, maxX, maxY });
+  };
+  for (const h of map.housing) add(h.species, h.rx, h.ry, h.rw, h.rh);
+  for (const b of map.buildings) add(b.species, b.rx, b.ry, b.rw, b.rh);
+  return bounds;
+}
+
+/**
  * The `map` event payload meta for a room: everything a client needs to
  * regenerate the tilemap deterministically. Creates the room on demand.
  * @param {string} roomName
@@ -361,6 +394,7 @@ module.exports = {
   loadSharedWorld,
   getOrCreateRoomWorld,
   getRoomMap,
+  getHomeBoundsBySpecies,
   getMapMeta,
   isSolidAtRoom,
   getWorldEntities,
