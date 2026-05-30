@@ -19,13 +19,20 @@
  */
 
 import Phaser from 'phaser';
-import type { IRenderer, Entity, WorldMap } from '@shared/renderer';
+import type { IRenderer, Entity, WorldMap, QuestGuide } from '@shared/renderer';
 import type { AuxKind, Building } from '@shared/world';
 import type { Dir8 } from '@shared/types';
 import { facingFromVec, hash32 } from '@shared/step';
 import { locomotionFor } from '@shared/locomotion';
 import { TILE_BY_INDEX } from '@shared/tiles';
 import { foodByKey } from '@shared/food';
+import {
+  findPath,
+  makeScratch,
+  toWorldWaypoints,
+  type Point,
+  type PathScratch,
+} from '@shared/pathfind';
 
 /** Visual size of a mobile entity (animal/robot), in pixels. */
 const RECT_SIZE = 28;
@@ -100,6 +107,25 @@ const DEPTH_ROOF = 1_000_000; // building roofs (fade to reveal the interior)
  *  the FX layer. Static signage, not Y-sorted. */
 const DEPTH_AUX_OVERLAY = 1_500_000;
 const DEPTH_FX = 2_000_000; // ability effects, glows, particles (above everything)
+/** The quest-direction arrow: just below the top FX so bursts/flashes still read
+ *  over it, but above mobiles/markers so it's never occluded by the world. */
+const DEPTH_QUEST_ARROW = DEPTH_FX - 1;
+
+/**
+ * Quest-arrow tuning (all client-cosmetic; see drawQuestArrow). The arrow flies a
+ * pathfound route from the player to the quest goal, pulsing, then fades near the
+ * goal and respawns after a beat — a soft, repeating "go this way" cue.
+ */
+const QUEST_ARROW = {
+  SPEED: 60, // px/sec travel along the path
+  MAX_ALPHA: 0.25, // peak opacity (translucent, per spec)
+  RAMP_PX: 40, // distance over which alpha eases 0 → MAX_ALPHA as it leaves the player
+  ARRIVE_PX: 100, // begin fading once this close (straight-line) to the goal
+  FADE_MS: 320, // fade-out duration once arriving
+  RESPAWN_MS: 800, // beat between one arrow fading and the next spawning
+  SIZE: 16, // arrow half-length in px (the triangle reach)
+  TINT: 0xff3b3b, // glowing red
+} as const;
 /** Kept for the legacy no-map path (shape views before a map arrives). */
 const DEPTH_PEN = -150;
 const DEPTH_PROP = 1; // terminals / gates / hazards / quest objects (Y-sorted band base)
@@ -202,6 +228,31 @@ class WorldScene extends Phaser.Scene {
    *  snapshot destroys+rebuilds the body, and a stale follow target freezes the
    *  camera). Null until the first follow. */
   private followTarget: Phaser.GameObjects.GameObject | null = null;
+
+  /** The static map, kept after buildWorld so the quest arrow can run the shared
+   *  A* against the same collision grid the server pathfinds on. */
+  private map: WorldMap | null = null;
+  /** Reused A* scratch for the quest-arrow pathfinder (allocated once per map). */
+  private pathScratch: PathScratch | null = null;
+  /** The local player's quest-direction hint, or null when there's nothing to point
+   *  at (set each frame by setQuestGuide; consumed by drawQuestArrow). */
+  private questGuide: QuestGuide | null = null;
+  /** Live quest-arrow state for the current cycle (null between cycles / when idle). */
+  private questArrow: {
+    /** The visual: a glowing red triangle (plus an additive glow underlay). */
+    tri: Phaser.GameObjects.Triangle;
+    glow: Phaser.GameObjects.Triangle;
+    /** Pathfound waypoints (world units) from the player to the goal this cycle. */
+    waypoints: Point[];
+    /** Index of the waypoint we're currently heading toward. */
+    index: number;
+    /** Distance travelled along the path so far (px) — drives the alpha ramp. */
+    travelled: number;
+    /** Set once within ARRIVE_PX of the goal: ms timestamp the fade-out began. */
+    fadingSince: number | null;
+  } | null = null;
+  /** While set, the arrow is in its inter-cycle beat; respawn once time passes this. */
+  private questArrowRespawnAt = 0;
 
   constructor() {
     super('world');
@@ -313,6 +364,8 @@ class WorldScene extends Phaser.Scene {
     this.upsert(this.pending);
     this.interpolate(delta / 1000);
     this.updateRoofFade();
+    // Quest-direction arrow: pathfind + animate the owner-only "go this way" cue.
+    this.drawQuestArrow(_time, delta / 1000);
     // Apply the coalesced camera FX once per frame (strongest shake wins; one
     // flash) so a burst of simultaneous abilities can't stack into nausea.
     if (this.pendingShake > 0) {
@@ -432,6 +485,13 @@ class WorldScene extends Phaser.Scene {
 
     // 4. Camera: bound to the world and (later) follow the local player.
     this.cameras.main.setBounds(0, 0, worldPx.w, worldPx.h);
+
+    // 5. Keep the map + a reusable A* scratch so the quest arrow can pathfind on the
+    // same collision grid the server uses (door tiles are non-solid → it threads them).
+    this.map = map;
+    this.pathScratch = makeScratch(map.w, map.h);
+    this.clearQuestArrow();
+    this.questArrowRespawnAt = 0;
   }
 
   /**
@@ -550,6 +610,14 @@ class WorldScene extends Phaser.Scene {
     const seen = new Set<string>();
 
     for (const e of entities) {
+      // Hide the local player's OWN per-species quest star when it's a misleading
+      // do-nothing marker (its quest target is elsewhere — e.g. the ape's is the
+      // gate). We leave it out of `seen` so any existing view is torn down below.
+      // Other species' stars still draw (other players' targets / harmless scenery).
+      if (this.questGuide && e.kind === 'questObject'
+        && e.species === this.questGuide.ownerSpecies && !this.questGuide.questUsesMarker) {
+        continue;
+      }
       seen.add(e.id);
       const view = this.views.get(e.id);
       if (view && view.kind === e.kind) {
@@ -846,6 +914,172 @@ class WorldScene extends Phaser.Scene {
     g.beginPath();
     g.arc(view.renderX, view.renderY, r, start, end, false);
     g.strokePath();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quest-direction arrow — a cosmetic, owner-only "go this way" cue.
+  //
+  // The game loop hands us a QuestGuide (the local player's current quest goal) via
+  // setQuestGuide. We pathfind from the player to that goal with the SAME shared A*
+  // the server uses (door/gate tiles are non-solid in the collision grid, so the
+  // route threads them like an NPC), then fly a glowing red arrow along the route:
+  // it spawns transparent at the player, eases to ~25% opacity as it leaves, pulses
+  // softly while travelling at ~60px/s, fades once within 100px of the goal, and a
+  // fresh arrow spawns from the player after a short beat. Purely visual — the
+  // server still owns quest completion.
+  // ---------------------------------------------------------------------------
+
+  /** Update the local player's quest-direction hint (IRenderer.setQuestGuide). */
+  setQuestGuide(guide: QuestGuide | null): void {
+    this.questGuide = guide;
+    // Goal/guide gone → stop the current arrow now (a stale route is worse than none).
+    if (!guide) this.clearQuestArrow();
+  }
+
+  /** Tear down the live arrow + reset its cycle state (safe to call repeatedly). */
+  private clearQuestArrow(): void {
+    if (this.questArrow) {
+      this.questArrow.tri.destroy();
+      this.questArrow.glow.destroy();
+      this.questArrow = null;
+    }
+  }
+
+  /**
+   * Per-frame quest-arrow driver. `now` is the Phaser clock (ms); `dt` is seconds.
+   * No guide / no world / no local player view → idle (and any live arrow cleared).
+   */
+  private drawQuestArrow(now: number, dt: number): void {
+    const guide = this.questGuide;
+    if (!guide || !this.worldBuilt || !this.map || !this.pathScratch) {
+      this.clearQuestArrow();
+      return;
+    }
+    const fromView = this.views.get(guide.fromId);
+    if (!fromView) {
+      this.clearQuestArrow();
+      return;
+    }
+    const px = fromView.renderX;
+    const py = fromView.renderY;
+
+    // Between cycles: hold off until the respawn beat elapses, then start anew.
+    if (!this.questArrow) {
+      if (now < this.questArrowRespawnAt) return;
+      this.startQuestArrowCycle(px, py, guide.goalX, guide.goalY);
+      if (!this.questArrow) {
+        // Unreachable goal this tick — try again after a beat (player may move into
+        // a reachable spot). Avoids hammering A* every frame on a bad route.
+        this.questArrowRespawnAt = now + QUEST_ARROW.RESPAWN_MS;
+        return;
+      }
+    }
+
+    this.advanceQuestArrow(this.questArrow, now, dt, guide.goalX, guide.goalY);
+  }
+
+  /** Begin one arrow cycle: pathfind player→goal and spawn the arrow at the player.
+   *  Leaves this.questArrow null if no route exists (caller retries after a beat). */
+  private startQuestArrowCycle(px: number, py: number, gx: number, gy: number): void {
+    // Already essentially at the goal → no direction cue worth showing (and spawning
+    // one would just flicker in-and-out, since it'd start fading on its first frame).
+    if (Math.hypot(gx - px, gy - py) <= QUEST_ARROW.ARRIVE_PX) return;
+    const map = this.map!;
+    const tile = map.tile;
+    const sTx = Math.floor(px / tile);
+    const sTy = Math.floor(py / tile);
+    const gTx = Math.floor(gx / tile);
+    const gTy = Math.floor(gy / tile);
+    const tilePath = findPath(map.collision, map.w, map.h, sTx, sTy, gTx, gTy, this.pathScratch!);
+    if (tilePath.length === 0) return; // unreachable / over budget → no arrow this cycle
+    const waypoints = toWorldWaypoints(tilePath, tile);
+    // Anchor the first waypoint at the player's exact position and the last at the
+    // true goal point (tile centres are close enough, but this makes the ends crisp).
+    waypoints[0] = { x: px, y: py };
+    waypoints[waypoints.length - 1] = { x: gx, y: gy };
+
+    // A slim isosceles triangle pointing +x (rotated each frame to its heading), plus
+    // a larger additive-blend copy beneath it for the soft glow. Both start invisible.
+    // setOrigin(0.5) centres the anchor on the shape's bounding box (matching every
+    // other shape in this renderer), so the arrow rides the path point and rotates
+    // cleanly about its centre instead of wobbling about a bbox corner.
+    const s = QUEST_ARROW.SIZE;
+    const mk = (scale: number, blend: Phaser.BlendModes): Phaser.GameObjects.Triangle =>
+      this.add
+        .triangle(px, py, s * scale, 0, -s * 0.6 * scale, s * 0.55 * scale, -s * 0.6 * scale, -s * 0.55 * scale, QUEST_ARROW.TINT)
+        .setOrigin(0.5)
+        .setDepth(DEPTH_QUEST_ARROW)
+        .setAlpha(0)
+        .setBlendMode(blend);
+    const glow = mk(1.8, Phaser.BlendModes.ADD);
+    const tri = mk(1.0, Phaser.BlendModes.NORMAL);
+
+    this.questArrow = { tri, glow, waypoints, index: 1, travelled: 0, fadingSince: null };
+  }
+
+  /** Advance one arrow along its cached route, ramping/pulsing alpha and fading near
+   *  the goal; on fade-complete, retire it and schedule the next cycle's spawn. */
+  private advanceQuestArrow(
+    arrow: NonNullable<WorldScene['questArrow']>,
+    now: number,
+    dt: number,
+    gx: number,
+    gy: number,
+  ): void {
+    const wps = arrow.waypoints;
+
+    // FADING: once arriving, run a quick alpha fade then retire + schedule respawn.
+    if (arrow.fadingSince !== null) {
+      const k = Math.min(1, (now - arrow.fadingSince) / QUEST_ARROW.FADE_MS);
+      const a = (1 - k) * QUEST_ARROW.MAX_ALPHA;
+      arrow.tri.setAlpha(a);
+      arrow.glow.setAlpha(a * 0.5);
+      if (k >= 1) {
+        this.clearQuestArrow();
+        this.questArrowRespawnAt = now + QUEST_ARROW.RESPAWN_MS;
+      }
+      return;
+    }
+
+    // TRAVEL: consume a per-frame distance budget along the polyline.
+    let budget = QUEST_ARROW.SPEED * dt;
+    let cx = arrow.tri.x;
+    let cy = arrow.tri.y;
+    let heading = arrow.tri.rotation;
+    while (budget > 0 && arrow.index < wps.length) {
+      const wp = wps[arrow.index];
+      const dx = wp.x - cx;
+      const dy = wp.y - cy;
+      const segLen = Math.hypot(dx, dy);
+      if (segLen <= 1e-3) { arrow.index += 1; continue; }
+      heading = Math.atan2(dy, dx);
+      if (segLen <= budget) {
+        cx = wp.x; cy = wp.y;
+        budget -= segLen;
+        arrow.travelled += segLen;
+        arrow.index += 1;
+      } else {
+        const f = budget / segLen;
+        cx += dx * f; cy += dy * f;
+        arrow.travelled += budget;
+        budget = 0;
+      }
+    }
+    arrow.tri.setPosition(cx, cy).setRotation(heading);
+    arrow.glow.setPosition(cx, cy).setRotation(heading);
+
+    // ALPHA: ease 0 → MAX over the first RAMP_PX of travel, times a soft pulse.
+    const ramp = Math.min(1, arrow.travelled / QUEST_ARROW.RAMP_PX);
+    const pulse = 0.85 + 0.15 * Math.sin(now / 140); // gentle breathing glow
+    const a = QUEST_ARROW.MAX_ALPHA * ramp * pulse;
+    arrow.tri.setAlpha(a);
+    arrow.glow.setAlpha(a * 0.5);
+
+    // ARRIVE: within ARRIVE_PX of the goal (or path consumed) → start fading.
+    const distToGoal = Math.hypot(gx - cx, gy - cy);
+    if (distToGoal <= QUEST_ARROW.ARRIVE_PX || arrow.index >= wps.length) {
+      arrow.fadingSince = now;
+    }
   }
 
   /**
@@ -1342,6 +1576,10 @@ export class PhaserRenderer implements IRenderer {
 
   syncEntities(entities: Entity[]): void {
     this.scene?.setEntities(entities);
+  }
+
+  setQuestGuide(guide: QuestGuide | null): void {
+    this.scene?.setQuestGuide(guide);
   }
 
   destroy(): void {

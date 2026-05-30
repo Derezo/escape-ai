@@ -24,9 +24,12 @@
  * step.ts (for the optional radius-aware variant) — no world.ts import, so there's
  * no step→world→rng→step cycle. The caller passes in `(collision, w, h, tile)`.
  *
- * Consumed SERVER-SIDE only (robots + animals are server-owned; their positions
- * already ride the per-tick snapshot delta). The path itself is per-entity scratch
- * state that is NEVER serialized — so this adds nothing to the net contract.
+ * Consumed server-side for NPC routing (robots + animals are server-owned; their
+ * positions already ride the per-tick snapshot delta) AND client-side, read-only,
+ * for the cosmetic quest-direction arrow (client/src/render/phaser.ts runs the same
+ * A* on its own regenerated map to draw the "go this way" cue). Either way the path
+ * is local scratch state that is NEVER serialized — so this adds nothing to the net
+ * contract, and the client route is purely a render cue (the server owns completion).
  */
 
 import { boxHitsSolid } from './step.js';

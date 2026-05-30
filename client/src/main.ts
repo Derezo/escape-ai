@@ -13,11 +13,12 @@
 
 import './style.css';
 
-import type { IRenderer } from '@shared/renderer';
+import type { IRenderer, QuestGuide } from '@shared/renderer';
 import type { Entity, WorldState, Dir8 } from '@shared/types';
 import type { InputMsg, PlayerAction } from '@shared/net';
 import { moveWithCollision, moveSpeed, facingFromVec } from '@shared/step';
 import { generateWorld, WORLD_GEN_VERSION, type WorldMap } from '@shared/world';
+import { questForSpecies } from '@shared/quests';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -425,6 +426,16 @@ async function main(): Promise<void> {
     }
     renderer.syncEntities(list);
 
+    // --- Quest-direction guide (cosmetic, owner-only): tell the renderer where the
+    // local player's CURRENT quest goal is so it can draw a path-following arrow.
+    // The goal differs by quest type (the server still owns completion): a 'fetch'
+    // (ape) heads to the GATE; an 'activate' (terminal-tapper) heads to the nearest
+    // keeper terminal; a 'reach' returns to its OWN home questObject. We also flag
+    // whether this species' own quest-object marker is meaningful, so the renderer
+    // can hide the misleading do-nothing star (e.g. the ape's, whose target is the
+    // gate). Cleared (null) when there's no quest, it's complete, or no goal exists.
+    renderer.setQuestGuide?.(questGuideFor(myId, entities, localMap));
+
     // Steal-from-me cue (flavor only): our herd shrank between frames → a rival fed
     // one of our followers away. Derived from the herd count, not a server event.
     if (herdNow < prevHerd) {
@@ -719,6 +730,83 @@ function sfxForFx(kind: string): SfxName | undefined {
     case 'steal': return 'dazzle';
     default: return undefined;
   }
+}
+
+/**
+ * The local player's quest-direction guide for the renderer (or null when there's
+ * nothing to point at). The goal depends on the quest mechanic — the server owns
+ * completion, this only chooses where the cosmetic arrow points:
+ *   - 'fetch'    (ape) → the perimeter gate (carry the prop out there).
+ *   - 'activate' (terminal-tappers) → the NEAREST keeper terminal. The client can't
+ *               see which terminals were already tapped (server-side Set), so it
+ *               points at the closest console and simply turns off once the quest
+ *               completes — a good-enough guidance approximation.
+ *   - 'reach'    (the rest) → the player's OWN home questObject.
+ * Returns null when there's no quest, it's already complete, the local entity isn't
+ * known yet, or no goal entity can be found.
+ *
+ * Also reports `questUsesMarker` (true only for 'reach') so the renderer can hide a
+ * species' own do-nothing star (the misleading "quest point" the ape saw in its pen).
+ */
+function questGuideFor(
+  myId: string | undefined,
+  entities: Map<string, Entity>,
+  localMap: WorldMap | undefined,
+): QuestGuide | null {
+  if (!myId) return null;
+  const me = entities.get(myId);
+  if (!me || typeof me.x !== 'number' || typeof me.y !== 'number') return null;
+  const species = typeof me.species === 'string' ? me.species : '';
+  if (!species) return null;
+  const questUsesMarker = questForSpecies(species).type === 'reach';
+
+  const quest = me.quest;
+  // No quest, or it's complete → no guide (returns null). One intended consequence:
+  // once a non-'reach' quest completes, the guide goes null and the renderer's marker
+  // filter stops hiding this species' own questObject star, so that star re-appears.
+  // That's fine — it was only hidden because it was a MISLEADING active-quest target;
+  // a completed quest's home star is harmless scenery (the HUD already shows the ✓),
+  // and for the ape 'fetch' completion coincides with escaping + respawning as a new
+  // species anyway. So we deliberately don't keep the filter alive past completion.
+  if (!quest || quest.complete) return null;
+
+  // Pick the goal POINT by quest mechanic. Iterate entities.values() directly (no
+  // array spread) so this stays allocation-free in the per-frame loop.
+  let goal: { x: number; y: number } | undefined;
+  if (quest.type === 'fetch') {
+    // 'fetch' (ape) → the perimeter gate (carry the prop out there).
+    for (const e of entities.values()) {
+      if (e.kind === 'gate' && typeof e.x === 'number' && typeof e.y === 'number') {
+        goal = { x: e.x, y: e.y };
+        break;
+      }
+    }
+    if (!goal) goal = localMap?.gate; // fallback to the static map's gate point
+  } else if (quest.type === 'activate') {
+    // 'activate' → the NEAREST keeper terminal (the client can't see which were
+    // already tapped; it points at the closest and turns off once the quest completes).
+    let nearestD2 = Infinity;
+    for (const e of entities.values()) {
+      if (e.kind !== 'terminal' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
+      const d2 = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
+      if (d2 < nearestD2) {
+        nearestD2 = d2;
+        goal = { x: e.x, y: e.y };
+      }
+    }
+  } else {
+    // 'reach' → this species' own home questObject (which IS its real target).
+    for (const e of entities.values()) {
+      if (e.kind === 'questObject' && e.species === species
+        && typeof e.x === 'number' && typeof e.y === 'number') {
+        goal = { x: e.x, y: e.y };
+        break;
+      }
+    }
+  }
+  if (!goal) return null;
+
+  return { fromId: myId, goalX: goal.x, goalY: goal.y, ownerSpecies: species, questUsesMarker };
 }
 
 main().catch((err) => {

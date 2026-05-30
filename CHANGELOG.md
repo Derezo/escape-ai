@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.87: **Quest clarity — a pathfinding direction arrow + hiding the misleading "quest
+  point" marker.** Players couldn't tell what their quest wanted: the ape's "Courier the
+  Clipboard" quest (`type: 'fetch'`) completes by carrying the prop to the *gate*, but the
+  world spawns a glowing per-species quest-object star in *every* pen — including the ape's —
+  and that star does nothing for a fetch/activate quest (only the 10 'reach' species use it).
+  So the ape walked to the do-nothing star in its own pen and nothing happened. The quest logic
+  was correct; the guidance was missing/misleading. Two client-only fixes (no server, no
+  worldgen, no `WORLD_GEN_VERSION` change): **(1)** A render filter in `client/src/render/phaser.ts`
+  hides the local player's own quest star when it isn't their real target (fetch/activate);
+  other species' stars still draw. **(2)** A cosmetic, owner-only **pulsing translucent red
+  arrow** that pathfinds from the player to the real goal using the *same shared A** the NPCs
+  use (`@shared/pathfind` — it threads doors/gates, since door tiles are non-solid). The goal is
+  per quest type: `fetch`→the gate, `activate`→the nearest keeper terminal, `reach`→the player's
+  own home quest-object; the arrow vanishes once the quest completes. Each arrow spawns
+  transparent at the player, eases to 25% opacity over its first 40px, travels the route at
+  ~60px/s with a soft breathing glow (additive underlay), fades within 100px of the goal, and a
+  fresh one spawns from the player's current position after a 0.8s beat. Wiring: a new OPTIONAL
+  `setQuestGuide(QuestGuide | null)` on the `IRenderer` contract (`shared/src/renderer.ts`),
+  derived per-frame in `client/src/main.ts` (`questGuideFor`, allocation-free) and guarded with
+  `?.` so the Babylon fallback is unaffected. The arrow runs A* purely client-side on the map the
+  client already regenerates from the seed — nothing crosses the wire; the server still owns
+  completion. `pathfind.ts`'s header updated to note the new client-cosmetic consumer. Client
+  `tsc --noEmit` clean; shared build + 74/74 tests green (worldgen/entitySpecs untouched).
+
 - 0.2.86: **Spatialized NPC audio — a 10-tile hearing radius, and the always-on ambient bed
   removed.** Looping/ambient sounds played constantly and at full volume regardless of where
   the source was, making the soundscape noisy the moment you joined. Now every world-emitted
