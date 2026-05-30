@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.75: **Wire 5 themed SFX that were authored but never played.** The manifest
+  defined `food_pickup`, `feed_follow`, `follower_lost`, `quest_progress`, and
+  `quest_blocked`, but the game still played generic placeholder synth WAVs (or nothing)
+  at those moments. Now in `client/src/main.ts`: `sfxForFx()` maps the `collect` fx →
+  `food_pickup` and the `feed` fx → `feed_follow` (themed, not the bare `pickup`/`confirm`
+  WAVs); the herd-shrank cue plays `follower_lost` instead of `error`; a new edge fires
+  `quest_progress` each time an `activate` quest's done-count climbs (short of complete);
+  and a new rising-edge fires `quest_blocked` once per gate-brush without a finished quest.
+  Until each `.mp3` is generated, the loader's placeholder-WAV fallback keeps them audible
+  and auto-upgrades on reload. Client typechecks + builds.
+
 - 0.2.74: **Audio prompts — describe the sound, not the game moment.** Several SFX
   descriptors in `asset-pipeline/manifest.json` narrated the *event* instead of the
   *sound* — Suno was being told to sonify clauses like "an animal now follows you" (feed_follow),

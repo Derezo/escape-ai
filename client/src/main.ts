@@ -184,6 +184,12 @@ async function main(): Promise<void> {
   const robotModeSeen = new Map<string, string>();
   // Quest-complete edge: fire quest_complete once when the quest first reads done.
   let prevQuestComplete = false;
+  // Quest-progress edge: fire quest_progress once each time an 'activate' quest's
+  // done-count climbs (but not on the final step — that's quest_complete's job).
+  let prevQuestDone = 0;
+  // Quest-blocked edge: fire quest_blocked once per gate brush, on the rising edge
+  // of the server's questBlocked stamp (not every frame the hint is showing).
+  let prevQuestBlocked = false;
 
   // Our predicted entity id (resolved from the lobby roster by name match).
   let myId: string | undefined;
@@ -412,7 +418,7 @@ async function main(): Promise<void> {
     // one of our followers away. Derived from the herd count, not a server event.
     if (herdNow < prevHerd) {
       flashCue('a follower was stolen!', 'lost');
-      playSfx('error', 0.55);
+      playSfx('follower_lost', 0.55);
     }
     prevHerd = herdNow;
 
@@ -539,6 +545,15 @@ async function main(): Promise<void> {
       // Tint: green when done, amber when blocked at the gate, default otherwise.
       hudQuestRow.classList.toggle('quest-done', quest.complete);
       hudQuestRow.classList.toggle('quest-blocked', !quest.complete && blocked);
+      // Quest-progress edge: tick once each time the done-count climbs while the
+      // quest is still short of complete (the final step is quest_complete's job).
+      const doneNow = typeof quest.done === 'number' ? quest.done : 0;
+      if (!quest.complete && doneNow > prevQuestDone) playSfx('quest_progress');
+      prevQuestDone = doneNow;
+      // Quest-blocked edge: buzz once on the rising edge of a gate brush without a
+      // finished quest — not every frame the "finish your quest" hint is showing.
+      if (blocked && !quest.complete && !prevQuestBlocked) playSfx('quest_blocked');
+      prevQuestBlocked = blocked && !quest.complete;
       // Quest-complete edge: chime once when the objective first reads done.
       if (quest.complete === true && !prevQuestComplete) playSfx('quest_complete');
       prevQuestComplete = quest.complete === true;
@@ -546,6 +561,8 @@ async function main(): Promise<void> {
       hudQuest.textContent = '…';
       hudQuestRow.classList.remove('quest-done', 'quest-blocked');
       prevQuestComplete = false;
+      prevQuestDone = 0;
+      prevQuestBlocked = false;
     }
 
     // Carrying row: shown only while we actually hold the disguise prop.
@@ -616,9 +633,10 @@ function sfxForFx(kind: string): SfxName | undefined {
     case 'skitter': case 'mimic': return 'blip';
     case 'carry': case 'decoy': return 'pickup';
     case 'stink': case 'shell': return 'select';
-    // Animal-collection events (echoed on the acting player / fed animal).
-    case 'collect': return 'pickup';
-    case 'feed': return 'confirm';
+    // Animal-collection events (echoed on the acting player / fed animal). These
+    // use the themed Escape AI SFX rather than the bare placeholder synth WAVs.
+    case 'collect': return 'food_pickup';
+    case 'feed': return 'feed_follow';
     case 'steal': return 'dazzle';
     default: return undefined;
   }
