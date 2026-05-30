@@ -12,8 +12,14 @@ const { v4: uuidv4 } = require('uuid');
 const world = require('../game/world');
 const quests = require('../game/quests');
 const follow = require('../game/follow');
+const session = require('../game/session');
+const engine = require('../game/engine');
+const config = require('../config');
 const speciesRoster = require('./species-roster');
 const { limiter } = require('./rate-limit');
+
+// Seconds → ticks for the post-restore grace window (TICK_RATE Hz, default 20).
+const secsToTicks = (secs) => Math.max(0, Math.round(secs * (config.TICK_RATE || 20)));
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -83,20 +89,33 @@ function register(socket, deps) {
     const joinIndex = joinCountByRoom.get(room) || 0;
     joinCountByRoom.set(room, joinIndex + 1);
 
-    // Species: honor the player's pick (payload.species, or the one stashed at
-    // auth time) when it's a valid playable species; otherwise assign one off the
-    // join index so the shared roster cycles evenly.
+    // RESUME: a returning player with a saved mid-run session for THIS room at a
+    // matching worldVersion resumes their CURRENT species (and is restored to its
+    // position/quest/inventory/score below). The version guard (session.isUsableFor)
+    // means a worldgen bump cleanly degrades to a fresh pen spawn for the saved
+    // species rather than stranding the avatar in a relocated wall.
+    const savedSession = state.session;
+    const resuming = session.isUsableFor(savedSession, room);
+
+    // Species: a usable saved session wins (resume the reborn species); else honor
+    // the player's pick (payload.species, or the one stashed at auth time) when
+    // valid; else assign one off the join index so the shared roster cycles evenly.
     const roster = speciesRosterKeys();
+    const savedSpecies =
+      savedSession && speciesRoster.isPlayableSpecies(savedSession.species)
+        ? savedSession.species
+        : undefined;
     const pick = typeof payload.species === 'string' ? payload.species : state.desiredSpecies;
-    const species = speciesRoster.isPlayableSpecies(pick)
-      ? pick
-      : roster[joinIndex % roster.length];
+    const species = savedSpecies
+      ? savedSpecies
+      : (speciesRoster.isPlayableSpecies(pick) ? pick : roster[joinIndex % roster.length]);
 
     // Spawn the player in their OWN species' pen (with a stable per-player jitter),
     // NOT the gate-side block — the gate is where robots patrol, and spawning there
     // could drop the player onto a robot and chain-catch them. Resolved AFTER the
     // species above so the pen matches the avatar. (A post-spawn grace window —
-    // player.spawnSafeUntilTick below — is the second guard against re-catch.)
+    // player.spawnSafeUntilTick below — is the second guard against re-catch.) A
+    // resuming player's exact x/y is restored from the snapshot AFTER creation.
     const playerId = uuidv4();
     const spawn = world.spawnForSpecies(room, species, playerId);
 
@@ -166,6 +185,20 @@ function register(socket, deps) {
     quests.initPlayer(player);
     // Initialize the food bag (empty) for the animal-collection loop.
     follow.initPlayer(player);
+
+    // RESUME: overlay the saved mid-run state onto the fresh player — exact x/y,
+    // quest progress (incl. the tapped-terminal Set), inventory, and running score
+    // — so the rejoin drops back in where it left off rather than at the pen spawn.
+    // Then stamp the post-spawn catch-immunity grace (same guard catchPlayer uses)
+    // so restoring near the gate/robots can't instantly re-catch the player. Only
+    // runs when the snapshot is version-matched for this room (else the fresh pen
+    // spawn above stands). The session is consumed once (cleared) so a later
+    // re-join in the same socket session doesn't re-apply a stale snapshot.
+    if (resuming) {
+      session.restore(player, savedSession);
+      player.spawnSafeUntilTick = engine.getCurrentTick() + secsToTicks(config.SPAWN_GRACE_SECS);
+      state.session = null;
+    }
     connectedPlayers.set(socket.id, player);
 
     // Track room membership and join the Socket.IO room for broadcasts.

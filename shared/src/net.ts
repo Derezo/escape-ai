@@ -143,6 +143,14 @@ export interface AuthResult {
   token?: string;
   username?: string;
   stats?: UserStats;
+  /**
+   * True when the server has a usable saved session for this account: a returning
+   * player resumes their CURRENT (in-game-reborn) species — the menu SKIPS the
+   * species picker and joins straight in. Absent/false for a brand-new account.
+   */
+  resumed?: boolean;
+  /** The species the resuming player will spawn as (set iff `resumed`). */
+  resumeSpecies?: string;
 }
 
 /** Payload for `lobby:state`. */

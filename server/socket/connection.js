@@ -7,6 +7,7 @@
 
 const { broadcastLobbyState } = require('./lobby');
 const follow = require('../game/follow');
+const session = require('../game/session');
 const { limiter } = require('./rate-limit');
 
 /**
@@ -58,6 +59,11 @@ function cleanup(socket, deps) {
     const delta = { ...(player.statsDelta || {}), playSeconds };
     player.statsDelta = null;
     db.incStats(player.userId, delta);
+    // Persist the full mid-run snapshot so a rejoin resumes exactly here (species,
+    // position, quest progress, food bag, score) — version-stamped so a worldgen
+    // bump falls back to a clean pen spawn on restore (see socket/lobby.js).
+    const snap = session.snapshot(player);
+    if (snap) db.saveSession(player.userId, snap);
   }
 
   if (player && player.room) {

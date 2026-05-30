@@ -58,11 +58,25 @@ function register(socket, deps) {
     state.desiredSpecies = validSpecies;
     state.joinedAt = Date.now();
 
+    // RESUME: load any saved mid-run session so lobby.js can restore the player
+    // (species/position/quest/inventory/score) instead of a fresh pen spawn. A
+    // returning player with a usable session resumes their CURRENT species — the
+    // client menu skips the picker when `resumed` is set. Stash the raw snapshot
+    // for lobby.js; surface only the species hint (+ a flag) to the client.
+    const savedSession = db.loadSession ? db.loadSession(user.id) : undefined;
+    state.session = savedSession || null;
+    const resumeSpecies =
+      savedSession && isPlayableSpecies(savedSession.species) ? savedSession.species : undefined;
+
     sock.emit('auth:result', {
       ok: true,
       token: result.token,
       username: user.username,
-      stats: db.getStatsForUser(user.id)
+      stats: db.getStatsForUser(user.id),
+      // Client hint: a returning player resumes (skip the species picker) as this
+      // species. Absent for a brand-new account or one with no saved session.
+      resumed: resumeSpecies !== undefined,
+      resumeSpecies
     });
   });
 }

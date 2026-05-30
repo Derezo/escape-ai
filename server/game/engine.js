@@ -31,6 +31,7 @@ const stealth = require('./stealth');
 const quests = require('./quests');
 const follow = require('./follow');
 const statsDelta = require('./stats-delta');
+const session = require('./session');
 
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
@@ -173,7 +174,18 @@ function integratePlayers(dt) {
     // Win + respawn lifecycle: reaching the gate escapes (shows the banner);
     // after a brief celebration the player respawns as a fresh animal. The gate
     // is GATED on quest completion (stealth.checkEscape).
+    const speciesBefore = player.species;
     stealth.checkEscape(player, player.room, currentTick);
+    // REBIRTH EDGE: checkEscape's respawn rolls the player into the next species.
+    // When that happens, persist the new identity + a fresh session snapshot so a
+    // rejoin resumes as the reborn species (not the original). Edge-driven — only
+    // the rare respawn tick writes; the common case compares two strings and moves
+    // on. Guarded for tests / un-authed players (no db / no userId).
+    if (db && player.userId && player.species !== speciesBefore) {
+      db.setLastSpecies(player.userId, player.species);
+      const snap = session.snapshot(player);
+      if (snap) db.saveSession(player.userId, snap);
+    }
 
     // Consume the latched one-shot action (order / interact / ability), if any.
     // Cleared immediately so it fires once per press; lobby.js latches it onto

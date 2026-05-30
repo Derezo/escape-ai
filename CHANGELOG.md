@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.92: **Session persistence — rejoin resumes your current species mid-run (no more
+  ape-pen reset).** Previously only account-level stats + a menu-pick `last_species` survived a
+  disconnect, so a rejoining player always restarted as a fresh menu species at the original
+  pen — never as the species they'd been reborn into. Added a full mid-run **session snapshot**
+  (species, x/y, quest progress incl. tapped terminals, food bag, running score, room +
+  worldVersion) persisted server-side in a new SQLite `sessions` table (`server/db.js`
+  `saveSession`/`loadSession`, guarded-migration idiom). A new `server/game/session.js` owns the
+  snapshot shape + a version-guarded `restore`. The engine writes a snapshot on the **rebirth
+  edge** (species change after `checkEscape`) and `connection.js` writes one on **disconnect** —
+  both edge-driven (no per-tick DB churn), reusing the engine's existing `db`/`userId` seam.
+  `auth.js` loads the session and flags `resumed`/`resumeSpecies` in `auth:result` (new optional
+  `net.ts` fields); `lobby.js` rebuilds the player from the snapshot when its `worldVersion`
+  matches the room (restoring position/quest/inventory/score and stamping the existing
+  `spawnSafeUntilTick` grace so a mid-field restore can't be instantly re-caught), and falls back
+  to a clean pen spawn for the saved species on a version mismatch. Client: a returning player
+  (stored token) auto-logs-in, the menu **skips the species picker**, and joins with no species so
+  the server's saved session wins. Verified: DB round-trip + UPSERT + unknown-user guards;
+  shared 74/74; client tsc/vite green; clean server boot.
+
 - 0.2.91: **Escape actually respawns you now (was a silent crash) + rebirth fanfare.** Escaping
   did nothing — the avatar stayed stranded at the gate, no species switch, no sound. Root cause:
   `respawnPlayer` in `server/game/stealth.js` declared its 2nd param `spawn` but the body calls

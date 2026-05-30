@@ -161,8 +161,12 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         // Persist the issued token + cache stats so the Stats tab can read them.
         if (msg.username && msg.token) saveAuth({ username: msg.username, token: msg.token });
         lastStats = msg.stats;
-        // Prefer the server's authoritative username; fall back to what we sent.
-        finish({ username: msg.username ?? nameInput.value.trim(), species: selectedSpecies });
+        // RESUME: a returning player with a saved session skips the picker entirely
+        // — we join with NO species so the server restores their reborn one (and the
+        // full mid-run snapshot). Otherwise honor the picker selection. Prefer the
+        // server's authoritative username; fall back to what we sent.
+        const username = msg.username ?? nameInput.value.trim();
+        finish({ username, species: msg.resumed ? undefined : selectedSpecies });
         return;
       }
       // Failure: surface the reason and keep (or re-open) the manual form.

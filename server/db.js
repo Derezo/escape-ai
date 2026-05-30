@@ -76,6 +76,11 @@ function init() {
       abilities_used INTEGER DEFAULT 0,
       play_seconds   INTEGER DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS sessions (
+      user_id    TEXT PRIMARY KEY REFERENCES users(id),
+      snapshot   TEXT,
+      saved_at   TEXT
+    );
   `);
 
   // Animal-collection stat columns. CREATE TABLE IF NOT EXISTS above will NOT add
@@ -106,7 +111,14 @@ function init() {
     insertStats: db.prepare('INSERT INTO stats (user_id) VALUES (?)'),
     statsByUser: db.prepare('SELECT * FROM stats WHERE user_id = ?'),
     touchSeen: db.prepare('UPDATE users SET last_seen = ? WHERE id = ?'),
-    setSpecies: db.prepare('UPDATE users SET last_species = ? WHERE id = ?')
+    setSpecies: db.prepare('UPDATE users SET last_species = ? WHERE id = ?'),
+    // Session snapshot (full mid-run state) — UPSERT so the row is created on the
+    // first save and overwritten thereafter; read back on the next login to resume.
+    saveSession: db.prepare(
+      'INSERT INTO sessions (user_id, snapshot, saved_at) VALUES (@userId, @snapshot, @savedAt) ' +
+      'ON CONFLICT(user_id) DO UPDATE SET snapshot = @snapshot, saved_at = @savedAt'
+    ),
+    sessionByUser: db.prepare('SELECT snapshot FROM sessions WHERE user_id = ?')
   };
 
   console.log(`[db] opened ${dbPath}`);
@@ -296,6 +308,45 @@ function setLastSpecies(userId, species) {
   stmts.setSpecies.run(species, userId);
 }
 
+/**
+ * Persist a user's full mid-run session snapshot (species, position, quest,
+ * inventory, scoreTotal, the room + its worldVersion) so a rejoin can resume it.
+ * The snapshot is an opaque plain object serialized to JSON TEXT — its shape is
+ * owned by the caller (server/game session helper). No-op on a falsy userId or a
+ * non-object snapshot. UPSERT: one row per user, overwritten each save.
+ * @param {string} userId
+ * @param {object} snapshot
+ */
+function saveSession(userId, snapshot) {
+  if (!userId || !snapshot || typeof snapshot !== 'object') return;
+  ensure();
+  stmts.saveSession.run({
+    userId,
+    snapshot: JSON.stringify(snapshot),
+    savedAt: new Date().toISOString()
+  });
+}
+
+/**
+ * Load a user's saved session snapshot, or undefined if none/corrupt. The caller
+ * is responsible for validating the snapshot (e.g. worldVersion match) before
+ * trusting any positions in it.
+ * @param {string} userId
+ * @returns {object|undefined}
+ */
+function loadSession(userId) {
+  if (!userId) return undefined;
+  ensure();
+  const row = stmts.sessionByUser.get(userId);
+  if (!row || !row.snapshot) return undefined;
+  try {
+    const snap = JSON.parse(row.snapshot);
+    return snap && typeof snap === 'object' ? snap : undefined;
+  } catch {
+    return undefined; // corrupt/legacy value → no resume rather than throw
+  }
+}
+
 /** Bump a user's last_seen to now. No-op on a falsy userId. */
 function touchLastSeen(userId) {
   if (!userId) return;
@@ -323,6 +374,8 @@ module.exports = {
   getStatsForUser,
   incStats,
   setLastSpecies,
+  saveSession,
+  loadSession,
   touchLastSeen,
   incGames,
   close
