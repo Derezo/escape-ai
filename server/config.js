@@ -50,8 +50,27 @@ module.exports = {
   // chase PATROLS at PATROL_SPEED (slower than ROBOT_SPEED so a real chase still
   // reads as faster); idle decoy animals drift at WANDER_ANIMAL_SPEED. Both ride
   // the deterministic shared wanderStep — see shared/src/step.ts.
-  PATROL_SPEED: parseFloat(process.env.PATROL_SPEED) || 60,
+  // PATROL_SPEED was 60 when idle robots merely drifted in place; with real
+  // waypoint patrol across the ~12k-unit junction loop, 60 made a lap take
+  // minutes. 90 keeps patrol clearly slower than a chase (ROBOT_SPEED 120) while
+  // a lap reads in a reasonable time. Still overridable by env for tuning.
+  PATROL_SPEED: parseFloat(process.env.PATROL_SPEED) || 90,
   WANDER_ANIMAL_SPEED: parseFloat(process.env.WANDER_ANIMAL_SPEED) || 40,
+
+  // Robot behavior FSM (NPC movement refactor). A robot patrols the generated
+  // path loop (PATROL_SPEED), breaks off to INVESTIGATE a suspicious-but-distant
+  // animal at INVESTIGATE.SPEED (between patrol and chase), then resumes patrol.
+  INVESTIGATE: {
+    // Detection ring (multiple of the shared PERCEPTION_RADIUS) for "something's
+    // off over there" — WIDER than the close pursue range, so a low-likeness
+    // animal/player triggers a detour before it's close enough to chase.
+    RADIUS_MULT: parseFloat(process.env.INVESTIGATE_RADIUS_MULT) || 1.5,
+    // Move speed while heading to a last-known position (medium — between patrol
+    // 90 and pursue 120, so a robot zeroing in on a clue reads as more urgent).
+    SPEED: parseFloat(process.env.INVESTIGATE_SPEED) || 110,
+    // Seconds a robot lingers at the last-known spot before resuming patrol.
+    LINGER_SECS: parseFloat(process.env.INVESTIGATE_LINGER_SECS) || 2.5
+  },
 
   // Species abilities (Phase 4). Each species has one edge-triggered power fired
   // by the 'ability' action; these are the server-orchestrated tunables. Timed

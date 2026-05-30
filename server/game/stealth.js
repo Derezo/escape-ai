@@ -18,6 +18,7 @@ const config = require('../config');
 const world = require('./world');
 const quests = require('./quests');
 const follow = require('./follow');
+const behaviors = require('./behaviors');
 const speciesRoster = require('../socket/species-roster');
 const { bumpStat } = require('./stats-delta');
 const { secsToTicks, findPlayerById } = require('./room-utils');
@@ -110,6 +111,7 @@ async function loadShared() {
   // Hand the cached shared modules to the other orchestrators so there is exactly
   // ONE cached copy of each ESM module (they don't import() it themselves).
   follow.setShared(shared, movement, locomotion);
+  behaviors.setShared(shared, movement);
   return shared;
 }
 
@@ -312,7 +314,7 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, current
  * @param {number} currentTick  the engine's tick counter, for orderedUntilTick
  */
 function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
-  if (!shared) return { pursuingRobots: 0, catches: 0 };
+  if (!shared || !behaviors.isReady()) return { pursuingRobots: 0, catches: 0 };
 
   const worldEntities = world.getWorldEntities(roomName);
   const worldState = world.getWorldState(roomName);
@@ -322,6 +324,19 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   // Robots respect walls just like players: a pursuit step that would tunnel
   // through a wall is blocked, and a patrol step into a wall is held.
   const rm = world.getRoomMap(roomName);
+  // The room's robot patrol loop (path-network junctions in world units), also
+  // fetched once. May be empty on a degenerate seed → behaviors falls back to
+  // ambient wander-avoid. The hazard veto is shared with the pursue branch below.
+  const route = world.getPatrolRoute(roomName);
+  const idleCtx = {
+    rm,
+    route,
+    worldEntities,
+    lockdown,
+    currentTick,
+    dt,
+    entersHazard,
+  };
 
   // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
   // snap it to that player's position so it visually rides along (the ape
@@ -342,7 +357,6 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
 
   const animals = gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, currentTick);
   const touchR2 = config.RECT_SIZE * config.RECT_SIZE;
-  const speed = config.ROBOT_SPEED * (lockdown ? config.ROBOT_LOCKDOWN_SPEED_MULT : 1);
 
   // Tally what fed the panic meter this tick (consumed by stepPanic).
   let pursuingRobots = 0;
@@ -376,16 +390,33 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     robot.targetId = decision.targetId;
 
     if (decision.mode === 'pursue') {
+      // Remember where to resume patrol when the chase ends (capture on the edge,
+      // before behavior flips to 'pursue'), then mark the FSM state. behaviors
+      // owns the speed table (patrol < investigate < pursue + spontaneous boost).
+      if (robot.behavior !== 'pursue') robot.lastPatrolIndex = robot.patrolIndex;
+      robot.behavior = 'pursue';
+      const speed = behaviors.speedFor(robot, lockdown, currentTick);
+
       // Wall + hazard avoidance, both honored before committing the chase step:
-      //   - WALLS: the shared moveWithCollision integrator slides the robot along
-      //     walls and refuses to tunnel through one (OOB is solid too). Run it on
-      //     a COPY first so we can also veto on the Third Law before committing.
+      //   - WALLS: route the chase heading through steerAround (so the robot
+      //     rounds a fence corner toward the target instead of pressing into it),
+      //     then the shared moveWithCollision integrator slides + refuses to
+      //     tunnel (OOB is solid too). Run it on a COPY so we can also veto on the
+      //     Third Law before committing.
       //   - Third Law (HAZARD): a robot won't chase INTO a skunk stink. If the
-      //     wall-resolved destination still lands in a hazard, it stalls this tick
+      //     resolved destination still lands in a hazard, it stalls this tick
       //     (still faces the target).
+      const heading = movement.steerAround(
+        robot, decision.dirX, decision.dirY, dt, speed,
+        rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
+      );
+      // steerAround returns {0,0} only when fully boxed in; fall back to the raw
+      // pursue vector so a cornered robot still presses toward the target (slide).
+      const hx = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirX : heading.dirX;
+      const hy = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirY : heading.dirY;
       const trial = { x: robot.x, y: robot.y };
       shared.moveWithCollision(
-        trial, decision.dirX, decision.dirY, dt, speed,
+        trial, hx, hy, dt, speed,
         rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
       );
       if (!entersHazard(trial.x, trial.y, worldEntities)) {
@@ -423,23 +454,13 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
         }
       }
     } else if (decision.mode === 'idle') {
-      // PATROL: a robot with nothing to react to walks its rounds (deterministic
-      // wander) instead of standing dead-still, so it's a moving threat to route
-      // around. A decoy/player that drifts into perception flips it to 'pursue'
-      // next tick. Patrol is intentionally slower than a chase (config.PATROL_SPEED).
-      // Pass the REAL map bounds so a patrolling robot biases inward at the true
-      // world edge (4096²), not the shared default WORLD clamp (1000²). The
-      // collision grid is the hard backstop, but matching the bounds keeps the
-      // wander's edge-turn honest.
-      const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED, mapBounds(rm));
-      // Face the patrol heading (derive from the actual position delta).
-      robot.facing = shared.facingFromVec(next.x - robot.x, next.y - robot.y, robot.facing || 's');
-      // Don't patrol into a WALL (collision) or a HAZARD (Third Law); hold
-      // position if either would — robots shouldn't wander into their own walls.
-      if (!world.isSolidAtRoom(roomName, next.x, next.y) && !entersHazard(next.x, next.y, worldEntities)) {
-        robot.x = next.x;
-        robot.y = next.y;
-      }
+      // Nothing close enough to chase → the PATROL ↔ INVESTIGATE ↔ RESUME FSM
+      // (server/game/behaviors.js). A robot patrols the generated path loop, breaks
+      // off to investigate a suspicious-but-distant animal at medium speed, then
+      // resumes patrol at the nearest waypoint. robotDecision (perception) stays
+      // untouched; this only decides what the body does when perception is idle.
+      // Reports robot.mode = 'idle' on the wire (client renders it as before).
+      behaviors.stepRobotIdle(robot, animals, idleCtx);
     }
     // 'frozen' robots hold position (frozen by the First Law — a convincing human
     // is nearby and must not be disturbed); 'ordered' returned earlier in the loop.

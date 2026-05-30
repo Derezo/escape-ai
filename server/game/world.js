@@ -128,7 +128,10 @@ function spawnFromMap(map) {
         add({ id: spec.id, x: spec.x, y: spec.y, name: 'Clipboard', kind: 'prop', carrierId: null });
         break;
       case 'robotSpawn':
-        add({ id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'robot', suspicion: 0, facing: 's' });
+        // behavior='patrol' starts the robot on the path-loop FSM (behaviors.js);
+        // patrolIndex is assigned lazily on first step from its id hash so robots
+        // spread around the loop rather than clumping at one waypoint.
+        add({ id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'robot', suspicion: 0, facing: 's', behavior: 'patrol' });
         break;
       case 'penAnchor':
         add({

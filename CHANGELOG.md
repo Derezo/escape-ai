@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.47: **NPC movement refactor — Phase 4: robot patrol + investigate FSM.** Idle robots no
+  longer drift aimlessly — they now patrol the generated path loop and break off to investigate.
+  - `server/game/behaviors.js` (new): the robot behavior FSM (`patrol` ↔ `investigate` ↔ resume),
+    mirroring the follow.js orchestrator pattern (`setShared` hand-off, never re-implements math).
+    `stepRobotIdle` walks the room's `patrolRoute` via the shared `patrolStep` (looping waypoints,
+    rejoining at the nearest waypoint after a detour); `pickInvestigateTarget` finds a suspicious,
+    non-human-looking animal in a WIDER ring (`INVESTIGATE.RADIUS_MULT`×perception) than the close
+    pursue range, so a robot detours to a last-known spot and lingers (`INVESTIGATE.LINGER_SECS`)
+    before resuming. `speedFor` is the single source of truth for robot speed (patrol < investigate
+    < pursue) folding in the lockdown multiplier and the deterministic `speedBoost` (spontaneous
+    bursts). The Three-Laws perception (`robotDecision`) is **unchanged** — this is purely what the
+    body does once perception is idle.
+  - `server/game/stealth.js`: `stepRobots` delegates the idle branch to `behaviors.stepRobotIdle`,
+    routes the pursue chase heading through `steerAround` (rounds corners toward the target), pulls
+    its speed from `behaviors.speedFor`, and marks `behavior='pursue'` (capturing the resume index).
+  - `server/game/world.js`: robots spawn with `behavior='patrol'` (patrolIndex assigned lazily from
+    the id hash so the fleet phases around the loop, not clumps).
+  - `server/config.js`: `INVESTIGATE` block (radius mult / speed 110 / linger); `PATROL_SPEED`
+    60→90 (a real waypoint lap reads in reasonable time, still slower than the 120 chase).
+  - Verified by sims: a robot patrols (advances waypoints along the loop), detours to a planted
+    low-likeness lure (closest approach 0u), resumes patrol when it's removed, and the 6-robot fleet
+    collectively covers all 6 waypoints (phased starts 5,2,1,4,3,0) — all bit-deterministic on
+    rerun. Server boots clean; shared 50/50.
+
 - 0.2.46: **NPC movement refactor — Phase 3: un-stick idle wander.** Idle decoy/pen animals no
   longer pin flush against a wall until their wander heading re-rolls (up to 2s of looking
   "stuck"). `stepIdleAnimals` now drives movement through `movement.wanderAvoid` — the same
