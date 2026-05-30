@@ -20,6 +20,7 @@
 
 import Phaser from 'phaser';
 import type { IRenderer, Entity, WorldMap } from '@shared/renderer';
+import type { AuxKind, Building } from '@shared/world';
 import type { Dir8 } from '@shared/types';
 import { facingFromVec, hash32 } from '@shared/step';
 import { locomotionFor } from '@shared/locomotion';
@@ -64,6 +65,19 @@ const SPECIES_TINT: Record<string, number> = {
 };
 
 /**
+ * Per-auxKind roof tint, so the three SERVICE buildings (which hold the dispersed
+ * food sources) READ DISTINCTLY from each other and from the brown species-home /
+ * gatehouse roofs (default 0x6b4f3a). Warm/cool/grey keeps them legible at a glance.
+ * Buildings with no auxKind (species homes + gatehouse) are NOT in this table and
+ * keep the default roof colour — see the roof loop in buildWorld.
+ */
+const AUX_ROOF_TINT: Record<AuxKind, number> = {
+  commissary: 0x9c5a3c, // warm terracotta (the food hall)
+  washroom: 0x2f7d8c, // cool teal
+  maintenance: 0x5b626b, // utilitarian grey
+};
+
+/**
  * Draw depths. With the tilemap world, mobile entities Y-SORT: their depth is
  * their world Y (so an entity lower on screen draws in front), which lets tree
  * canopies (also Y-sorted by their trunk-base Y) occlude an entity "under" them
@@ -81,6 +95,10 @@ const SPECIES_TINT: Record<string, number> = {
 const DEPTH_GROUND = -200;
 const DEPTH_DECO_GROUND = -100; // solid, non-canopy deco — always under mobile
 const DEPTH_ROOF = 1_000_000; // building roofs (fade to reveal the interior)
+/** Aux-building name labels + locked-door markers: just above the roof so they
+ *  stay legible whether the roof is opaque (outside) or faded (inside), but below
+ *  the FX layer. Static signage, not Y-sorted. */
+const DEPTH_AUX_OVERLAY = 1_500_000;
 const DEPTH_FX = 2_000_000; // ability effects, glows, particles (above everything)
 /** Kept for the legacy no-map path (shape views before a map arrives). */
 const DEPTH_PEN = -150;
@@ -384,20 +402,73 @@ class WorldScene extends Phaser.Scene {
     // we DON'T draw the roof grid as a static layer — the rects own the roof.
 
     // 3. Per-building roof rectangles (fade on enter). Footprint in world units.
+    //    AUXILIARY service buildings (b.auxKind set) get a distinct roof tint plus
+    //    always-visible signage (name label + locked-door marker) so the three food
+    //    halls read apart even with the roof faded. Species homes + the gatehouse
+    //    (no auxKind) keep the default brown roof and get no signage — unchanged.
     for (const b of map.buildings) {
       const bx = b.rx * TS;
       const by = b.ry * TS;
       const bw = b.rw * TS;
       const bh = b.rh * TS;
+      const roofColor = b.auxKind !== undefined ? AUX_ROOF_TINT[b.auxKind] : 0x6b4f3a;
       const rect = this.add
-        .rectangle(bx + bw / 2, by + bh / 2, bw, bh, 0x6b4f3a, 1)
+        .rectangle(bx + bw / 2, by + bh / 2, bw, bh, roofColor, 1)
         .setStrokeStyle(2, 0x4a3526, 1)
         .setDepth(DEPTH_ROOF);
       this.roofs.push({ rect, bx0: bx, by0: by, bx1: bx + bw, by1: by + bh, inside: false });
+      if (b.auxKind !== undefined) this.buildAuxSignage(b, TS);
     }
 
     // 4. Camera: bound to the world and (later) follow the local player.
     this.cameras.main.setBounds(0, 0, worldPx.w, worldPx.h);
+  }
+
+  /**
+   * Static signage for one AUXILIARY building (commissary / washroom / maintenance):
+   * a title-cased name label centred over the footprint, plus a 🔒 marker pinned at
+   * the door. Both sit ABOVE the roof (DEPTH_AUX_OVERLAY) so they stay readable
+   * whether the roof is opaque (player outside) or faded (player inside), letting
+   * the three food halls be told apart at a glance. Drawn once in buildWorld.
+   *
+   * LOCK STATE IS STATIC. We render the door as locked iff `b.locked` — the
+   * generator's DEFAULT lock state from the seed-derived map. The SERVER owns the
+   * LIVE unlocked set (a room unlocks when its door-terminal is ordered), but that
+   * state is NOT on the wire today: the snapshot's terminal/food/robot entities
+   * carry no per-building unlock flag, so there is no client-observable signal to
+   * drive a live indicator. Wiring the marker to clear on unlock requires a
+   * server-sent flag (e.g. an `unlocked` field on the door-terminal entity or a
+   * map-room state message) — a future net addition, out of scope for this client
+   * phase. Until then the marker simply shows the initial locked state.
+   */
+  private buildAuxSignage(b: Building, TS: number): void {
+    const auxKind = b.auxKind;
+    if (auxKind === undefined) return; // caller guards, but keep this total + strict-safe
+    const bx = b.rx * TS;
+    const by = b.ry * TS;
+    const bw = b.rw * TS;
+
+    // Name label, centred over the building, just below its top edge.
+    this.add
+      .text(bx + bw / 2, by + 4, titleCase(auxKind), {
+        fontFamily: 'monospace',
+        fontSize: '13px',
+        color: '#ffffff',
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        padding: { x: 4, y: 2 },
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(DEPTH_AUX_OVERLAY);
+
+    // Locked-door marker at the door tile centre (static — see method doc).
+    if (b.locked === true) {
+      const dx = b.doorTx * TS + TS / 2;
+      const dy = b.doorTy * TS + TS / 2;
+      this.add
+        .text(dx, dy, '🔒', { fontFamily: 'sans-serif', fontSize: '16px' })
+        .setOrigin(0.5)
+        .setDepth(DEPTH_AUX_OVERLAY);
+    }
   }
 
   /**
@@ -1155,6 +1226,11 @@ class WorldScene extends Phaser.Scene {
 /** Read a 0..1-ish numeric field, returning undefined for absent/NaN values. */
 function readNumber(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+/** Title-case a single-word identifier (e.g. 'commissary' → 'Commissary'). */
+function titleCase(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
 }
 
 /** Narrow the snapshot's `mode` (index-signature `unknown`) to a RobotMode. */

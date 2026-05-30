@@ -110,9 +110,11 @@ function nearestWaypointIndex(robot, route) {
   return idx;
 }
 
-/** Lazily initialize a robot's patrol/behavior state the first time it's stepped. */
+/** Lazily initialize a robot's patrol/behavior state the first time it's stepped.
+ *  A guard robot keeps its 'guard' behavior (it contains itself rather than
+ *  patrolling); only a non-guard with no behavior defaults to 'patrol'. */
 function ensureInit(robot, route) {
-  if (robot.behavior === undefined) robot.behavior = 'patrol';
+  if (robot.behavior === undefined) robot.behavior = robot.guard ? 'guard' : 'patrol';
   if (typeof robot.patrolIndex !== 'number') {
     // Phase each robot to a distinct starting waypoint so they spread around the
     // loop instead of clumping (deterministic — hash of the id, no RNG).
@@ -154,18 +156,25 @@ function moveTowardPoint(robot, tx, ty, dt, speed, rm, worldEntities, entersHaza
  * Keeps robot.mode = 'idle' on the wire (the client renders patrol/investigate
  * the same as idle — no RobotMode change needed).
  *
+ * A GUARD robot (robot.guard) is a special idle state: instead of walking the
+ * shared patrol route it stays CONTAINED inside its aux building via wanderAvoid
+ * over ctx.guardBounds (mirrors how idle pen animals stay in their enclosure). It
+ * still breaks off to investigate intruders normally (the investigate branch is
+ * shared) — only its baseline / resume movement differs from a patroller's.
+ *
  * @param {object} robot               mutated in place
  * @param {object[]} animals           gatherAnimals() candidates (for investigate)
- * @param {object} ctx                 { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard }
+ * @param {object} ctx                 { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard, guardBounds? }
  */
 function stepRobotIdle(robot, animals, ctx) {
-  const { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard } = ctx;
+  const { rm, route, worldEntities, lockdown, currentTick, dt, entersHazard, guardBounds } = ctx;
   ensureInit(robot, route);
 
   const target = pickInvestigateTarget(robot, animals);
 
   if (target) {
-    // Break patrol to investigate. Capture where to resume on the transition edge.
+    // Break patrol/guard to investigate. Capture where to resume on the edge (a
+    // guard has no patrolIndex to keep, but the assignment is harmless).
     if (robot.behavior !== 'investigate') robot.lastPatrolIndex = robot.patrolIndex;
     robot.behavior = 'investigate';
     robot.investigateX = target.x;
@@ -180,6 +189,24 @@ function stepRobotIdle(robot, animals, ctx) {
     // No fresh target, but still lingering: walk to / wait at the last-known spot.
     const speed = speedFor(robot, lockdown, currentTick);
     moveTowardPoint(robot, robot.investigateX, robot.investigateY, dt, speed, rm, worldEntities, entersHazard);
+    return;
+  }
+
+  // GUARD: no fresh target and not lingering → resume the contained wander inside
+  // the aux building (NOT the patrol route). The soft inward bias in wanderAvoid
+  // keeps the guard off its walls, same as a contained pen animal. Falls back to
+  // ambient wander if guardBounds is missing (a degenerate map) — never patrols.
+  if (robot.guard) {
+    robot.behavior = 'guard';
+    const bx = robot.x;
+    const by = robot.y;
+    movement.wanderAvoid(
+      robot, currentTick, dt, speedFor(robot, lockdown, currentTick),
+      rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, guardBounds,
+    );
+    // Face the actual drift (zero delta on a boxed-in tick holds facing), mirroring
+    // how stepIdleAnimals faces a contained pen animal after wanderAvoid.
+    robot.facing = shared.facingFromVec(robot.x - bx, robot.y - by, robot.facing || 's');
     return;
   }
 

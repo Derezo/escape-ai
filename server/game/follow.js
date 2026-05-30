@@ -103,6 +103,11 @@ function collectNearbyFood(player, roomName, currentTick) {
     }
   }
   if (!nearest) return false;
+  // The food now lives inside an aux building whose door starts LOCKED. If the
+  // nearest source's building is still locked, it's out of reach — treat it as if
+  // no food were collectible (return false) so the player must tap the door-terminal
+  // to unlock it first. A source with no buildingId (defensive fallback) is never gated.
+  if (nearest.buildingId && world.isDoorLocked(roomName, nearest.buildingId)) return false;
   const key = nearest.foodKey || world.foodForSpecies(nearest.species).key;
   if (!player.inventory) player.inventory = {};
   player.inventory[key] = (player.inventory[key] || 0) + 1;

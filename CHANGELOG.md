@@ -4,6 +4,38 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.52: **Auxiliary buildings — Phase 3/4 (server gating + guards + client render).** Wires the
+  locked-door food economy and the guard robots to the relocated food, and renders the new
+  buildings distinctly. No `net.ts` change — everything rides the seed-derived map + existing
+  entity snapshots (tech rule "catastrophic overflow": opening a door feeds the panic meter).
+  - **Server (`server/game/world.js`):** per-room `unlockedDoors` set; `isDoorLocked` /
+    `unlockDoor` / `auxBuildingById` / `getGuardBoundsByRobotId` helpers (the last keyed by
+    robot id, not species, since aux buildings are species-less). `spawnFromMap` now carries
+    `buildingId`/`auxKind` onto food entities, `door:true`/`buildingId`/`auxKind` onto
+    door-terminals, and `behavior:'guard'`/`guard:true`/`buildingId` onto guard robots.
+  - **Server (`server/game/follow.js`):** `collectNearbyFood` refuses food whose owning aux
+    building is still locked (the door tile stays non-solid — "locked" is pure runtime state).
+  - **Server (`server/game/stealth.js`):** the `applyAction` interact branch (after the food-first
+    early-return) handles a door-terminal — `unlockDoor` + bump `pendingOrders` (the existing
+    Second-Law panic latch), so opening the commissary/washroom/maintenance is the double-edged
+    "helpful but raises panic" mechanic (Act-of-Sutskever flavor). New `nearestDoorTerminal`
+    helper. `stepRobots` threads per-room guard bounds onto each guard robot.
+  - **Server (`server/game/behaviors.js`):** new `guard` behavior — a guard robot contained to its
+    building interior via `movement.wanderAvoid(bounds)` (the same containment idle pen animals
+    use) instead of leaving on the patrol loop; it still breaks off to investigate/pursue intruders
+    (First/Second-Law detection unchanged).
+  - **Client (`client/src/render/phaser.ts`):** aux roofs tinted per kind (commissary terracotta /
+    washroom teal / maintenance grey) with a floating title label + a 🔒 door marker, so the three
+    service buildings read distinctly at a glance. Species homes + the gatehouse are unchanged. The
+    lock marker shows the generator's initial `locked` state; a live unlock indicator would need a
+    server-sent flag (a documented future net addition, out of scope here). Food + inventory render
+    unchanged (food is position-driven).
+  - Verified: all 4 server modules `node --check` clean + boot clean (`listening on :3000`, 0
+    errors); client `tsc && vite build` green (53 modules, zero TS errors). End-to-end against the
+    live modules: food collect refused while locked (`{}`) and succeeds after unlock (`{steak:1}`);
+    interacting at a door-terminal unlocks the building (`locked true→false`) AND raises panic
+    (`pendingOrders 0→1`); all 3 guards spawn inside their bounds with `behavior:'guard'`.
+
 - 0.2.51: **Auxiliary buildings + dispersed food — Phase 1/2 (shared world-gen).** Food no longer
   sits inside the animals' own housing; it is dispersed into closed-out service buildings, on-theme
   with the domed-megacity (Caves of Steel) setting. `WORLD_GEN_VERSION` 9 → 10.

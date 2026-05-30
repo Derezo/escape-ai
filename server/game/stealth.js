@@ -328,6 +328,10 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   // fetched once. May be empty on a degenerate seed → behaviors falls back to
   // ambient wander-avoid. The hazard veto is shared with the pursue branch below.
   const route = world.getPatrolRoute(roomName);
+  // Per-guard-robot containment bounds (aux-building interiors), fetched once and
+  // cached per room. A guard robot wanders ONLY inside its building (behaviors.js
+  // reads idleCtx.guardBounds); a plain patrol robot has no entry → undefined.
+  const guardBoundsById = guardBoundsForRoom(roomName);
   const idleCtx = {
     rm,
     route,
@@ -336,6 +340,7 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     currentTick,
     dt,
     entersHazard,
+    guardBounds: undefined, // set per-robot below before stepRobotIdle
   };
 
   // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
@@ -460,6 +465,9 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       // resumes patrol at the nearest waypoint. robotDecision (perception) stays
       // untouched; this only decides what the body does when perception is idle.
       // Reports robot.mode = 'idle' on the wire (client renders it as before).
+      // A guard robot is handed its aux-building containment bounds so it wanders
+      // inside the building instead of patrolling; a patroller gets undefined.
+      idleCtx.guardBounds = robot.guard ? guardBoundsById.get(robot.id) : undefined;
       behaviors.stepRobotIdle(robot, animals, idleCtx);
     }
     // 'frozen' robots hold position (frozen by the First Law — a convincing human
@@ -602,6 +610,18 @@ function homeBoundsForRoom(roomName) {
   if (!b) {
     b = world.getHomeBoundsBySpecies(roomName);
     homeBoundsByRoom.set(roomName, b);
+  }
+  return b;
+}
+
+/** Per-room cache of guard-robot id → aux-building containment bounds (built once
+ *  per room). A guard robot wanders only inside these bounds; see behaviors.js. */
+const guardBoundsByRoom = new Map();
+function guardBoundsForRoom(roomName) {
+  let b = guardBoundsByRoom.get(roomName);
+  if (!b) {
+    b = world.getGuardBoundsByRobotId(roomName);
+    guardBoundsByRoom.set(roomName, b);
   }
   return b;
 }
@@ -821,6 +841,23 @@ function applyAction(player, action, roomName, currentTick) {
       // sources live inside enclosures, terminals on roads. Early-return on a
       // successful collect so one press never both collects food AND orders a robot.
       if (follow.collectNearbyFood(player, roomName, currentTick)) break;
+      // DOOR TERMINAL: tapping an aux-building door-terminal unlocks that building
+      // (the food inside becomes collectible). Opening a door is a Second-Law order
+      // — LOUD — so it bumps the panic meter the same way orderNearestRobot does
+      // (latched on pendingOrders, consumed by stepPanic): double-edged, like every
+      // command. Handled BEFORE the junction-terminal order path and early-returns so
+      // one press never both opens a door AND issues a stand-down order. The door
+      // terminals sit OUTSIDE food reach, so the food-first return above never
+      // shadows this branch.
+      {
+        const doorTerm = nearestDoorTerminal(player, roomName);
+        if (doorTerm) {
+          world.unlockDoor(roomName, doorTerm.buildingId);
+          const worldState = world.getWorldState(roomName);
+          worldState.pendingOrders = (worldState.pendingOrders || 0) + 1;
+          break;
+        }
+      }
       // Interacting near a terminal acts like a Second-Law order to the nearest
       // robot (a terminal command stands a patrol down), and advances an 'activate'
       // quest (elephant/peacock/parrot) by counting each DISTINCT terminal tapped.
@@ -1258,6 +1295,30 @@ function nearTerminal(player, roomName) {
     if (e.kind === 'terminal' && shared.dist2(player, e) <= r2) return true;
   }
   return false;
+}
+
+/**
+ * The nearest aux-building DOOR terminal (kind 'terminal' with door:true) within
+ * RECT_SIZE of the player, or null. Mirrors nearTerminal but returns the entity so
+ * the caller can read its buildingId to unlock the right building. The junction
+ * terminals (no door flag) are skipped, so this only ever hits a door-terminal.
+ * @param {object} player
+ * @param {string} roomName
+ * @returns {object|null}
+ */
+function nearestDoorTerminal(player, roomName) {
+  const r2 = config.RECT_SIZE * config.RECT_SIZE;
+  let nearest = null;
+  let nearestD2 = Infinity;
+  for (const e of world.getWorldEntities(roomName)) {
+    if (e.kind !== 'terminal' || !e.door) continue;
+    const d2 = shared.dist2(player, e);
+    if (d2 <= r2 && d2 < nearestD2) {
+      nearestD2 = d2;
+      nearest = e;
+    }
+  }
+  return nearest;
 }
 
 /**

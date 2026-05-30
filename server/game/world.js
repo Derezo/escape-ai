@@ -36,7 +36,8 @@ const INITIAL_WORLD_STATE = { panic: 0, panicCapacity: 100, lockdown: false };
 // created before this is warm rather than fall back to a broken empty map.
 let sharedWorld = null;
 
-// Map<roomName, { entities: Map<entityId, entity>, world: {...}, map, seed }>
+// Map<roomName, { entities: Map<entityId, entity>, world: {...}, map, seed,
+//                 unlockedDoors: Set<buildingId> }>
 const roomWorlds = new Map();
 
 /**
@@ -97,9 +98,12 @@ async function loadSharedWorld() {
  *
  * Spec kinds map as follows:
  *   - gate        → a static gate (the escape target)
- *   - terminal    → a static interactable (Second-Law order point)
+ *   - terminal    → a static interactable (Second-Law order point); a spec with
+ *                   meta.door is an aux-building DOOR terminal (carries door +
+ *                   buildingId + auxKind so interact can unlock that building)
  *   - prop        → the carryable Clipboard disguise (carrierId starts null)
- *   - robotSpawn  → a live robot (suspicion 0, facing south)
+ *   - robotSpawn  → a live robot (suspicion 0, facing south); a spec with meta.guard
+ *                   is an aux-building GUARD (behavior 'guard' — stays contained)
  *   - penAnchor   → an idle decoy animal sitting in its species' enclosure (these
  *                   replace the old round-robin idle animals — one decoy per
  *                   species, anchored in its home)
@@ -121,18 +125,38 @@ function spawnFromMap(map) {
       case 'gate':
         add({ id: spec.id, x: spec.x, y: spec.y, name: 'Gate', kind: 'gate' });
         break;
-      case 'terminal':
-        add({ id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'terminal' });
+      case 'terminal': {
+        // A door-terminal (aux-building lock) carries door + building meta so the
+        // interact path can unlock the right building; the junction terminals
+        // (terminal-1..4) have no such meta and keep their plain stand-down behavior.
+        const t = { id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'terminal' };
+        if (spec.meta && spec.meta.door) {
+          t.door = true;
+          t.buildingId = spec.meta.buildingId;
+          t.auxKind = spec.meta.auxKind;
+        }
+        add(t);
         break;
+      }
       case 'prop':
         add({ id: spec.id, x: spec.x, y: spec.y, name: 'Clipboard', kind: 'prop', carrierId: null });
         break;
-      case 'robotSpawn':
-        // behavior='patrol' starts the robot on the path-loop FSM (behaviors.js);
-        // patrolIndex is assigned lazily on first step from its id hash so robots
-        // spread around the loop rather than clumping at one waypoint.
-        add({ id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'robot', suspicion: 0, facing: 's', behavior: 'patrol' });
+      case 'robotSpawn': {
+        // A guard robot (spec.meta.guard) stays inside its aux building via the
+        // 'guard' containment behavior (behaviors.js); it still pursues/investigates
+        // intruders. A plain patrol robot (no guard meta) walks the path loop with
+        // behavior='patrol' — patrolIndex is assigned lazily on first step from its
+        // id hash so robots spread around the loop rather than clumping.
+        const robot = { id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'robot', suspicion: 0, facing: 's', behavior: 'patrol' };
+        if (spec.meta && spec.meta.guard) {
+          robot.behavior = 'guard';
+          robot.guard = true;
+          robot.buildingId = spec.meta.buildingId;
+          robot.auxKind = spec.meta.auxKind;
+        }
+        add(robot);
         break;
+      }
       case 'penAnchor':
         add({
           id: spec.id,
@@ -161,6 +185,8 @@ function spawnFromMap(map) {
         // kind is 'food'; the foodKey rides in spec.meta (stamped deterministically
         // by the generator), with a defensive fallback to the shared food table.
         const def = sharedWorld.foodForSpecies(spec.species);
+        // The food now lives INSIDE an aux building; carry buildingId/auxKind so
+        // follow.collectNearbyFood can gate it behind that building's locked door.
         add({
           id: spec.id,
           x: spec.x,
@@ -168,7 +194,9 @@ function spawnFromMap(map) {
           kind: 'food',
           species: spec.species,
           foodKey: (spec.meta && spec.meta.foodKey) || def.key,
-          name: def.label
+          name: def.label,
+          buildingId: spec.meta && spec.meta.buildingId,
+          auxKind: spec.meta && spec.meta.auxKind
         });
         break;
       }
@@ -205,7 +233,12 @@ function getOrCreateRoomWorld(roomName) {
       entities: spawnFromMap(map),
       world: { ...INITIAL_WORLD_STATE },
       map,
-      seed
+      seed,
+      // Aux-building doors start LOCKED (the building's `locked: true` flag is pure
+      // runtime state — the door TILE is non-solid). A door is opened by tapping its
+      // door-terminal, which adds the building id here; food inside stays out of reach
+      // until then. Empty = everything locked.
+      unlockedDoors: new Set()
     };
     roomWorlds.set(roomName, roomWorld);
   }
@@ -297,6 +330,72 @@ function getHomeCentersBySpecies(roomName) {
     if (b.species) centers.set(b.species, { x: (b.rx + b.rw / 2) * tile, y: (b.ry + b.rh / 2) * tile });
   }
   return centers;
+}
+
+/**
+ * The aux Building (`aux-commissary` / `aux-washroom` / `aux-maintenance`) for an
+ * id in a room, or null for an unknown / non-aux id. Only buildings carrying an
+ * `auxKind` are aux buildings; the gatehouse + species homes are excluded.
+ * @param {string} roomName
+ * @param {string} id
+ * @returns {object|null}
+ */
+function auxBuildingById(roomName, id) {
+  if (!id) return null;
+  const map = getOrCreateRoomWorld(roomName).map;
+  return map.buildings.find((b) => b.auxKind && b.id === id) || null;
+}
+
+/**
+ * Whether an aux building's door is currently LOCKED in a room. True unless the
+ * building has been unlocked (its id is in the room's unlockedDoors set). Only
+ * meaningful for aux buildings: an unknown / non-aux id returns false, so
+ * non-gated food (a fallback or a future free food source) is never blocked.
+ * @param {string} roomName
+ * @param {string} buildingId
+ * @returns {boolean}
+ */
+function isDoorLocked(roomName, buildingId) {
+  if (!auxBuildingById(roomName, buildingId)) return false; // unknown / non-aux → not gated
+  const rw = getOrCreateRoomWorld(roomName);
+  return !rw.unlockedDoors.has(buildingId);
+}
+
+/**
+ * Unlock an aux building's door in a room (idempotent). Adds the building id to the
+ * room's unlockedDoors set so isDoorLocked returns false afterward and the food
+ * inside becomes collectible. Creates the room on demand.
+ * @param {string} roomName
+ * @param {string} buildingId
+ */
+function unlockDoor(roomName, buildingId) {
+  if (!buildingId) return;
+  getOrCreateRoomWorld(roomName).unlockedDoors.add(buildingId);
+}
+
+/**
+ * Per-guard-robot CONTAINMENT bounds in world units, for keeping a guard robot
+ * inside its aux building (mirrors getHomeBoundsBySpecies for pen animals). For
+ * each aux building, the bounds are the interior wall-ring inset by one tile, and
+ * the guard's id (`robot-guard-${auxKind}`) maps to them. The same inset math as
+ * getHomeBoundsBySpecies, clamped so min<=max on a degenerate rect. Computed once
+ * per map; the caller keys it by robot id.
+ * @param {string} roomName
+ * @returns {Map<string, {minX:number,minY:number,maxX:number,maxY:number}>}
+ */
+function getGuardBoundsByRobotId(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tile = map.tile;
+  const bounds = new Map();
+  for (const b of map.buildings.filter((bb) => bb.auxKind)) {
+    // Interior wall ring inset by one tile (the barrier ring is the outer edge).
+    const minX = (b.rx + 1) * tile;
+    const minY = (b.ry + 1) * tile;
+    const maxX = Math.max((b.rx + b.rw - 1) * tile, minX);
+    const maxY = Math.max((b.ry + b.rh - 1) * tile, minY);
+    bounds.set(`robot-guard-${b.auxKind}`, { minX, minY, maxX, maxY });
+  }
+  return bounds;
 }
 
 /**
@@ -437,6 +536,10 @@ module.exports = {
   getPatrolRoute,
   getHomeBoundsBySpecies,
   getHomeCentersBySpecies,
+  getGuardBoundsByRobotId,
+  auxBuildingById,
+  isDoorLocked,
+  unlockDoor,
   getMapMeta,
   isSolidAtRoom,
   getWorldEntities,
