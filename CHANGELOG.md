@@ -4,6 +4,37 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.54: **NPC pathfinding — Phase 1 (deterministic A* substrate, no consumers yet).**
+  Adds the missing GLOBAL route layer the reactive `steerAround` (one-tile-ahead probe) structurally
+  lacks: it can round a corner but cannot FIND a two-tile door gap from outside a walled enclosure.
+  This is the foundation for fixing return-home-through-the-gate and robot routing around walls.
+  - **Shared (`shared/src/pathfind.ts`, new):** a pure, deterministic 4-connected tile-grid A* over
+    the existing `collision` Uint8Array. The open set pops by an EXPLICIT TOTAL ORDER (f, then g,
+    then flat tile index) so equal-cost frontiers resolve bit-identically across V8 builds; neighbour
+    expansion is E,W,S,N — IDENTICAL to `world.ts` `floodReachable`, so "reachable" and "pathable"
+    can never disagree. Integer step-count g-scores + integer Manhattan heuristic (no float fragility).
+    Reusable `PathScratch` (generation-stamped, so a search resets in O(1) and costs O(cells expanded),
+    allocating nothing per call). `maxExpand` defaults to one full grid sweep (`w*h`) so a genuinely
+    reachable cross-map goal is never abandoned, yet the search always terminates; on overflow /
+    unreachable / solid-or-OOB endpoint it returns `[]` and the caller falls back to reactive steering
+    — never a hang. Doors/gates are already non-solid tiles, so A* threads them with zero special-casing.
+    Helpers: `simplifyPath` (collinear collapse with a `keepTiles` allow-list so gate waypoints stay
+    mandatory + axis-aligned), `toWorldWaypoints`, `nextWaypoint` (arrive-radius advance like
+    `patrolStep`), `inBounds` (O(1) point-in-rect, for the awareness filter + the true return-home
+    arrival test), `gateInsideTile` (the interior threshold tile = the return-home A* goal), and
+    `tileClearsRadius`. A LEAF peer of `step.ts` — imports only `boxHitsSolid`, no `world.ts` import
+    (no cycle). Server-only consumption; paths are per-entity scratch, NEVER serialized (no net change).
+  - **Shared (`shared/src/index.ts`):** export the new module.
+  - **Test (`shared/test/pathfind.test.mjs`, new):** 15 cases — determinism (byte-identical path twice
+    AND across a fresh `generateWorld` of the same seed; reused-scratch == fresh-scratch),
+    thread-the-door (routes from outside a walled enclosure through the 2-tile gate; the contrast test
+    proves pure `steerAround` does NOT), real-map walkability (every species home + every building door
+    reachable, every step a non-solid 4-neighbour move), mandatory gate waypoints, graceful degrade
+    (solid/OOB/sealed/over-budget → `[]`), `inBounds` truth table, `gateInsideTile`.
+  - Verified: shared **68/68** (`node --test test/*.test.mjs`, world parity hashes intact),
+    client `tsc && vite build` green. No behavior change to the running game — the substrate ships
+    behind a green test gate before any caller touches it.
+
 - 0.2.53: **Auxiliary buildings — Phase 5 validation remediation (`/plan-validation-and-review`).**
   The validation pass (requirements trace, connectivity audit, dedup scan, code comprehension,
   build/test) found all 9 requirements implemented + connected, zero dead code, the net contract
