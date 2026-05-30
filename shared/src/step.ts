@@ -11,7 +11,7 @@
  * frame/accumulator loop on the client).
  */
 
-import type { Dir8, Entity, Input, WorldState } from './types.js';
+import type { Dir8, Entity, WorldState } from './types.js';
 
 // ---------------------------------------------------------------------------
 // The Caves of Steel — Three-Laws stealth math (deterministic, both sides)
@@ -377,9 +377,10 @@ export function clamp(v: number, min: number, max: number): number {
 }
 
 /**
- * World bounds the authoritative simulation clamps positions into. Kept here so
- * client prediction and server agree. Override per-genre at hour 0 if needed by
- * passing explicit bounds to `applyInput`.
+ * Default world bounds for the ambient `wanderStep` drift (robot patrol / idle
+ * decoys). The tilemap world's real movement clamp is the per-tile solidity grid
+ * (out-of-bounds is solid in `moveWithCollision`), not these literals — they're
+ * just a sane fallback for the input-less wander helper.
  */
 export const WORLD = {
   minX: 0,
@@ -395,29 +396,10 @@ export interface Bounds {
   maxY: number;
 }
 
-/**
- * Apply one input frame to an entity, in place, and return it.
- *
- * Movement is `pos += axis * speed * dt`, then clamped to `bounds`. Identical
- * math on both sides keeps prediction and authority in sync.
- *
- * @param entity  entity to advance (mutated and returned)
- * @param input   player intent (dx/dy axis values, typically in [-1, 1])
- * @param dt      delta time in seconds for this step
- * @param speed   units per second at full axis deflection
- * @param bounds  world clamp; defaults to WORLD
- */
-export function applyInput(
-  entity: Entity,
-  input: Input,
-  dt: number,
-  speed: number,
-  bounds: Bounds = WORLD,
-): Entity {
-  entity.x = clamp(entity.x + input.dx * speed * dt, bounds.minX, bounds.maxX);
-  entity.y = clamp(entity.y + input.dy * speed * dt, bounds.minY, bounds.maxY);
-  return entity;
-}
+// (The old bounds-clamping `applyInput` was removed once the tilemap world made
+// movement collision-aware: both server and client now integrate through
+// `moveWithCollision` against the generated solidity grid. `WORLD`/`Bounds` above
+// remain — they're still the default clamp for the ambient `wanderStep` drift.)
 
 // ---------------------------------------------------------------------------
 // Collision-aware movement against a tile solidity grid (both sides, identical)
@@ -425,8 +407,8 @@ export function applyInput(
 // The tilemap world (shared/src/world.ts) gives every cell a solid flag. Movement
 // must stop at walls/fences/trunks/water and SLIDE along them. This lives here, in
 // the deterministic core, so the server (authority) and the client (prediction)
-// integrate movement bit-identically — the same guarantee applyInput gives, now
-// with collision. Kept dependency-free (no world.ts import) to avoid a cycle:
+// integrate movement bit-identically — no rubber-banding at walls.
+// Kept dependency-free (no world.ts import) to avoid a cycle:
 // step.ts is the lowest-level module. The collision grid + dims + tile size are
 // passed in; the world edge is treated as solid (out-of-bounds → solid) so a
 // player can only leave through the gate gap.

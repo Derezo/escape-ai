@@ -6,7 +6,7 @@
  * Data flow each frame:
  *   keyboard  -> input vector (dx,dy)
  *   input     -> NetClient.sendInput({seq,dx,dy})  (server is authority)
- *   input     -> client-side prediction via shared applyInput (instant feel)
+ *   input     -> client-side prediction via shared moveWithCollision (instant feel)
  *   snapshot  -> server positions WIN (reconciliation), merged into entity map
  *   entities  -> renderer.syncEntities(...)         (draw)
  */

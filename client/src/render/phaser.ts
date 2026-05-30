@@ -533,10 +533,15 @@ class WorldScene extends Phaser.Scene {
       // below it — including the canopy layer at mid-band, giving the walk-behind
       // -trees effect. Labels/rings/halos track just above their body's band.
       if (view.ysorted && this.worldBuilt) {
+        // Whole-unit offsets: at large worldY (the southern map, y up to ~4096) a
+        // sub-unit offset like 0.1 can collapse under float precision and let the
+        // halo/ring z-fight the body. ±1 is imperceptible spatially but keeps the
+        // stacking order stable across the whole band. (Adornments sit within the
+        // same tile, so a 1-unit depth nudge never crosses another entity's band.)
         view.body.setDepth(y);
-        view.label?.setDepth(y + 0.3);
-        view.ring?.setDepth(y + 0.1);
-        view.halo?.setDepth(y - 0.1);
+        view.label?.setDepth(y + 2);
+        view.ring?.setDepth(y + 1);
+        view.halo?.setDepth(y - 1);
       }
     }
   }

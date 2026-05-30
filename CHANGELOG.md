@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.32: **Plan-validation remediation (post-`/plan-validation-and-review`).** The validation
+  pass (requirements trace, connectivity audit, dedup scan, three-group code review, build/test)
+  found the tilemap work complete and connected; it surfaced three fixable items, all fixed here:
+  - **Dead code removed:** `applyInput` in `shared/src/step.ts` was superseded by
+    `moveWithCollision` everywhere (the connectivity audit confirmed zero callers). Removed it
+    and the now-unused `Input` import; refreshed the stale `applyInput` references in the
+    `main.ts` data-flow comment and the `WORLD`/`moveWithCollision` doc comments. `WORLD`/`Bounds`
+    stay — still the default clamp for the ambient `wanderStep`.
+  - **Y-sort depth precision:** the per-frame adornment depths (`label`/`ring`/`halo`) used
+    sub-unit offsets (±0.1/0.3) against a body depth that ranges up to ~4096 (world Y); at large
+    Y those collapse under float precision and z-fight. Bumped to whole-unit offsets (±1/2).
+  - **Ambient wander bounds:** patrolling robots + drifting decoys called `wanderStep` with the
+    shared default `WORLD` (1000²) instead of the real map (4096²), so their inward-edge bias
+    fired at a phantom line (the collision grid still stopped them at the true wall, so this was
+    correctness-tidiness, not a break). They now pass the room's real bounds via a `mapBounds(rm)`
+    helper.
+  - No new out-of-scope findings. Verified: shared 14/14, client build, server boot, and a
+    10-client `sim-clients` run all green.
+
 - 0.2.31: **Procedural tile-sheet art + camera-follow fix (Phase 7).** The flat-color
   placeholder tiles are replaced by real generated art, and a camera bug is fixed.
   - **`scripts/tiles/` (new) — the tile-art pipeline, mirroring `scripts/sprites/`:** a

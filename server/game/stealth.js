@@ -171,6 +171,19 @@ function facingFromVec(dx, dy, prev) {
 }
 
 /**
+ * The real world-unit bounds for a room's map, for the ambient wander clamp. The
+ * shared wanderStep defaults to WORLD (1000²); the tilemap is MAP_W*TILE = 4096²,
+ * so passing these lets a patrolling robot / drifting decoy turn inward at the
+ * actual edge. Falls back to undefined (→ shared's WORLD default) if dims are
+ * missing, which is harmless since the collision grid is the hard backstop.
+ * @param {{ w?:number, h?:number, tile?:number }} rm  a getRoomMap() result
+ */
+function mapBounds(rm) {
+  if (!rm || !rm.w || !rm.h || !rm.tile) return undefined;
+  return { minX: 0, minY: 0, maxX: rm.w * rm.tile, maxY: rm.h * rm.tile };
+}
+
+/**
  * Stamp the render-echo of an ability effect onto an entity (player OR world
  * entity). `startTick` is the rising edge the client triggers a one-shot FX
  * burst on; `untilTick` drives any sustained FX. toEntity forwards a player's fx
@@ -413,7 +426,11 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       // wander) instead of standing dead-still, so it's a moving threat to route
       // around. A decoy/player that drifts into perception flips it to 'pursue'
       // next tick. Patrol is intentionally slower than a chase (config.PATROL_SPEED).
-      const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED);
+      // Pass the REAL map bounds so a patrolling robot biases inward at the true
+      // world edge (4096²), not the shared default WORLD clamp (1000²). The
+      // collision grid is the hard backstop, but matching the bounds keeps the
+      // wander's edge-turn honest.
+      const next = shared.wanderStep(robot, currentTick, dt, config.PATROL_SPEED, mapBounds(rm));
       // Face the patrol heading (derive from the actual position delta).
       robot.facing = shared.facingFromVec(next.x - robot.x, next.y - robot.y, robot.facing || 's');
       // Don't patrol into a WALL (collision) or a HAZARD (Third Law); hold
@@ -449,9 +466,10 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
  */
 function stepIdleAnimals(dt, roomName, currentTick) {
   if (!shared) return;
+  const bounds = mapBounds(world.getRoomMap(roomName));
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
-    const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED);
+    const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED, bounds);
     // Face the drift direction so the decoy's walk animation reads correctly.
     e.facing = shared.facingFromVec(next.x - e.x, next.y - e.y, e.facing || 's');
     // Hold position if the drift would carry the decoy onto a solid tile, so it
