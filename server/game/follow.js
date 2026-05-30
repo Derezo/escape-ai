@@ -96,6 +96,13 @@ function collectNearbyFood(player, roomName, currentTick) {
   let nearestD2 = Infinity;
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'food') continue;
+    // The food now lives inside an aux building whose door starts LOCKED. Skip a
+    // source whose building is still locked so it's invisible to collection until
+    // the player taps its door-terminal — but DON'T let a locked source shadow a
+    // reachable unlocked one in the same range (two buildings' walls can sit within
+    // a single RECT_SIZE). A source with no buildingId (defensive fallback) is never
+    // gated. The skip is the entire lock enforcement; the door tile stays non-solid.
+    if (e.buildingId && world.isDoorLocked(roomName, e.buildingId)) continue;
     const d2 = shared.dist2(player, e);
     if (d2 <= r2 && d2 < nearestD2) {
       nearestD2 = d2;
@@ -103,11 +110,6 @@ function collectNearbyFood(player, roomName, currentTick) {
     }
   }
   if (!nearest) return false;
-  // The food now lives inside an aux building whose door starts LOCKED. If the
-  // nearest source's building is still locked, it's out of reach — treat it as if
-  // no food were collectible (return false) so the player must tap the door-terminal
-  // to unlock it first. A source with no buildingId (defensive fallback) is never gated.
-  if (nearest.buildingId && world.isDoorLocked(roomName, nearest.buildingId)) return false;
   const key = nearest.foodKey || world.foodForSpecies(nearest.species).key;
   if (!player.inventory) player.inventory = {};
   player.inventory[key] = (player.inventory[key] || 0) + 1;

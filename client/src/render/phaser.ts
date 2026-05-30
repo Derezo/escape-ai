@@ -193,6 +193,10 @@ class WorldScene extends Phaser.Scene {
   private worldBuilt = false;
   /** Per-building roof objects + footprint (world units), for the fade-on-enter. */
   private roofs: { rect: Phaser.GameObjects.Rectangle; bx0: number; by0: number; bx1: number; by1: number; inside: boolean }[] = [];
+  /** Aux-building signage (name labels + 🔒 markers) created by buildAuxSignage.
+   *  Tracked so a buildWorld re-run (new map) destroys the old set first — these are
+   *  standalone text objects, not EntityViews, so destroyView never reaches them. */
+  private auxSignage: Phaser.GameObjects.GameObject[] = [];
   /** The body the camera is currently following, so we RE-follow when the local
    *  player's view is recreated (kind change: the seeded {id,x,y} → 'animal'
    *  snapshot destroys+rebuilds the body, and a stale follow target freezes the
@@ -406,6 +410,12 @@ class WorldScene extends Phaser.Scene {
     //    always-visible signage (name label + locked-door marker) so the three food
     //    halls read apart even with the roof faded. Species homes + the gatehouse
     //    (no auxKind) keep the default brown roof and get no signage — unchanged.
+    //    Clear any prior roofs + signage first so a rebuild (new map) never leaks the
+    //    previous map's standalone objects (they aren't EntityViews → not swept).
+    for (const r of this.roofs) r.rect.destroy();
+    this.roofs.length = 0;
+    for (const s of this.auxSignage) s.destroy();
+    this.auxSignage.length = 0;
     for (const b of map.buildings) {
       const bx = b.rx * TS;
       const by = b.ry * TS;
@@ -449,7 +459,7 @@ class WorldScene extends Phaser.Scene {
     const bw = b.rw * TS;
 
     // Name label, centred over the building, just below its top edge.
-    this.add
+    const label = this.add
       .text(bx + bw / 2, by + 4, titleCase(auxKind), {
         fontFamily: 'monospace',
         fontSize: '13px',
@@ -459,15 +469,17 @@ class WorldScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setDepth(DEPTH_AUX_OVERLAY);
+    this.auxSignage.push(label);
 
     // Locked-door marker at the door tile centre (static — see method doc).
     if (b.locked === true) {
       const dx = b.doorTx * TS + TS / 2;
       const dy = b.doorTy * TS + TS / 2;
-      this.add
+      const marker = this.add
         .text(dx, dy, '🔒', { fontFamily: 'sans-serif', fontSize: '16px' })
         .setOrigin(0.5)
         .setDepth(DEPTH_AUX_OVERLAY);
+      this.auxSignage.push(marker);
     }
   }
 

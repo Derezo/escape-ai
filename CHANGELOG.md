@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.53: **Auxiliary buildings — Phase 5 validation remediation (`/plan-validation-and-review`).**
+  The validation pass (requirements trace, connectivity audit, dedup scan, code comprehension,
+  build/test) found all 9 requirements implemented + connected, zero dead code, the net contract
+  untouched, and no non-deterministic math in world-gen. It cleared three flagged "blockers" as
+  false positives (verified by running the code: the door-terminal `break` is present so a press
+  never both opens a door and orders a robot; door-terminal anchors are non-solid + reachable
+  across 400 seeds with zero generator throws; the guard branch's `wanderAvoid` already tolerates
+  undefined bounds). Three real items fixed:
+  - **Server (`server/game/follow.js`):** `collectNearbyFood` now SKIPS a locked-building food
+    during the nearest-food search instead of bailing when the nearest happens to be locked — so a
+    reachable unlocked source is never shadowed by a nearer locked one (two buildings' walls can sit
+    within one `RECT_SIZE`). Verified live: locked food refused; unlocked collected; a locked food
+    sitting nearer than an unlocked one no longer blocks collecting the unlocked source.
+  - **Client (`client/src/render/phaser.ts`):** fixed a real object leak — the aux signage (name
+    labels + 🔒 markers) was created with `this.add.text(...)` but never tracked, so a `buildWorld`
+    re-run (new map) would orphan the previous map's labels/markers (they aren't `EntityView`s, so
+    `destroyView` never sweeps them). Now tracked in `this.auxSignage` and destroyed + reset (with
+    the roof rects) at the top of the per-building loop.
+  - **Shared (`shared/src/world.ts`):** corrected the `stampAuxBuilding` wall-slot traversal comment
+    (south row is R→L, west column bottom→top) — comment-only, no byte/hash change.
+  - Verified: shared **53/53** (`node test/world.test.mjs`), client `tsc && vite build` green, server
+    modules boot clean; the follow-gating fix + door-terminal unlock/panic + guard containment all
+    pass live-module tests. Working tree clean. **Result: Clean Pass (7/7 phases).**
+
 - 0.2.52: **Auxiliary buildings — Phase 3/4 (server gating + guards + client render).** Wires the
   locked-door food economy and the guard robots to the relocated food, and renders the new
   buildings distinctly. No `net.ts` change — everything rides the seed-derived map + existing

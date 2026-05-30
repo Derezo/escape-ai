@@ -1017,10 +1017,10 @@ function stampAuxBuilding(
   const terminalTy = clampInt(doorTy + 2, 1, ground.h - 2);
 
   // Interior wall-slot tiles: the ring of interior cells adjacent to the wall, in a
-  // FIXED traversal (north row L→R, east column top→bottom, south row L→R, west
-  // column top→bottom), skipping the door threshold cells, the dressing corners, and
-  // the center (guard anchor). Deterministic; no rng. Yields >= 14 slots for an
-  // 8x6+ interior so the 3 buildings together cover all 14 foods.
+  // FIXED clockwise-then-back traversal (north row L→R, east column top→bottom,
+  // south row R→L, west column bottom→top), skipping the door threshold cells, the
+  // dressing corners, and the center (guard anchor). Deterministic; no rng. Yields
+  // >= 14 slots for an 8x6+ interior so the 3 buildings together cover all 14 foods.
   const ix0 = rx + 1;
   const iy0 = ry + 1;
   const ix1 = rx + rw - 2;
