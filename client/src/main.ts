@@ -29,7 +29,7 @@ import { PhaserRenderer } from './render/phaser';
 
 import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
-import { preloadSfx, playSfx, startLoop, stopLoop, type SfxName } from './audio';
+import { preloadSfx, playSfx, startLoop, stopLoop, spatialGain, type SfxName } from './audio';
 import { initMusic, playMusicState } from './music';
 import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
@@ -153,13 +153,6 @@ async function main(): Promise<void> {
   // entity id; we match "our" entity by this name (roster match below).
   const myName = username;
   net.join(DEFAULT_ROOM, myName, species);
-
-  // --- Ambient facility room-tone: a constant low steel hum under everything for
-  // as long as we're in the world. It's a looping SFX (not music), so it layers
-  // beneath whatever track the music state machine is playing. If audio is still
-  // locked, startLoop defers and begins on the first user gesture. Volume tracks
-  // the manifest default (0.3) — deliberately near-subliminal. ---
-  startLoop('ambient_bed', 0.3);
 
   // --- Authoritative-ish world state, keyed by entity id ---
   // Snapshots are DELTAS (only changed entities) but lobby:state is the full
@@ -463,12 +456,15 @@ async function main(): Promise<void> {
       }
       const name = sfxForFx(fx.kind as string);
       if (!name) continue;
+      // Spatialize toward the local player. Ability FX are the player's own/
+      // important actions, so when we DON'T know the distance (no local entity yet)
+      // we fall back to full base volume rather than silencing them.
       let vol = 0.6;
       if (meEnt && typeof meEnt.x === 'number' && typeof e.x === 'number') {
         const d = Math.hypot((e.x as number) - (meEnt.x as number), (e.y as number) - (meEnt.y as number));
-        vol = Math.max(0.08, 0.6 * (1 - Math.min(1, d / 400)));
+        vol = spatialGain(d, 0.6); // hard cutoff past HEAR_RADIUS
       }
-      playSfx(name, vol);
+      if (vol > 0) playSfx(name, vol);
     }
 
     // --- HUD row updates (structured panel; one styled row per metric) ---
@@ -596,16 +592,35 @@ async function main(): Promise<void> {
     // enters 'pursue', and run the looping robot_pursuit motif for as long as at
     // least one robot is chasing (it stops when the last pursuer breaks off). ---
     let anyPursuing = false;
+    // Distance (world units) to the nearest robot currently in 'pursue', so the
+    // pursuit loop can swell as the closest chaser closes in. Infinity = none yet.
+    let nearestPursuerDist = Infinity;
     const liveRobots = new Set<string>();
     for (const e of list) {
       if (e.kind !== 'robot') continue;
       liveRobots.add(e.id);
+      // Distance to the local player (undefined if either position is unknown — guard
+      // both axes so the hypot args are real numbers, not casts over maybe-undefined).
+      const distToMe =
+        meEnt &&
+        typeof meEnt.x === 'number' &&
+        typeof meEnt.y === 'number' &&
+        typeof e.x === 'number' &&
+        typeof e.y === 'number'
+          ? Math.hypot(e.x - meEnt.x, e.y - meEnt.y)
+          : undefined;
       const modeNow = typeof e.mode === 'string' ? e.mode : '';
       const modePrev = robotModeSeen.get(e.id) ?? '';
       if (modePrev !== 'pursue' && modeNow === 'pursue') {
-        playSfx('robot_alert');
+        // Alert is spatialized: silent past HEAR_RADIUS, louder the closer the
+        // robot is when it locks on. No local position known → silent.
+        const v = distToMe !== undefined ? spatialGain(distToMe, 0.7) : 0;
+        if (v > 0) playSfx('robot_alert', v);
       }
-      if (modeNow === 'pursue') anyPursuing = true;
+      if (modeNow === 'pursue') {
+        anyPursuing = true;
+        if (distToMe !== undefined && distToMe < nearestPursuerDist) nearestPursuerDist = distToMe;
+      }
       robotModeSeen.set(e.id, modeNow);
 
       // Footstep foley: accumulate how far this robot has walked and tick a step
@@ -624,20 +639,24 @@ async function main(): Promise<void> {
             prev.acc += d;
             if (prev.acc >= ROBOT_STRIDE) {
               prev.acc %= ROBOT_STRIDE; // keep the leftover so cadence stays even
-              let vol = 0.45;
-              if (meEnt && typeof meEnt.x === 'number') {
-                const dist = Math.hypot(e.x - (meEnt.x as number), e.y - (meEnt.y as number));
-                vol = Math.max(0.05, 0.45 * (1 - Math.min(1, dist / 400)));
-              }
-              playSfx('robot_footstep', vol);
+              // Footsteps are quiet foley (base 0.28) and spatialized: skip the
+              // playSfx entirely when we can't place the listener or the robot is
+              // out of earshot. The accumulator already advanced above, so the
+              // cadence stays correct even while no step is actually heard.
+              const vol = distToMe !== undefined ? spatialGain(distToMe, 0.28) : 0;
+              if (vol > 0) playSfx('robot_footstep', vol);
             }
           }
         }
       }
     }
     // Idempotent start/stop (self-dedupes), so driving it from the per-frame
-    // aggregate is safe and needs no separate edge state.
-    if (anyPursuing) startLoop('robot_pursuit', 0.6);
+    // aggregate is safe and needs no separate edge state. The loop VOLUME tracks
+    // the nearest pursuing robot: a far chase is silent and it swells as the robot
+    // closes in. startLoop is idempotent on gain (updates in place, no restart).
+    // No pursuer, no local position, or nearest chaser out of earshot → stop.
+    const pursuitVol = anyPursuing && meEnt ? spatialGain(nearestPursuerDist, 0.6) : 0;
+    if (pursuitVol > 0) startLoop('robot_pursuit', pursuitVol);
     else stopLoop('robot_pursuit');
     // Drop step accumulators for robots that left the snapshot, so the map can't
     // grow without bound across a long session (mirrors why we track liveRobots).

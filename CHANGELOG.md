@@ -4,6 +4,24 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.86: **Spatialized NPC audio — a 10-tile hearing radius, and the always-on ambient bed
+  removed.** Looping/ambient sounds played constantly and at full volume regardless of where
+  the source was, making the soundscape noisy the moment you joined. Now every world-emitted
+  SFX fades with distance to the local player and goes truly silent past ~10 tiles. New single
+  source of truth in `client/src/audio.ts`: `spatialGain(dist, base, radius = HEAR_RADIUS)` —
+  a hard cutoff (returns exactly 0 at/beyond `HEAR_RADIUS` = 320 u = 10 × `TILE_SIZE`) with a
+  quadratic ease inside (`base · t²`, `t = 1 − dist/radius`) so a far emitter is quiet and
+  swells gradually as it nears. Applied in `client/src/main.ts`: **robot footsteps** reduced
+  (base 0.45 → 0.28) and spatialized — the step is skipped entirely when out of earshot (the
+  stride accumulator still advances, so cadence never drifts); **robot_alert** gated + scaled by
+  distance; the **robot_pursuit** loop's gain now tracks the *nearest* pursuing robot (a far
+  chase is silent and swells as the closest chaser closes in, via `startLoop`'s in-place,
+  no-restart gain update); **ability FX** moved onto the same helper (keeping the play-at-base
+  fallback when the listener's position isn't known yet). The **ambient room-tone bed**
+  (`ambient_bed`) is no longer started — the soundscape is now music + distance-gated NPC
+  sounds only (the asset stays in the catalogue/manifest, just unused). Client-only; `tsc
+  --noEmit` clean. (Pairs with the 0.2.85 facing fix for a quieter, calmer zoo.)
+
 - 0.2.85: **Pen animals no longer vibrate against their fences (facing deadband).** Idle
   penned animals flipped facing rapidly — appearing to vibrate — whenever they were pinned
   against a pen wall or corner. Root cause: `wanderAvoid` holds one desired heading for ~40

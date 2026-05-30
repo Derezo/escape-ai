@@ -14,6 +14,45 @@
 import { SFX_FILES, SFX_FALLBACK, type SfxName } from './audio.generated';
 export type { SfxName } from './audio.generated';
 
+// ---------------------------------------------------------------------------
+// Spatialization — distance attenuation for world-emitted SFX
+// ---------------------------------------------------------------------------
+//
+// NPC sounds (robot footsteps/alerts/pursuit) fade with distance to the local
+// player, with a hard cutoff so anything past earshot is truly silent. The
+// single source of truth lives here so it's unit-coverable and every call site
+// behaves identically.
+
+/**
+ * Hearing radius in world units. Ten tiles at TILE_SIZE = 32 (shared/src/tiles.ts):
+ * 10 * 32 = 320. Beyond this an emitter is inaudible. Kept here (not imported from
+ * shared) because audio is renderer-/engine-agnostic; if TILE_SIZE changes, update
+ * this constant to match the intended 10-tile range.
+ */
+export const HEAR_RADIUS = 320;
+
+/**
+ * Distance-attenuated gain for a world-emitted sound.
+ *
+ * Hard cutoff: returns exactly 0 at or beyond `radius` so callers can SKIP
+ * playback entirely (true silence past range, no inaudible sources). Inside the
+ * radius the gain eases from full `base` at the source down to ~0 at the edge,
+ * using t = 1 - dist/radius (1 at source, 0 at edge) squared. The quadratic
+ * ease-in means a far NPC stays quiet and swells gradually as it approaches.
+ * Never returns a negative value.
+ *
+ * @param dist   distance (world units) from emitter to the listener
+ * @param base   gain 0..1 at zero distance
+ * @param radius cutoff distance (default HEAR_RADIUS = 10 tiles)
+ */
+export function spatialGain(dist: number, base: number, radius = HEAR_RADIUS): number {
+  // Non-finite distance (NaN from a corrupt position, or Infinity for "no source
+  // yet") is treated as out of range — never let a NaN gain reach a GainNode.
+  if (!Number.isFinite(dist) || dist >= radius || radius <= 0) return 0;
+  const t = 1 - dist / radius; // 1 at the source, 0 at the edge
+  return base * t * t; // quadratic ease: gentle rise as the emitter nears
+}
+
 let ctx: AudioContext | undefined;
 const buffers = new Map<SfxName, AudioBuffer>();
 /** Names we've already started loading, so we decode each file at most once. */
@@ -126,10 +165,13 @@ export function playSfx(name: SfxName, volume = 0.6): void {
 // ---------------------------------------------------------------------------
 //
 // playSfx() is one-shot; some manifest SFX are marked soundLoop and need to run
-// continuously while a game state holds (ambient_bed always-on, robot_pursuit
-// while a robot is chasing). A loop is desired-state, not a fire event: we record
-// the wish per key and (re)create the BufferSource whenever it can actually run —
-// the buffer might still be decoding, or the context still suspended pre-gesture.
+// continuously while a game state holds (e.g. robot_pursuit while a robot chases,
+// its gain tracking the nearest chaser's distance via spatialGain). A loop is
+// desired-state, not a fire event: we record the wish per key and (re)create the
+// BufferSource whenever it can actually run — the buffer might still be decoding,
+// or the context still suspended pre-gesture. Re-calling startLoop with a new
+// volume updates the gain in place (no restart), which is how a moving emitter's
+// loop swells/fades smoothly as it nears or leaves earshot.
 
 interface Loop {
   /** Whether the caller wants this loop playing. */
@@ -218,8 +260,8 @@ export function stopLoop(name: SfxName): void {
 
 /**
  * Re-drive every desired loop. Called after unlockAudio() resumes the context so
- * loops requested while audio was still locked (e.g. ambient_bed at join) begin
- * sounding the moment the first user gesture lands.
+ * loops requested while audio was still locked (e.g. robot_pursuit started before
+ * the first gesture) begin sounding the moment that first user gesture lands.
  */
 function resumeLoops(): void {
   for (const name of loops.keys()) ensureLoop(name);
