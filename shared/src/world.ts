@@ -25,8 +25,13 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  v8: merge of the organic-layout map overhaul (zones/river/plaza/per-pen animals,
  *  v5→7) and the animal-collection food sources (one `foodSource` spec per species,
  *  co-located with the quest tile). The merged output differs from both, so this is
- *  a fresh bump, not max(7,5). */
-export const WORLD_GEN_VERSION = 9;
+ *  a fresh bump, not max(7,5).
+ *  v9: additive `patrolRoute` field (robot patrol loop) on WorldMap.
+ *  v10: AUXILIARY service buildings (commissary / washroom / maintenance) added, and
+ *  the 14 food sources RELOCATED out of animal housing onto the aux buildings'
+ *  interior walls; each aux building also emits a guard robot + a door-terminal spec.
+ *  Collision + entitySpecs both change, so both pinned hashes are re-pinned. */
+export const WORLD_GEN_VERSION = 10;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -39,6 +44,13 @@ export interface TileGrid {
   /** length w*h, indexed ty*w + tx; values are tile indices from tiles.ts. */
   data: Uint16Array;
 }
+
+/**
+ * The kinds of AUXILIARY (service) building the zoo lays out — domed-megacity
+ * facilities (Caves of Steel flavor) that hold the dispersed food sources rather
+ * than the animal housing. Stable set; positions/sizes jitter per seed.
+ */
+export type AuxKind = 'commissary' | 'washroom' | 'maintenance';
 
 /** An enterable building: walls + interior + a door, with a roof that fades on entry. */
 export interface Building {
@@ -53,6 +65,17 @@ export interface Building {
   doorTy: number;
   /** Which species this building serves (its quest target lives inside), if any. */
   species?: string;
+  /**
+   * For AUXILIARY service buildings (commissary / washroom / maintenance) that
+   * hold the relocated food sources. Undefined for species homes + the gatehouse.
+   * The door is a normal non-solid DOOR_OPEN tile (so reachability holds); `locked`
+   * is the GENERATOR's default lock state — the SERVER tracks the live unlocked set
+   * per room and gates food collection until a door-terminal is ordered. Carried on
+   * the seed-derived map (zero wire cost; the server reads map.buildings directly).
+   */
+  auxKind?: AuxKind;
+  /** Default lock state for an aux building (true). Undefined for non-aux buildings. */
+  locked?: boolean;
 }
 
 /** The kinds of animal housing the zoo lays out, picked per species. */
@@ -487,6 +510,31 @@ function zoneFor(zones: Zone[], species: string): Zone {
   return zones.find((z) => z.id === id) ?? zones[0];
 }
 
+/**
+ * The fixed AUXILIARY service buildings the zoo lays out (stable set; only their
+ * positions/sizes jitter per seed). Each holds a block of the relocated food
+ * sources along its interior walls, a guard robot, and a terminal-gated door. The
+ * `zonePrefs` are the NON-WETLAND zones this building prefers (in order); aux
+ * buildings stay OUT of the wetland so their south door never lands on/adjacent to
+ * the river (the deep-water reach-target invariant iterates building doors). The
+ * footprint is generous (interior >= 8x6) so ~5 wall food slots + a guard anchor
+ * fit without colliding. Floor is fixed per kind (no rng) for a stable read.
+ */
+interface AuxBuildingDef {
+  kind: AuxKind;
+  floor: number;
+  /** Footprint incl. wall ring; interior is (tw-2)x(th-2) >= 8x6. */
+  tw: number;
+  th: number;
+  /** Preferred zones (never 'wetland'); first that fits wins. */
+  zonePrefs: ZoneId[];
+}
+const AUX_BUILDINGS: AuxBuildingDef[] = [
+  { kind: 'commissary', floor: TILE_INDEX.FLOOR_TILE, tw: 11, th: 8, zonePrefs: ['savanna', 'aviary', 'forest', 'rockyDen'] },
+  { kind: 'washroom', floor: TILE_INDEX.FLOOR_CONCRETE, tw: 10, th: 8, zonePrefs: ['aviary', 'rockyDen', 'forest', 'savanna'] },
+  { kind: 'maintenance', floor: TILE_INDEX.FLOOR_CONCRETE, tw: 11, th: 8, zonePrefs: ['rockyDen', 'forest', 'savanna', 'aviary'] },
+];
+
 // --- Organic enclosure placement --------------------------------------------
 
 /**
@@ -888,6 +936,125 @@ function stampBuilding(
     centerTx: questTx,
     centerTy: questTy,
   };
+}
+
+/** What stampAuxBuilding hands back: the Building, its center, and the ordered
+ *  interior wall-slot tiles food sources are placed on (a fixed traversal → the
+ *  food→slot assignment is byte-stable). */
+interface PlacedAux {
+  building: Building;
+  /** Walkable interior center tile (the guard-robot anchor). */
+  centerTx: number;
+  centerTy: number;
+  /** A non-solid tile just OUTSIDE the south door (the door-terminal anchor, kept
+   *  clear of the interior food so the interact food-first early-return can't
+   *  swallow the door-open press). */
+  terminalTx: number;
+  terminalTy: number;
+  /** Interior tiles adjacent to the wall ring, in a FIXED traversal order (north
+   *  wall L→R, then east, south, west), each a food-source slot. No rng. */
+  wallSlots: { tx: number; ty: number }[];
+}
+
+/**
+ * Stamp an AUXILIARY service building (commissary / washroom / maintenance) into a
+ * plot: wall ring + per-kind floor + fade-on-enter roof + a 2-wide DOOR_OPEN south
+ * door + a little dressing. Mirrors stampBuilding's geometry but is SPECIES-LESS
+ * (carries auxKind/locked instead) and does NOT stamp food — the generator stamps
+ * the TROUGH_FOOD markers onto the returned wallSlots AFTER the reachability carve.
+ *
+ * The door is a normal non-solid DOOR_OPEN tile so reachability holds; "locked" is
+ * a server-runtime concept, never a solid tile. Pure except the floor is fixed per
+ * kind (no rng here) — the only rng aux placement spends is findFreeRect (none) so
+ * this function draws ZERO rng, keeping the stream shift confined to the plot scan.
+ */
+function stampAuxBuilding(
+  ground: TileGrid,
+  deco: TileGrid,
+  roof: TileGrid,
+  plot: Plot,
+  def: AuxBuildingDef,
+): PlacedAux {
+  const rx = plot.tx;
+  const ry = plot.ty;
+  const rw = Math.min(plot.tw, def.tw);
+  const rh = Math.min(plot.th, def.th);
+
+  for (let dy = 0; dy < rh; dy++) {
+    for (let dx = 0; dx < rw; dx++) {
+      const tx = rx + dx;
+      const ty = ry + dy;
+      const edge = dx === 0 || dy === 0 || dx === rw - 1 || dy === rh - 1;
+      if (edge) {
+        setTile(deco, tx, ty, TILE_INDEX.WALL_EXT_MID);
+      } else {
+        setTile(ground, tx, ty, def.floor);
+        setTile(roof, tx, ty, TILE_INDEX.ROOF_RED_MID);
+      }
+    }
+  }
+  // 2-wide DOOR_OPEN south door (matches stampBuilding so the player AABB fits).
+  const doorTx = rx + Math.floor(rw / 2);
+  const doorTy = ry + rh - 1;
+  setTile(deco, doorTx, doorTy, TILE_INDEX.DOOR_OPEN);
+  setTile(deco, doorTx - 1, doorTy, TILE_INDEX.DOOR_OPEN);
+  setTile(roof, doorTx, doorTy, 0);
+  setTile(roof, doorTx - 1, doorTy, 0);
+
+  // Light dressing in two interior corners (BENCH/CRATE flavor); kept off the wall
+  // slots that hold food (top-left + top-right corners are slot 0 / first east run,
+  // so dress the BOTTOM corners instead).
+  setTile(deco, rx + 1, ry + rh - 2, TILE_INDEX.BENCH);
+  setTile(deco, rx + rw - 2, ry + rh - 2, TILE_INDEX.CRATE);
+
+  const centerTx = rx + Math.floor(rw / 2);
+  const centerTy = ry + Math.floor(rh / 2);
+
+  // The door-terminal anchor sits TWO tiles south of the door (outside the building,
+  // clear of the interior food's RECT_SIZE reach). The reachability carve guarantees
+  // it becomes walkable; it is added to reachTargets by the caller.
+  const terminalTx = doorTx;
+  const terminalTy = clampInt(doorTy + 2, 1, ground.h - 2);
+
+  // Interior wall-slot tiles: the ring of interior cells adjacent to the wall, in a
+  // FIXED traversal (north row L→R, east column top→bottom, south row L→R, west
+  // column top→bottom), skipping the door threshold cells, the dressing corners, and
+  // the center (guard anchor). Deterministic; no rng. Yields >= 14 slots for an
+  // 8x6+ interior so the 3 buildings together cover all 14 foods.
+  const ix0 = rx + 1;
+  const iy0 = ry + 1;
+  const ix1 = rx + rw - 2;
+  const iy1 = ry + rh - 2;
+  const skip = new Set<number>();
+  skip.add(tileIndex(ground.w, doorTx, doorTy - 1)); // inside the door
+  skip.add(tileIndex(ground.w, doorTx - 1, doorTy - 1));
+  skip.add(tileIndex(ground.w, rx + 1, ry + rh - 2)); // BENCH
+  skip.add(tileIndex(ground.w, rx + rw - 2, ry + rh - 2)); // CRATE
+  skip.add(tileIndex(ground.w, centerTx, centerTy)); // guard anchor
+  const wallSlots: { tx: number; ty: number }[] = [];
+  const push = (tx: number, ty: number) => {
+    if (tx < ix0 || tx > ix1 || ty < iy0 || ty > iy1) return;
+    if (skip.has(tileIndex(ground.w, tx, ty))) return;
+    skip.add(tileIndex(ground.w, tx, ty)); // dedupe corners shared between runs
+    wallSlots.push({ tx, ty });
+  };
+  for (let tx = ix0; tx <= ix1; tx++) push(tx, iy0); // north
+  for (let ty = iy0; ty <= iy1; ty++) push(ix1, ty); // east
+  for (let tx = ix1; tx >= ix0; tx--) push(tx, iy1); // south
+  for (let ty = iy1; ty >= iy0; ty--) push(ix0, ty); // west
+
+  const building: Building = {
+    id: `aux-${def.kind}`,
+    rx,
+    ry,
+    rw,
+    rh,
+    doorTx,
+    doorTy,
+    auxKind: def.kind,
+    locked: true,
+  };
+  return { building, centerTx, centerTy, terminalTx, terminalTy, wallSlots };
 }
 
 /**
@@ -1350,6 +1517,83 @@ export function generateWorld(seed: number): WorldMap {
     }
   }
 
+  // 5b. AUXILIARY service buildings (commissary / washroom / maintenance). These
+  //     are SPECIES-LESS (auxKind only) so the one-home-per-species invariant holds;
+  //     they hold the relocated food sources along their interior walls, plus a
+  //     guard robot + a terminal-gated door (wired in the entitySpecs block). Placed
+  //     AFTER all homes (so findFreeRect avoids them) and BEFORE the spawn block.
+  //     stampAuxBuilding draws NO rng, but findFreeRect/claim consume none either —
+  //     so the only stream effect here is none directly; the downstream re-pin comes
+  //     from the new homes/nature interplay. Each kept OUT of the wetland zone so its
+  //     south door never lands on/adjacent to the river (deep-water reach invariant).
+  const auxPlaced: PlacedAux[] = [];
+  for (const def of AUX_BUILDINGS) {
+    const prefs = def.zonePrefs.filter((id) => id !== 'wetland');
+    let plot: Plot | null = null;
+    for (const id of prefs) {
+      const z = zones.find((zz) => zz.id === id);
+      if (z) plot = findFreeRect(z, def.tw, def.th, claimed, w);
+      if (plot) break;
+    }
+    if (!plot) {
+      // Fallback: any non-wetland zone that can fit it.
+      for (const z of zones) {
+        if (z.id === 'wetland') continue;
+        plot = findFreeRect(z, def.tw, def.th, claimed, w);
+        if (plot) break;
+      }
+    }
+    if (!plot) {
+      // Last resort: a smaller footprint anywhere non-wetland (interior still >= 6×6).
+      for (const z of zones) {
+        if (z.id === 'wetland') continue;
+        plot = findFreeRect(z, 9, 8, claimed, w);
+        if (plot) break;
+      }
+    }
+    if (!plot) {
+      throw new Error(`generateWorld(${seed}): no room to place aux building "${def.kind}"`);
+    }
+    const aux = stampAuxBuilding(ground, deco, roof, plot, def);
+    auxPlaced.push(aux);
+    buildings.push(aux.building);
+    claimPlot(claimed, plot, w);
+    for (let dy = -1; dy <= plot.th; dy++) {
+      for (let dx = -1; dx <= plot.tw; dx++) {
+        reserved.add(tileIndex(w, plot.tx + dx, plot.ty + dy));
+      }
+    }
+    // The door + the door-terminal anchor must be reachable from spawn.
+    reachTargets.push({ tx: aux.building.doorTx, ty: aux.building.doorTy });
+    reachTargets.push({ tx: aux.terminalTx, ty: aux.terminalTy });
+  }
+
+  // Food → aux-building wall-slot assignment (DETERMINISTIC). Iterate the UNSHUFFLED
+  // SPECIES_KEYS and hand each species the next free wall slot, walking the aux
+  // buildings in their fixed AUX_BUILDINGS order (contiguous blocks). The result is a
+  // total species→tile map the entitySpecs loop reads, so JSON.stringify(entitySpecs)
+  // is byte-stable. Buildings together yield >= 14 slots (each interior >= 8×6).
+  const foodPos = new Map<string, { tx: number; ty: number; buildingId: string; auxKind: AuxKind }>();
+  {
+    const flatSlots: { tx: number; ty: number; buildingId: string; auxKind: AuxKind }[] = [];
+    for (const aux of auxPlaced) {
+      for (const s of aux.wallSlots) {
+        flatSlots.push({ tx: s.tx, ty: s.ty, buildingId: aux.building.id, auxKind: aux.building.auxKind! });
+      }
+    }
+    if (flatSlots.length < SPECIES_KEYS.length) {
+      throw new Error(
+        `generateWorld(${seed}): aux buildings yielded ${flatSlots.length} food slots, need ${SPECIES_KEYS.length}`,
+      );
+    }
+    SPECIES_KEYS.forEach((species, i) => {
+      foodPos.set(species, flatSlots[i]);
+      // Each food slot is a reach target so the interior food is guaranteed walkable
+      // + reachable on every seed (belt-and-braces with the door being reachable).
+      reachTargets.push({ tx: flatSlots[i].tx, ty: flatSlots[i].ty });
+    });
+  }
+
   // Spawns: a small block inside the gate, set back ~half a viewport from the
   // east wall so the camera (which clamps to the world edge) can frame the player
   // on join instead of pinning at the boundary. Still clearly "by the gate" — the
@@ -1435,6 +1679,20 @@ export function generateWorld(seed: number): WorldMap {
     tnum++;
     entitySpecs.push({ id: `terminal-${tnum}`, kind: 'terminal', x: tileCenter(jp.tx, tile), y: tileCenter(jp.ty, tile) });
   }
+  // Door-terminals: one per aux building, anchored just OUTSIDE its door (outside the
+  // interior food's reach so a single interact press can't both collect food AND open
+  // the door). Ordering one is a Second-Law order that raises panic AND unlocks the
+  // building (server runtime). Emitted AFTER the junction terminals in fixed
+  // AUX_BUILDINGS order so the spec list stays byte-stable.
+  for (const aux of auxPlaced) {
+    entitySpecs.push({
+      id: `terminal-door-${aux.building.auxKind}`,
+      kind: 'terminal',
+      x: tileCenter(aux.terminalTx, tile),
+      y: tileCenter(aux.terminalTy, tile),
+      meta: { door: '1', buildingId: aux.building.id, auxKind: aux.building.auxKind! },
+    });
+  }
 
   // Robot spawns: spread across the path junctions (non-solid spine tiles). Anchor
   // one per zone center plus the forecourt, deterministically, so keepers patrol
@@ -1456,6 +1714,19 @@ export function generateWorld(seed: number): WorldMap {
       kind: 'robotSpawn',
       x: tileCenter(clampInt(jp.tx + off, 2, w - 3), tile),
       y: tileCenter(jp.ty, tile),
+    });
+  }
+  // Guard robots: one per aux building, anchored at the building interior center.
+  // Emitted AFTER the patrol robots (so robot-1..6 stay byte-identical) in fixed
+  // AUX_BUILDINGS order. meta.guard flags the server to contain it to the building
+  // (behavior='guard') rather than send it out on the patrol loop.
+  for (const aux of auxPlaced) {
+    entitySpecs.push({
+      id: `robot-guard-${aux.building.auxKind}`,
+      kind: 'robotSpawn',
+      x: tileCenter(aux.centerTx, tile),
+      y: tileCenter(aux.centerTy, tile),
+      meta: { guard: '1', buildingId: aux.building.id, auxKind: aux.building.auxKind! },
     });
   }
 
@@ -1500,19 +1771,22 @@ export function generateWorld(seed: number): WorldMap {
         if (an >= 3) break; // hard cap: at most 3 animals/home (1 canonical + 2)
       }
     }
-    // Food source: one per species, co-located with the quest object on the same
-    // already-proven-reachable home tile (so all 14 foods are findable + reachable
-    // with NO new reachability target). Emitted at a FIXED position in the loop
-    // (penAnchor → foodSource → questObject) so JSON.stringify(entitySpecs) is
-    // stable. We push only the SPEC here; the on-map TROUGH_FOOD marker tile is
-    // stamped AFTER the reachability carve (below) so the carve can't erase it.
+    // Food source: one per species, now DISPERSED into the auxiliary buildings
+    // (commissary / washroom / maintenance) along their interior walls — NOT in the
+    // animal's own housing. foodPos holds the deterministic species→wall-slot tile
+    // (assigned from unshuffled SPECIES_KEYS). Emitted at a FIXED position in the loop
+    // (penAnchor → foodSource → questObject) so JSON.stringify(entitySpecs) is stable.
+    // We push only the SPEC here; the on-map TROUGH_FOOD marker is stamped AFTER the
+    // reachability carve (below). meta carries the foodKey + the owning aux building
+    // so the server can gate collection behind that building's locked door.
+    const fp = foodPos.get(species)!;
     entitySpecs.push({
       id: `food-${species}`,
       kind: 'foodSource',
-      x: tileCenter(qp.tx, tile),
-      y: tileCenter(qp.ty, tile),
+      x: tileCenter(fp.tx, tile),
+      y: tileCenter(fp.ty, tile),
       species,
-      meta: { foodKey: foodForSpecies(species).key },
+      meta: { foodKey: foodForSpecies(species).key, buildingId: fp.buildingId, auxKind: fp.auxKind },
     });
     entitySpecs.push({
       id: `quest-${species}`,
@@ -1566,15 +1840,16 @@ export function generateWorld(seed: number): WorldMap {
   }
 
   // 9. Food-source markers (animal-collection feature): stamp the TROUGH_FOOD tile
-  //    AFTER the reachability carve so no corridor carve can erase it, and explicitly
-  //    KEEP the cell non-solid (force collision = 0) — TROUGH_FOOD is normally solid,
-  //    but a feeder must be able to stand on the food tile to collect. Deterministic:
-  //    fixed SPECIES_KEYS order, no rng, co-located with the questObject tile (already
-  //    proven reachable; the only deco/collision discrepancy, confined to 14 tiles).
+  //    onto each aux-building wall slot AFTER the reachability carve so no corridor
+  //    carve can erase it, and explicitly KEEP the cell non-solid (force collision = 0)
+  //    — TROUGH_FOOD is normally solid, but a feeder must be able to stand on the food
+  //    tile to collect. Deterministic: fixed SPECIES_KEYS order, no rng, on the
+  //    foodPos wall-slot tile (already added to reachTargets → proven reachable; the
+  //    only deco/collision discrepancy, confined to 14 tiles inside the aux buildings).
   for (const species of SPECIES_KEYS) {
-    const qp = questPos.get(species);
-    if (!qp) continue;
-    const fi = tileIndex(w, qp.tx, qp.ty);
+    const fp = foodPos.get(species);
+    if (!fp) continue;
+    const fi = tileIndex(w, fp.tx, fp.ty);
     deco.data[fi] = TILE_INDEX.TROUGH_FOOD; // visual feeding-spot marker
     collision[fi] = 0; // override TROUGH_FOOD solidity — the tile stays walkable
   }

@@ -22,11 +22,13 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v8: re-pinned for the MERGE of the organic-layout overhaul and the
-// animal-collection food sources — the combined generator output differs from
-// both parents, so both hashes are recomputed from the merged generateWorld(123).
-const PINNED_COLLISION_HASH = 3073572579;
-const PINNED_ENTITYSPEC_HASH = 578345159;
+// v10: re-pinned for the AUXILIARY service buildings (commissary / washroom /
+// maintenance) + the relocation of all 14 food sources out of animal housing onto
+// the aux buildings' interior walls, plus a guard robot + door-terminal per aux
+// building. Both collision and entitySpecs change, so both hashes are recomputed
+// from generateWorld(123).
+const PINNED_COLLISION_HASH = 4250159112;
+const PINNED_ENTITYSPEC_HASH = 58088005;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -90,12 +92,11 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v9: added the additive `patrolRoute` field (robot patrol loop) to WorldMap.
-  // The two pinned hashes above are unchanged (patrolRoute touches neither
-  // collision nor entitySpecs) — the bump is a deliberate cache-bust so old
-  // clients (which assert msg.version === WORLD_GEN_VERSION) fail loud rather
-  // than silently lack the new field.
-  assert.equal(WORLD_GEN_VERSION, 9, 'version pinned at 9');
+  // v10: auxiliary service buildings + relocated food sources + per-building guard
+  // robot & door-terminal. Both pinned hashes above are re-pinned (collision +
+  // entitySpecs both changed); the bump is the deliberate cache-bust so old clients
+  // (which assert msg.version === WORLD_GEN_VERSION) fail loud rather than desync.
+  assert.equal(WORLD_GEN_VERSION, 10, 'version pinned at 10');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 
@@ -254,9 +255,13 @@ test('water feature: no reach target sits on or adjacent to deep water', () => {
     const map = generateWorld(seed);
     const targets = [
       { name: 'gate', x: map.gate.x, y: map.gate.y },
-      ...map.buildings.map((b) => ({ name: `door:${b.species}`, x: (b.doorTx + 0.5) * map.tile, y: (b.doorTy + 0.5) * map.tile })),
+      ...map.buildings.map((b) => ({ name: `door:${b.species ?? b.auxKind ?? b.id}`, x: (b.doorTx + 0.5) * map.tile, y: (b.doorTy + 0.5) * map.tile })),
       ...map.housing.map((hh) => ({ name: `center:${hh.species}`, x: hh.cx, y: hh.cy })),
       ...map.entitySpecs.filter((e) => e.kind === 'questObject').map((e) => ({ name: `quest:${e.species}`, x: e.x, y: e.y })),
+      // v10: food sources now live in aux buildings; they must also stay off deep
+      // water (defensive — aux buildings are kept out of the wetland zone, so this
+      // is belt-and-braces against a future placement change).
+      ...map.entitySpecs.filter((e) => e.kind === 'foodSource').map((e) => ({ name: `food:${e.species}`, x: e.x, y: e.y })),
     ];
     for (const t of targets) {
       assert.ok(!nearDeep(map, t.x, t.y), `seed ${seed}: reach target ${t.name} is on/adjacent to deep water`);
@@ -270,7 +275,9 @@ test('water feature: no reach target sits on or adjacent to deep water', () => {
 test('entrance plaza: a species-less gatehouse building exists with a reachable, non-solid door', () => {
   for (const seed of [0, 7, 123, 9999]) {
     const map = generateWorld(seed);
-    const gatehouses = map.buildings.filter((b) => b.species == null);
+    // The gatehouse is the ONE species-less, NON-aux building (aux service buildings
+    // are also species-less but carry an auxKind — see the aux-building test below).
+    const gatehouses = map.buildings.filter((b) => b.species == null && !b.auxKind);
     assert.equal(gatehouses.length, 1, `seed ${seed}: exactly one species-less gatehouse`);
     const gh = gatehouses[0];
     // Door is non-solid (DOOR_OPEN) so the reachability test can reach it.
@@ -287,6 +294,71 @@ test('entrance plaza: a species-less gatehouse building exists with a reachable,
       !tileSolid(map.collision, map.w, map.h, tx(map, map.gate.x), tx(map, map.gate.y)),
       `seed ${seed}: gate tile non-solid`,
     );
+  }
+});
+
+// --- Auxiliary service buildings + relocated food (v10) ----------------------
+
+test('aux buildings: exactly 3 species-less service buildings (commissary/washroom/maintenance), reachable, large enough', () => {
+  const KINDS = new Set(['commissary', 'washroom', 'maintenance']);
+  for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
+    const map = generateWorld(seed);
+    const aux = map.buildings.filter((b) => b.auxKind);
+    assert.equal(aux.length, 3, `seed ${seed}: exactly 3 aux buildings`);
+    const kinds = new Set(aux.map((b) => b.auxKind));
+    assert.equal(kinds.size, 3, `seed ${seed}: 3 distinct aux kinds`);
+    for (const b of aux) {
+      assert.ok(KINDS.has(b.auxKind), `seed ${seed}: ${b.auxKind} is a known aux kind`);
+      assert.equal(b.species, undefined, `seed ${seed}: aux ${b.auxKind} is species-less`);
+      assert.equal(b.locked, true, `seed ${seed}: aux ${b.auxKind} defaults locked`);
+      // Interior big enough to hold its block of wall foods + a guard anchor.
+      assert.ok(b.rw - 2 >= 8 && b.rh - 2 >= 6, `seed ${seed}: aux ${b.auxKind} interior ${b.rw - 2}x${b.rh - 2} too small (want >=8x6)`);
+      // Door non-solid + reachable from spawn.
+      assert.ok(!tileSolid(map.collision, map.w, map.h, b.doorTx, b.doorTy), `seed ${seed}: aux ${b.auxKind} door non-solid`);
+    }
+    const s0 = map.spawns[0];
+    const seen = floodReachable(map, tx(map, s0.x), tx(map, s0.y));
+    for (const b of aux) {
+      assert.ok(seen[b.doorTy * map.w + b.doorTx], `seed ${seed}: aux ${b.auxKind} door reachable from spawn`);
+    }
+  }
+});
+
+test('aux buildings: every food source sits strictly inside some aux building interior (not in animal housing)', () => {
+  for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
+    const map = generateWorld(seed);
+    const aux = map.buildings.filter((b) => b.auxKind);
+    const foods = map.entitySpecs.filter((e) => e.kind === 'foodSource');
+    assert.equal(foods.length, SPECIES_KEYS.length, `seed ${seed}: one food source per species`);
+    for (const f of foods) {
+      const ftx = tx(map, f.x);
+      const fty = tx(map, f.y);
+      // Strictly inside the wall ring of SOME aux building.
+      const inAux = aux.some((b) => ftx > b.rx && ftx < b.rx + b.rw - 1 && fty > b.ry && fty < b.ry + b.rh - 1);
+      assert.ok(inAux, `seed ${seed}: food ${f.species} at (${ftx},${fty}) is not inside any aux building interior`);
+      // And NOT inside any animal home (housing or species building) — the whole point.
+      const inHousing = map.housing.some((h) => ftx >= h.rx && ftx < h.rx + h.rw && fty >= h.ry && fty < h.ry + h.rh);
+      const inSpeciesBld = map.buildings.some((b) => b.species != null && ftx >= b.rx && ftx < b.rx + b.rw && fty >= b.ry && fty < b.ry + b.rh);
+      assert.ok(!inHousing && !inSpeciesBld, `seed ${seed}: food ${f.species} is inside an animal home — must be in an aux building`);
+      // The food carries its owning aux building so the server can gate it.
+      assert.ok(f.meta && typeof f.meta.buildingId === 'string' && f.meta.buildingId, `seed ${seed}: food ${f.species} carries a buildingId`);
+    }
+  }
+});
+
+test('aux buildings: each has a door-terminal and a guard robot spec', () => {
+  for (const seed of [0, 7, 123, 9999]) {
+    const map = generateWorld(seed);
+    const aux = map.buildings.filter((b) => b.auxKind);
+    const doorTerms = map.entitySpecs.filter((e) => e.kind === 'terminal' && e.meta && e.meta.door);
+    const guards = map.entitySpecs.filter((e) => e.kind === 'robotSpawn' && e.meta && e.meta.guard);
+    assert.equal(doorTerms.length, 3, `seed ${seed}: exactly 3 door-terminals`);
+    assert.equal(guards.length, 3, `seed ${seed}: exactly 3 guard robots`);
+    // Each aux building id is referenced by exactly one door-terminal and one guard.
+    for (const b of aux) {
+      assert.equal(doorTerms.filter((t) => t.meta.buildingId === b.id).length, 1, `seed ${seed}: ${b.id} has one door-terminal`);
+      assert.equal(guards.filter((g) => g.meta.buildingId === b.id).length, 1, `seed ${seed}: ${b.id} has one guard robot`);
+    }
   }
 });
 

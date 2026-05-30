@@ -4,6 +4,37 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.51: **Auxiliary buildings + dispersed food — Phase 1/2 (shared world-gen).** Food no longer
+  sits inside the animals' own housing; it is dispersed into closed-out service buildings, on-theme
+  with the domed-megacity (Caves of Steel) setting. `WORLD_GEN_VERSION` 9 → 10.
+  - **Shared (`shared/src/world.ts`):**
+    - **Aux buildings:** new `AuxKind` type + `auxKind?`/`locked?` fields on `Building`; a stable
+      `AUX_BUILDINGS` table (`commissary` / `washroom` / `maintenance`) and a `stampAuxBuilding`
+      helper (wall ring + per-kind floor + fade-on-enter roof + 2-wide `DOOR_OPEN` south door +
+      light dressing). Placed AFTER the per-species home loop, in a non-`wetland` zone (so the door
+      never lands on/adjacent to the river), positions/sizes jittered per seed. Species-less, so the
+      one-home-per-species invariant is untouched (the gatehouse precedent).
+    - **Food relocation:** all 14 `foodSource` specs move out of animal housing onto the aux
+      buildings' interior walls. A deterministic `foodPos` map assigns each species (unshuffled
+      `SPECIES_KEYS` order) the next interior wall slot across the 3 buildings (fixed traversal), so
+      `JSON.stringify(entitySpecs)` stays byte-stable. The `TROUGH_FOOD` marker stamp (with its
+      `collision = 0` override) follows the food to the new tiles. The `questObject` stays on the
+      home tile. Each food's `meta` now carries `buildingId` + `auxKind` so the server can gate it.
+    - **Guard + door-terminal specs (Phase 2):** each aux building emits one `robot-guard-${kind}`
+      (`meta.guard`) at its interior center and one `terminal-door-${kind}` (`meta.door`) just
+      outside its door (clear of the interior food's interact reach). Appended after the existing
+      robots/terminals so those stay byte-identical.
+    - Aux doors + door-terminals + food tiles are all added to `reachTargets`, so the reachability
+      carve guarantees them on every seed.
+  - **Tests (`shared/test/world.test.mjs`):** re-pinned `PINNED_COLLISION_HASH` (4250159112) +
+    `PINNED_ENTITYSPEC_HASH` (58088005), version assertion → 10, gatehouse check re-keyed to
+    `species == null && !auxKind`, food added to the deep-water reach-target check, and 3 new
+    invariants (exactly 3 reachable aux buildings ≥ 8×6 interior; every food strictly inside an aux
+    interior and NOT in any animal home; one door-terminal + one guard per aux building).
+  - Verified: `npm run build` clean; shared **53/53** green; a multi-seed probe (0,1,2,7,123,777,
+    9999,424242) confirms 3 aux buildings, 14 foods all inside aux interiors with `foodInAnimalHome=0`,
+    full reachability, no aux door near deep water, and byte-identical re-runs.
+
 - 0.2.50: **NPC movement refactor — validation remediation (`/plan-validation-and-review`).** The
   validation pass (requirements trace, connectivity audit, dedup scan, determinism audit,
   build/test) found all 6 requirements implemented + connected, every new shared export wired,
