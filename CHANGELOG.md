@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.97: **Leaderboard validation fix — restore the missing datatable CSS.** The
+  `/plan-validation-and-review` gate caught that the leaderboard's stylesheet block (the
+  `#lb-*` / `.lb-*` rules the L-key overlay in `client/src/leaderboard.ts` depends on) was
+  absent from `client/src/style.css` — the panel would have rendered unstyled. Re-added the
+  wide centered-modal chrome: sticky click-to-sort headers, right-aligned tabular metric
+  columns, the gold own-row highlight + outside-top-N separator, and the expandable
+  per-species detail grid (38 selectors). Client build green; the CSS bundle grew 12.68 → 15.32 kB.
+  (Two other "critical" findings from the review — `incStats` dropping the new JSON maps, and a
+  broken `DELTA_COLUMNS` reference — were verified FALSE POSITIVES via a clean-DB round-trip:
+  all three by-species maps persist correctly, float seconds preserved.)
+
 - 0.2.96: **Leaderboard, polish — export the scorer from the shared barrel.** Add
   `export * from './score.js'` to `shared/src/index.ts` so the composite scorer is reachable
   via the `@shared` barrel like every other shared module (the server already imports
