@@ -32,8 +32,11 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  interior walls; each aux building also emits a guard robot + a door-terminal spec.
  *  Collision + entitySpecs both change, so both pinned hashes are re-pinned.
  *  v11: drops the door-terminals (food is freely collectable now) and round-robins the
- *  14 food sources across the 3 aux buildings (was all in the first one). */
-export const WORLD_GEN_VERSION = 11;
+ *  14 food sources across the 3 aux buildings (was all in the first one).
+ *  v12: trees are now a 2×2 crown over a center-bottom trunk (was single-canopy-over-
+ *  trunk). The trunk moves from (anchor+1) to the anchor cell, so the collision grid
+ *  shifts where tree trunks sit → collision hash re-pinned. entitySpecs unchanged. */
+export const WORLD_GEN_VERSION = 12;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -1254,8 +1257,10 @@ function scatterNature(
     if (!isOpenGrass(ground, deco, tx, ty)) continue;
     const roll = rng();
     if (roll < 0.45) {
-      // Tree: canopy at (tx,ty), trunk at (tx,ty+1). Trunk is solid; need the
-      // trunk tile open too.
+      // Tree: a single full canopy crown at (tx,ty) over a trunk at (tx,ty+1). The
+      // canopy tile is a complete round crown that reaches its cell bottom, so it
+      // meets the trunk with no gap and stays within its cell so trees don't overlap.
+      // Trunk is solid; the canopy is non-solid ysort:'behind' (walk-behind).
       if (ty + 1 >= h - 1 || !isOpenGrass(ground, deco, tx, ty + 1)) continue;
       if (occupied.has(tileIndex(w, tx, ty + 1))) continue;
       setTile(deco, tx, ty, TILE_INDEX.TREE_CANOPY);

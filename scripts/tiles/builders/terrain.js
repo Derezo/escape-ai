@@ -14,9 +14,13 @@ const { TILE_PAL, ACCENT } = require('../tilepalette');
 
 const { fillCell, topLight, bottomShade, plainRect, scatter, circle, ellipse } = T;
 
-/** Common ground base: full fill + top-lit highlight + bottom contact shade. */
+/**
+ * Common ground base: full fill only, NO per-cell top/bottom banding.
+ * The banding creates visible seams when identical tiles stack vertically.
+ * Seamless ground relies on scatter detail (seeded by tile name, wraps mod 32).
+ */
 function ground(pal) {
-  return fillCell(pal.base) + topLight(pal.light, 3, 0.5) + bottomShade(pal.shade, 3, 0.45);
+  return fillCell(pal.base);
 }
 
 /** A few flat speckles of `color` scattered deterministically across the cell. */
@@ -68,18 +72,17 @@ function dirtTrampled() {
 
 // --- Cobble / paved (stone gray) ---
 function cobble() {
-  // a grid of rounded stones
-  let out = ground(TILE_PAL.cobble);
+  // a scattered stone field: ~16 larger stones with deterministic pseudo-random placement
+  // No regular grid alignment means no visible seams when tiled
   const c = TILE_PAL.cobble;
-  for (let gy = 0; gy < 4; gy++) {
-    for (let gx = 0; gx < 4; gx++) {
-      const x = gx * 8 + 4;
-      const y = gy * 8 + 4;
-      const tone = (gx + gy) % 2 === 0 ? c.shade : c.accent;
-      out += ellipse(x, y, 3.2, 3, tone, { stroke: 'none' });
-    }
-  }
-  return out;
+  return (
+    ground(c) +
+    scatter('COBBLE', 16, (x, y, r, i) => {
+      // Alternate tone for visual variation
+      const tone = i % 2 === 0 ? c.shade : c.accent;
+      return ellipse(x, y, 4 + r * 0.5, 3.5 + r * 0.3, tone, { stroke: 'none' });
+    }, { margin: 2, rMin: 1.2, rMax: 2.2 })
+  );
 }
 
 function cobbleWorn() {
@@ -88,12 +91,8 @@ function cobbleWorn() {
 }
 
 function paved() {
-  // smooth paving with a faint seam grid
-  return (
-    ground(TILE_PAL.paved) +
-    plainRect(0, 15, 32, 1, TILE_PAL.paved.shade, { opacity: 0.4 }) +
-    plainRect(15, 0, 1, 32, TILE_PAL.paved.shade, { opacity: 0.4 })
-  );
+  // smooth paving, fully seamless (no per-cell cross seams that grid the output)
+  return ground(TILE_PAL.paved);
 }
 
 function pavedCrack() {
@@ -135,7 +134,6 @@ function mudPuddle() {
 function waterDeep() {
   return (
     fillCell(TILE_PAL.waterDeep.base) +
-    topLight(TILE_PAL.waterDeep.light, 4, 0.4) +
     scatter('WATER_DEEP', 4, (x, y) => ellipse(x, y, 4, 1.2, TILE_PAL.waterDeep.light, { stroke: 'none', opacity: 0.35 }), { margin: 5 })
   );
 }
@@ -143,7 +141,6 @@ function waterDeep() {
 function waterShallow() {
   return (
     fillCell(TILE_PAL.waterShallow.base) +
-    topLight(TILE_PAL.waterShallow.light, 4, 0.5) +
     scatter('WATER_SHALLOW', 5, (x, y) => ellipse(x, y, 4.5, 1.3, TILE_PAL.waterShallow.light, { stroke: 'none', opacity: 0.4 }), { margin: 5 })
   );
 }
@@ -156,24 +153,23 @@ function floorWoodDark() {
   return planks(TILE_PAL.woodFloorDark);
 }
 function planks(pal) {
-  // horizontal plank floor: 4 boards with seam lines
+  // horizontal plank floor: 4 boards with seam lines, offset so seams don't align to cell edge
   let out = fillCell(pal.base);
+  const yStart = 4;  // offset so board seams don't fall on 0 or 31 (cell boundaries)
   for (let i = 0; i < 4; i++) {
-    const y = i * 8;
-    out += plainRect(0, y + 7, 32, 1, pal.shade, { opacity: 0.7 });
+    const y = yStart + i * 7;
+    out += plainRect(0, y + 6, 32, 1, pal.shade, { opacity: 0.7 });
     // alternate slight tone so boards read distinctly
-    if (i % 2 === 1) out += plainRect(0, y, 32, 7, pal.accent, { opacity: 0.25 });
+    if (i % 2 === 1) out += plainRect(0, y, 32, 6, pal.accent, { opacity: 0.25 });
   }
-  out += topLight(pal.light, 2, 0.4);
   return out;
 }
 
 function floorTile() {
-  // 2x2 large ceramic tiles with grout seams
+  // 2x2 large ceramic tiles with grout seams, offset so they don't align to cell boundaries
   let out = fillCell(TILE_PAL.tileFloor.base);
-  out += plainRect(0, 15, 32, 2, TILE_PAL.tileFloor.accent, { opacity: 0.8 });
-  out += plainRect(15, 0, 2, 32, TILE_PAL.tileFloor.accent, { opacity: 0.8 });
-  out += topLight(TILE_PAL.tileFloor.light, 2, 0.5);
+  out += plainRect(0, 14, 32, 2, TILE_PAL.tileFloor.accent, { opacity: 0.8 });
+  out += plainRect(14, 0, 2, 32, TILE_PAL.tileFloor.accent, { opacity: 0.8 });
   return out;
 }
 
@@ -192,8 +188,6 @@ function floorTileChecker() {
 function floorConcrete() {
   return (
     fillCell(TILE_PAL.concrete.base) +
-    topLight(TILE_PAL.concrete.light, 2, 0.4) +
-    bottomShade(TILE_PAL.concrete.shade, 2, 0.4) +
     speckles('FLOOR_CONCRETE', 8, TILE_PAL.concrete.shade, { rMin: 0.4, rMax: 0.9 })
   );
 }
@@ -210,11 +204,10 @@ function penFloorStraw() {
 }
 
 function penFloorConcrete() {
-  // concrete with a drainage seam down the middle
+  // concrete with a drainage seam, offset from center so it doesn't align to cell edges
   return (
     fillCell(TILE_PAL.concrete.base) +
-    topLight(TILE_PAL.concrete.light, 2, 0.4) +
-    plainRect(15, 0, 2, 32, TILE_PAL.concrete.shade, { opacity: 0.6 }) +
+    plainRect(14, 0, 2, 32, TILE_PAL.concrete.shade, { opacity: 0.6 }) +
     speckles('PEN_FLOOR_CONCRETE', 6, TILE_PAL.concrete.shade, { rMin: 0.4, rMax: 0.9 })
   );
 }

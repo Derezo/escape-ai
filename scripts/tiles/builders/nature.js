@@ -23,20 +23,23 @@ const S = T.S; // 32
 
 /** A soft leaf-edge stroke (override-able), so plant blobs read as objects. */
 function leaf(opts = {}) {
-  return { stroke: EDGE, width: 1, ...opts };
+  // Use a darker shade of the leaf color instead of near-black EDGE for softer definition
+  return { stroke: TILE_PAL.leaf.shade, width: 1, opacity: 0.7, ...opts };
 }
 
 // --- Trunks ---
 function treeTrunk() {
   const b = TILE_PAL.bark;
-  // a solid trunk in the lower-centre, roots flaring at the base
+  // Trunk fills the upper part of its cell (y=0..top) so the canopy cell directly
+  // ABOVE overlaps it with no grass gap, then narrows with a root flare at the base.
   return (
-    plainRect(13, 4, 6, 24, b.base) +
-    plainRect(13, 4, 2, 24, b.light, { opacity: 0.6 }) +
-    plainRect(17, 4, 2, 24, b.shade, { opacity: 0.6 }) +
-    // root flare
-    polygon([[10, 28], [13, 22], [13, 28]], b.shade, { stroke: 'none' }) +
-    polygon([[22, 28], [19, 22], [19, 28]], b.shade, { stroke: 'none' })
+    plainRect(13, 0, 6, 26, b.base) +
+    plainRect(13, 0, 2, 26, b.light, { opacity: 0.6 }) +
+    plainRect(17, 0, 2, 26, b.shade, { opacity: 0.6 }) +
+    // root flare at the bottom
+    polygon([[9, 30], [13, 24], [13, 30]], b.shade, { stroke: 'none' }) +
+    polygon([[23, 30], [19, 24], [19, 30]], b.shade, { stroke: 'none' }) +
+    plainRect(13, 24, 6, 6, b.base)
   );
 }
 
@@ -49,42 +52,52 @@ function pineTrunk() {
   );
 }
 
-// --- Canopies (the 2x2 crown split into 4 cells) ---
-function crownBlob(cx, cy, rx, ry, pal) {
-  return (
-    ellipse(cx, cy, rx, ry, pal.base, leaf()) +
-    ellipse(cx - rx * 0.3, cy - ry * 0.35, rx * 0.5, ry * 0.45, pal.light, { stroke: 'none' }) +
-    ellipse(cx + rx * 0.35, cy + ry * 0.4, rx * 0.45, ry * 0.4, pal.shade, { stroke: 'none', opacity: 0.6 })
-  );
+// --- Canopies ---
+// A tree is ONE canopy cell directly above ONE trunk cell (world-gen places
+// TREE_CANOPY over TREE_TRUNK). Each canopy tile is therefore a complete, self-
+// contained round crown that fills its own cell: it reaches the cell bottom (y~31)
+// so the trunk below meets it with no gap, and stays within the cell width so
+// neighbouring trees never overlap. The crown is layered (base silhouette + light
+// foliage lobes + shade pockets) so it reads as foliage, not a flat blob.
+// _L/_R/_TOP are alternate standalone crowns (seeded differently) kept as valid
+// tiles for variety; they are not assembled into a multi-cell tree.
+function fullCrown(seed) {
+  const p = TILE_PAL.leaf;
+  // Base silhouette: a round crown centred high, plus a lower lobe that fills down
+  // toward the trunk join so there is no grass gap at the canopy/trunk seam.
+  let out =
+    ellipse(16, 15, 15, 14, p.base, leaf()) +
+    ellipse(16, 25, 12, 8, p.base, { stroke: 'none' });
+  // Light foliage lobes — deterministic per seed so the 4 canopy tiles look distinct.
+  out += scatter('TREECROWN_l_' + seed, 5, (x, y, r) =>
+    ellipse(x, y, r * 1.7, r * 1.5, p.light, { stroke: 'none', opacity: 0.8 }),
+    { rMin: 2.6, rMax: 4, margin: 7 });
+  // Shade pockets for depth — fewer, biased low.
+  out += scatter('TREECROWN_s_' + seed, 3, (x, y, r) =>
+    ellipse(x, y, r * 1.5, r * 1.4, p.shade, { stroke: 'none', opacity: 0.4 }),
+    { rMin: 2, rMax: 3, margin: 8 });
+  return out;
 }
-
-// TREE_CANOPY = main/bottom-centre slice (slightly overflows to feel continuous).
 function treeCanopy() {
-  const p = TILE_PAL.leaf;
-  return crownBlob(16, 12, 17, 15, p);
+  return fullCrown(0);
 }
-// bottom-left slice — crown biased to the right/up so it meets _CANOPY and _TOP.
-function treeCanopyL() {
-  const p = TILE_PAL.leaf;
-  return crownBlob(24, 12, 16, 15, p);
-}
-// bottom-right slice — biased to the left/up.
-function treeCanopyR() {
-  const p = TILE_PAL.leaf;
-  return crownBlob(8, 12, 16, 15, p);
-}
-// upper dome — biased downward so it caps the lower three.
 function treeCanopyTop() {
-  const p = TILE_PAL.leaf;
-  return crownBlob(16, 22, 16, 14, p);
+  return fullCrown(1);
+}
+function treeCanopyL() {
+  return fullCrown(2);
+}
+function treeCanopyR() {
+  return fullCrown(3);
 }
 
 function pineCanopy() {
   const p = TILE_PAL.leafPine;
-  // a stacked conifer triangle
+  // a stacked conifer triangle with soft outline
+  const softEdge = { stroke: p.shade, width: 1, opacity: 0.7 };
   return (
-    polygon([[16, 1], [27, 14], [5, 14]], p.base, leaf()) +
-    polygon([[16, 9], [29, 26], [3, 26]], p.base, leaf()) +
+    polygon([[16, 1], [27, 14], [5, 14]], p.base, softEdge) +
+    polygon([[16, 9], [29, 26], [3, 26]], p.base, softEdge) +
     polygon([[16, 1], [20, 6], [12, 6]], p.light, { stroke: 'none' }) +
     polygon([[16, 9], [22, 17], [10, 17]], p.light, { stroke: 'none', opacity: 0.5 })
   );
@@ -93,8 +106,9 @@ function pineCanopy() {
 // --- Bushes ---
 function bush(name, rx, ry, pal) {
   const cy = S - ry - 2;
+  const softEdge = { stroke: pal.shade, width: 1, opacity: 0.7 };
   return (
-    ellipse(16, cy, rx, ry, pal.base, leaf()) +
+    ellipse(16, cy, rx, ry, pal.base, softEdge) +
     ellipse(16 - rx * 0.3, cy - ry * 0.4, rx * 0.5, ry * 0.4, pal.light, { stroke: 'none' }) +
     ellipse(16 + rx * 0.3, cy + ry * 0.3, rx * 0.4, ry * 0.3, pal.shade, { stroke: 'none', opacity: 0.6 }) +
     scatter(name, 4, (x, y, r) => circle(x, cy + (y - 16) * 0.4, r, pal.shade, { stroke: 'none', opacity: 0.4 }), { margin: 8, rMin: 1, rMax: 2 })

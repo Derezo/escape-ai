@@ -22,10 +22,12 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v11: re-pinned after dropping the locked-door mechanic — the door-terminal
-// entitySpecs are gone (so the reachability carve no longer routes to them →
-// collision differs) and food is round-robined across the 3 aux buildings. Both
-// hashes recomputed from generateWorld(123).
+// v12: re-pinned after trees became a 2×2 crown over a center-bottom trunk. The
+// WORLD_GEN_VERSION 12 changed the CANOPY ART (a single full crown per tile) but
+// reverted tree PLACEMENT to the original single-canopy-over-trunk, so the solid
+// trunk cells — and thus the collision grid — match the v11 layout. The version is
+// still bumped because the visible map (canopy tiles) changed. entitySpecs are not
+// affected by nature scattering. Recomputed from generateWorld(123).
 const PINNED_COLLISION_HASH = 915161051;
 const PINNED_ENTITYSPEC_HASH = 530761931;
 
@@ -95,7 +97,7 @@ test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () 
   // robot & door-terminal. Both pinned hashes above are re-pinned (collision +
   // entitySpecs both changed); the bump is the deliberate cache-bust so old clients
   // (which assert msg.version === WORLD_GEN_VERSION) fail loud rather than desync.
-  assert.equal(WORLD_GEN_VERSION, 11, 'version pinned at 11');
+  assert.equal(WORLD_GEN_VERSION, 12, 'version pinned at 12');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 

@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.78: **Seamless terrain + a tree that actually reads as a tree (WORLD_GEN_VERSION 12).**
+  Ground tiles drew a per-cell top/bottom light/shade band, so identical tiles stacked into
+  a visible light/dark stripe at every 32px seam — the "grid" effect on grass/dirt/paved.
+  Removed the per-cell banding from every ground material; `paved()` dropped its decorative
+  centre-cross seam grid; `cobble()` switched to a wrap-safe scattered stone field; plank/tile
+  floor seams were nudged off the cell edge. Trees were rebuilt: each `TREE_CANOPY` tile is now
+  a single full, layered round crown that reaches its cell bottom (so the trunk below meets it
+  with **no grass gap**) and stays within its width (so neighbouring trees **don't overlap**);
+  the trunk is centred with a root flare and its top is covered by the canopy. World-gen places
+  the simple canopy-over-trunk pair (the earlier 2×2-crown experiment read as four disconnected
+  blobs in-game and was reverted). `WORLD_GEN_VERSION` 11→12 (canopy art changed); collision
+  hash re-pinned (trunk placement matches v11, so the grid is unchanged). shared 70/70 tests
+  green; atlas drift gate green; client + shared build.
+
 - 0.2.77: **Robot footstep foley.** Robots now make a `robot_footstep` sound as they
   walk, with the cadence gait-locked to their movement (quickening into a chase). Rather
   than a new server event + net-contract field (which would touch the deterministic core
