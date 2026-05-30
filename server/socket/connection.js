@@ -7,6 +7,7 @@
 
 const { broadcastLobbyState } = require('./lobby');
 const follow = require('../game/follow');
+const { limiter } = require('./rate-limit');
 
 /**
  * @param {import('socket.io').Socket} socket
@@ -36,6 +37,10 @@ function cleanup(socket, deps) {
 
   const player = connectedPlayers.get(socket.id);
   connectedPlayers.delete(socket.id);
+
+  // Free this socket's rate-limiter buckets so limiter state can't grow
+  // unboundedly across reconnects (socket.id is unique per connection).
+  limiter.drop(socket.id);
 
   // Persist this session's stats before dropping the player. Attribute play time
   // (session length) plus any stat deltas the engine hadn't yet flushed this

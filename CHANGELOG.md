@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.63: **Rejuvenation Phase 3 — robustness + hardening.** Three audit-agreed fixes:
+  - **`server/index.js` — `unhandledRejection` now shuts down cleanly.** It previously
+    only logged, unlike `uncaughtException` (which stops the engine, closes the db + http
+    server, and arms a forced-exit timer) — an unhandled rejection could leave a zombie
+    server in an inconsistent state. Extracted a shared `shutdownFatal(label, err)` helper
+    so both handlers perform the identical clean shutdown.
+  - **`shared/src/world.ts` — spawn fallback can no longer seat a spawn on a solid tile.**
+    The last-resort `if (!found)` fallback (rare all-occupied seed) pushed a spawn tile
+    without re-checking walkability, relying on the later reachability carve. It now carves
+    the tile walkable by construction (the generator's own `deco`/`setTile`+`PAVED` idiom),
+    so the "every spawn is non-solid" invariant holds independent of the carve. World-gen
+    parity hash unchanged (happy path byte-identical); `validity` test still green. **Closes
+    and removes the "Spawn fallback can add a still-solid tile" `FINDINGS_OUTSIDE_SCOPE.md`
+    entry.**
+  - **Per-socket rate-limiting (`server/socket/rate-limit.js`, new).** A dependency-free
+    in-memory token bucket guards the three client→server handlers: a coarse budget on
+    `auth:login`/`lobby:join` (rare; floods are abuse) and a generous tight budget on
+    `input` (sustains 40/sec with a 60-burst — 2× the legitimate 20 Hz stream, so normal
+    play is never throttled while a pathological flood is shed). Over-budget packets are
+    silently dropped (no state change); buckets are freed on disconnect so memory can't grow
+    across reconnects. Wired into `auth.js`, `lobby.js`, and `connection.js`; tunables are
+    env-overridable. Rebuilt `shared/dist`; 70/70 shared tests pass; server boots + `/health`
+    OK.
+
 - 0.2.62: **Rejuvenation Phase 2 — documentation accuracy.** Fixed the two genuinely
   stale doc claims (the rest of the docs audited clean): (1) `ARCHITECTURE.md` stated
   `BabylonRenderer (client/src/render/babylon.ts) is the 3D fallback impl.` as fact, but

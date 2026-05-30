@@ -1617,7 +1617,7 @@ export function generateWorld(seed: number): WorldMap {
   }
   // Guarantee at least one spawn: if the block was fully occupied (rare seed),
   // widen the search to any non-solid tile near the gate row, then fall back to a
-  // tile just inside the gate. The reachability pass below makes it walkable.
+  // tile just inside the gate.
   if (spawns.length === 0) {
     let found = false;
     for (let r = 1; r <= w && !found; r++) {
@@ -1631,7 +1631,16 @@ export function generateWorld(seed: number): WorldMap {
       }
     }
     if (!found) {
+      // Last-resort tile just inside the gate. The widen loop above found nothing
+      // non-solid, so this tile may itself be solid — carve it walkable here (the
+      // same idiom the corridor/reachability carve uses) so the spawn is non-solid
+      // by construction, not merely by relying on the later reachability pass.
       const sx = clampInt(gateTx - SPAWN_INSET, 2, w - 3);
+      const i = tileIndex(w, sx, gateTy);
+      if (isSolidIndex(deco.data[i]) || isSolidIndex(ground.data[i])) {
+        deco.data[i] = 0;
+        setTile(ground, sx, gateTy, TILE_INDEX.PAVED);
+      }
       spawns.push({ x: tileCenter(sx, tile), y: tileCenter(gateTy, tile) });
       spawnTiles.push({ tx: sx, ty: gateTy });
     }

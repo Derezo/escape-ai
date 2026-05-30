@@ -15,6 +15,7 @@
  */
 
 const { isPlayableSpecies } = require('./species-roster');
+const { limiter } = require('./rate-limit');
 
 /**
  * @param {import('socket.io').Socket} socket
@@ -24,6 +25,10 @@ function register(socket, deps) {
   const { socket: sock, db, state } = deps;
 
   sock.on('auth:login', (payload = {}) => {
+    // Rate-limit: auth:login is rare, so a flood is abuse. Over-budget packets
+    // are silently dropped (no state change, no disconnect) — the client retries.
+    if (!limiter.allow(sock.id, 'auth:login')) return;
+
     const username = typeof payload.username === 'string' ? payload.username : '';
     const token = typeof payload.token === 'string' ? payload.token : undefined;
     const species = typeof payload.species === 'string' ? payload.species : undefined;

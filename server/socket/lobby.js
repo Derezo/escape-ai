@@ -13,6 +13,7 @@ const world = require('../game/world');
 const quests = require('../game/quests');
 const follow = require('../game/follow');
 const speciesRoster = require('./species-roster');
+const { limiter } = require('./rate-limit');
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -49,6 +50,10 @@ function register(socket, deps) {
   const { io, connectedPlayers, rooms, state } = deps;
 
   socket.on('lobby:join', (payload = {}) => {
+    // Rate-limit (coarse): lobby:join is rare; an over-rate join is dropped with
+    // no state change (no room churn, no extra spawn). The client may retry.
+    if (!limiter.allow(socket.id, 'lobby:join')) return;
+
     const room = typeof payload.room === 'string' && payload.room.trim()
       ? payload.room.trim()
       : 'default';
@@ -190,6 +195,12 @@ function register(socket, deps) {
   });
 
   socket.on('input', (payload = {}) => {
+    // Rate-limit (tight but generous): the legit input stream is ~20 Hz; the cap
+    // sustains 40/sec with a 60-packet burst, so normal play is never throttled
+    // and only a pathological flood is shed. A dropped frame is safe — the engine
+    // keeps the last good input until the next accepted frame arrives.
+    if (!limiter.allow(socket.id, 'input')) return;
+
     const player = connectedPlayers.get(socket.id);
     if (!player) return;
 

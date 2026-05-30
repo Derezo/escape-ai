@@ -70,16 +70,20 @@ Promise.all([
   });
 
 // --- Resilience: log fatal errors and shut down cleanly ---
-process.on('uncaughtException', (err) => {
-  console.error('[FATAL] uncaught exception:', err);
+function shutdownFatal(label, err) {
+  console.error(`[FATAL] ${label}:`, err);
   engine.stop();
   db.close();
   httpServer.close(() => process.exit(1));
   setTimeout(() => process.exit(1), 3000).unref();
+}
+
+process.on('uncaughtException', (err) => {
+  shutdownFatal('uncaught exception', err);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[FATAL] unhandled rejection:', reason);
+  shutdownFatal('unhandled rejection', reason);
 });
 
 process.on('SIGTERM', () => {
