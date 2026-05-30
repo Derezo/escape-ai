@@ -51,6 +51,9 @@ Promise.all([
   // Warm the shared species roster cache (used by lobby.js) before any client
   // can connect, mirroring how the engine pre-loads the shared stealth math.
   speciesRoster.load(),
+  // Warm the shared composite-score function (used by the leaderboard query) the
+  // same way, so the first leaderboard:request scores rows rather than falling back.
+  db.loadScore(),
   engine.init(io, sockets.connectedPlayers, sockets.rooms, db)
 ])
   .then(() => {

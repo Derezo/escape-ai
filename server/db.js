@@ -99,6 +99,11 @@ function init() {
   migrate('animals_stolen     INTEGER DEFAULT 0');
   migrate('quests_completed   INTEGER DEFAULT 0');
   migrate("escapes_by_species TEXT DEFAULT '{}'");
+  // Escape-time-by-species: the player's OWN gate escapes by species (excludes
+  // followers — the average-time denominator) and the cumulative spawn→gate
+  // seconds, both JSON {species:number} maps merged like escapes_by_species.
+  migrate("own_escapes_by_species TEXT DEFAULT '{}'");
+  migrate("escape_secs_by_species TEXT DEFAULT '{}'");
 
   stmts = {
     userByToken: db.prepare('SELECT * FROM users WHERE token = ?'),
@@ -206,12 +211,6 @@ function getStatsForUser(userId) {
   const user = stmts.userById.get(userId);
   if (!user) return undefined;
   const row = stmts.statsByUser.get(userId) || {};
-  let escapesBySpecies = {};
-  try {
-    escapesBySpecies = JSON.parse(row.escapes_by_species || '{}') || {};
-  } catch {
-    escapesBySpecies = {}; // corrupt/legacy value → empty rather than throw
-  }
   return {
     games: row.games || 0,
     escapes: row.escapes || 0,
@@ -222,7 +221,9 @@ function getStatsForUser(userId) {
     foodCollected: row.food_collected || 0,
     animalsStolen: row.animals_stolen || 0,
     questsCompleted: row.quests_completed || 0,
-    escapesBySpecies,
+    escapesBySpecies: parseJsonMap(row.escapes_by_species),
+    ownEscapesBySpecies: parseJsonMap(row.own_escapes_by_species),
+    escapeSecsBySpecies: parseJsonMap(row.escape_secs_by_species),
     lastSpecies: user.last_species || undefined,
     firstSeen: user.created_at || undefined,
     lastSeen: user.last_seen || undefined
@@ -230,9 +231,9 @@ function getStatsForUser(userId) {
 }
 
 // Map camelCase delta keys → snake_case stat columns for the col=col+@key path.
-// Only flat INTEGER counters belong here. `escapesBySpecies` is DELIBERATELY absent
-// — it is a JSON TEXT column handled by a dedicated read-modify-write branch in
-// incStats (a `col = col + @x` against TEXT would be invalid SQL).
+// Only flat INTEGER counters belong here. The by-species JSON maps are DELIBERATELY
+// absent — they are JSON TEXT columns handled by a read-modify-write branch in
+// incStats (a `col = col + @x` against TEXT would be invalid SQL). See JSON_MAP_COLUMNS.
 const DELTA_COLUMNS = {
   games: 'games',
   escapes: 'escapes',
@@ -244,6 +245,26 @@ const DELTA_COLUMNS = {
   animalsStolen: 'animals_stolen',
   questsCompleted: 'quests_completed'
 };
+
+// camelCase delta key → snake_case TEXT column for the {species:number} JSON maps.
+// Each is summed (read-modify-write) per key, NOT a flat += counter. escapesBySpecies
+// counts every animal led out by species; ownEscapesBySpecies counts the player's own
+// escapes by the species it was; escapeSecsBySpecies sums spawn→gate seconds by species.
+const JSON_MAP_COLUMNS = {
+  escapesBySpecies: 'escapes_by_species',
+  ownEscapesBySpecies: 'own_escapes_by_species',
+  escapeSecsBySpecies: 'escape_secs_by_species'
+};
+
+/** Parse a JSON map column to an object, tolerating corrupt/legacy/empty values. */
+function parseJsonMap(text) {
+  try {
+    const obj = JSON.parse(text || '{}');
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Add the provided deltas to a user's stat counters. Flat counters go in a single
@@ -359,6 +380,125 @@ function incGames(userId) {
   incStats(userId, { games: 1 });
 }
 
+// --- Leaderboard ----------------------------------------------------------
+
+// Cached shared score function (ESM), loaded once via dynamic import — same idiom
+// as socket/species-roster.js loading the ESM roster into the CJS server. Null
+// until loadScore() resolves; getLeaderboard falls back to ordering by escapes if
+// the score module somehow isn't loaded yet (it is warmed at boot in index.js).
+let computeScore = null;
+
+/**
+ * Load + cache the shared composite-score function. Idempotent; call once at boot
+ * (index.js awaits it alongside the species roster + engine init). Throws if the
+ * expected export is missing — fail loud rather than silently rank without a score.
+ * @returns {Promise<Function>} the cached computeScore
+ */
+async function loadScore() {
+  if (computeScore) return computeScore;
+  const mod = await import('../shared/dist/score.js');
+  if (typeof mod.computeScore !== 'function') {
+    throw new Error(
+      'shared/dist/score.js is missing computeScore. Did you run `npm run build` in shared/?'
+    );
+  }
+  computeScore = mod.computeScore;
+  return computeScore;
+}
+
+// Raw stat columns a leaderboard row carries (no ids/tokens — public data only).
+// SELECTed joined to users for the display name + last species.
+const LEADERBOARD_COLUMNS =
+  'u.username AS name, u.last_species AS lastSpecies, ' +
+  's.games, s.escapes, s.caught, s.orders_issued AS ordersIssued, ' +
+  's.abilities_used AS abilitiesUsed, s.play_seconds AS playSeconds, ' +
+  's.food_collected AS foodCollected, s.animals_stolen AS animalsStolen, ' +
+  's.quests_completed AS questsCompleted, s.escapes_by_species AS escapesBySpecies';
+
+// The raw counters a client may sort the datatable by (camelCase → the value to
+// rank on). 'score' is handled specially (computed, not a column). Anything else
+// falls back to 'score'. Mirrors net.ts LeaderboardSort.
+const SORTABLE = new Set([
+  'score', 'escapes', 'questsCompleted', 'animalsStolen', 'foodCollected',
+  'caught', 'ordersIssued', 'abilitiesUsed', 'playSeconds', 'games'
+]);
+
+/** Shape one SELECTed row into a scored LeaderboardRow (sans rank). */
+function toLeaderboardRow(row) {
+  const base = {
+    name: row.name || 'anon',
+    escapes: row.escapes || 0,
+    caught: row.caught || 0,
+    ordersIssued: row.ordersIssued || 0,
+    abilitiesUsed: row.abilitiesUsed || 0,
+    playSeconds: row.playSeconds || 0,
+    foodCollected: row.foodCollected || 0,
+    animalsStolen: row.animalsStolen || 0,
+    questsCompleted: row.questsCompleted || 0,
+    games: row.games || 0,
+    escapesBySpecies: parseJsonMap(row.escapesBySpecies),
+    lastSpecies: row.lastSpecies || undefined
+  };
+  // Server-authoritative composite score (shared scorer). If the score module
+  // isn't loaded (shouldn't happen post-boot), fall back to raw escapes so the
+  // board still ranks meaningfully rather than all-zero.
+  base.score = computeScore ? computeScore(base) : base.escapes;
+  return base;
+}
+
+/**
+ * Build the leaderboard: the top `limit` accounts ranked by `sort` (descending),
+ * plus the total ranked count and — when `requesterUserId` is given — that user's
+ * OWN ranked row (present even when outside the top-N). All scores are computed
+ * SERVER-SIDE from the shared scorer; the client never supplies a score or rank.
+ *
+ * Performance: one indexed SELECT of every account's stat row (jam-scale: a few
+ * thousand rows at most), scored + sorted in JS. The score depends on a JSON
+ * column (escapesBySpecies) so it can't be a pure SQL ORDER BY; ranking ALL rows
+ * is needed anyway to find the requester's position, so we materialize once and
+ * sort in memory. Cheap and correct; revisit with a denormalized score column
+ * only if the table ever grows large.
+ *
+ * @param {{sort?: string, limit?: number, requesterUserId?: string}} [opts]
+ * @returns {{sort: string, rows: object[], total: number, you: object|null}}
+ */
+function getLeaderboard({ sort, limit, requesterUserId } = {}) {
+  ensure();
+  const sortKey = SORTABLE.has(sort) ? sort : 'score';
+  const max = Math.max(1, Math.min(200, Math.round(Number(limit) || 100)));
+
+  // Materialize + score every account (LEFT JOIN so a user with no stats row still
+  // appears, scoring 0). Then sort by the chosen key descending, ties broken by
+  // score then name so the order is stable + deterministic across requests.
+  const raw = db
+    .prepare(
+      `SELECT u.id AS userId, ${LEADERBOARD_COLUMNS} ` +
+      'FROM users u LEFT JOIN stats s ON s.user_id = u.id'
+    )
+    .all();
+
+  const scored = raw.map((r) => ({ userId: r.userId, row: toLeaderboardRow(r) }));
+  scored.sort((a, b) => {
+    const av = sortKey === 'score' ? a.row.score : (a.row[sortKey] || 0);
+    const bv = sortKey === 'score' ? b.row.score : (b.row[sortKey] || 0);
+    if (bv !== av) return bv - av;
+    if (b.row.score !== a.row.score) return b.row.score - a.row.score;
+    return String(a.row.name).localeCompare(String(b.row.name));
+  });
+
+  // Assign 1-based ranks across the WHOLE field, then slice the top-N + find the
+  // requester. Rank is stamped onto the shared row object (so the sliced top-N and
+  // the `you` row carry the same authoritative rank).
+  let you = null;
+  scored.forEach((entry, i) => {
+    entry.row.rank = i + 1;
+    if (requesterUserId && entry.userId === requesterUserId) you = entry.row;
+  });
+
+  const rows = scored.slice(0, max).map((e) => e.row);
+  return { sort: sortKey, rows, total: scored.length, you };
+}
+
 /** Close the database (clean shutdown). Safe to call when never opened. */
 function close() {
   if (db) {
@@ -378,5 +518,7 @@ module.exports = {
   loadSession,
   touchLastSeen,
   incGames,
+  loadScore,
+  getLeaderboard,
   close
 };

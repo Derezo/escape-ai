@@ -157,6 +157,10 @@ function register(socket, deps) {
       // respawnPlayer). 0 at join — the pen spawn is robot-free, so no join grace
       // is needed; it guards the catch→respawn→catch chain.
       spawnSafeUntilTick: 0,
+      // Start of the current run for escape-time-by-species (spawn→gate timing).
+      // Stamped to the live tick below (join and resume both start the clock now);
+      // re-stamped on every respawn (stealth.respawnPlayer).
+      spawnedAtTick: 0,
       fx: null,               // active ability-effect echo for the client FX layer
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated
@@ -199,6 +203,10 @@ function register(socket, deps) {
       player.spawnSafeUntilTick = engine.getCurrentTick() + secsToTicks(config.SPAWN_GRACE_SECS);
       state.session = null;
     }
+    // Start this run's escape-time clock at the live tick (fresh spawn AND resume —
+    // a resumed player's spawn→gate time is measured from the rejoin, not the
+    // original spawn). Re-stamped on every later respawn (stealth.respawnPlayer).
+    player.spawnedAtTick = engine.getCurrentTick();
     connectedPlayers.set(socket.id, player);
 
     // Track room membership and join the Socket.IO room for broadcasts.

@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.94: **Leaderboard, phase 2 — server query + escape-time-by-species stat.** The
+  server side of the L-key leaderboard. New `server/socket/leaderboard.js` handles
+  `leaderboard:request` → `leaderboard:data`: it validates the (only) client-supplied
+  `sort`/`limit`, rate-limits the query (new `leaderboard:request` token bucket in
+  `rate-limit.js`), and replies with the SERVER-COMPUTED top-N rows + the asker's own ranked
+  row + the total. `server/db.js` gains `getLeaderboard()` (materialize every account, score
+  via the shared scorer dynamic-imported in `loadScore()` — the species-roster idiom, warmed
+  at boot in `index.js` — then rank the whole field so the requester's position is always
+  known) and a refactor of `incStats` to a table-driven JSON-map merge. Also closes the one
+  real stat gap: **escape-time-by-species**. `stealth.respawnPlayer` + `lobby.js` stamp
+  `spawnedAtTick`; the escape edge records the spawn→gate duration via a new
+  `stats-delta.bumpOwnEscape`, accumulated into two new JSON columns
+  (`own_escapes_by_species` count + `escape_secs_by_species` seconds, guarded-migrated) and
+  surfaced in `UserStats` (`net.ts`) so an average escape-time per species can be derived.
+  Verified: DB round-trip (sum/merge of all maps), leaderboard ranking + own-row + raw-column
+  sort, clean full-server boot, syntax-check across every edited file.
+
 - 0.2.93: **Leaderboard, phase 1 — shared score + net contract.** Groundwork for the
   real-time leaderboard (press **L**). New `shared/src/score.ts` defines the ONE composite
   player **score**, derived purely from the persisted stat counters (escapes, quests, steals,

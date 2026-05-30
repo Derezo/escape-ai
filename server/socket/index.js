@@ -16,6 +16,7 @@
 const auth = require('./auth');
 const lobby = require('./lobby');
 const connection = require('./connection');
+const leaderboard = require('./leaderboard');
 
 module.exports = function initSockets(io, db) {
   // Shared, server-wide state.
@@ -41,6 +42,9 @@ module.exports = function initSockets(io, db) {
     auth.register(socket, deps);
     lobby.register(socket, deps);
     connection.register(socket, deps);
+    // Leaderboard: on-demand ranking query; reads `state.userId` for the asker's
+    // own row, so it's registered after auth (which populates it).
+    leaderboard.register(socket, deps);
   });
 
   // Public API for external modules (engine.js reads these maps).

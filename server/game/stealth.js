@@ -20,7 +20,7 @@ const quests = require('./quests');
 const follow = require('./follow');
 const behaviors = require('./behaviors');
 const speciesRoster = require('../socket/species-roster');
-const { bumpStat } = require('./stats-delta');
+const { bumpStat, bumpOwnEscape } = require('./stats-delta');
 const { secsToTicks, findPlayerById } = require('./room-utils');
 
 // The cached shared modules (resolved by loadShared() before the loop starts).
@@ -1035,6 +1035,9 @@ function respawnPlayer(player, roomName, currentTick) {
   player.x = at.x;
   player.y = at.y;
   player.spawnSafeUntilTick = (currentTick || 0) + secsToTicks(config.SPAWN_GRACE_SECS);
+  // Stamp the start of this fresh run (spawn→gate timing for escape-time-by-species),
+  // so the NEXT escape measures from this respawn, not the original join.
+  player.spawnedAtTick = currentTick || 0;
 }
 
 /**
@@ -1085,6 +1088,17 @@ function checkEscape(player, roomName, currentTick) {
   // above), so each escape is counted once. Decoupled from the DB; the engine
   // flushes the delta promptly on the escape edge tick.
   bumpStat(player, 'escapes');
+  // Escape-time-by-species: record THIS run's spawn→gate duration against the
+  // species the player escaped AS (its own escape, not followers — those are
+  // credited by scoreEscape below). spawnedAtTick is stamped at join (lobby.js)
+  // and on every respawn (respawnPlayer); guard a missing/stale stamp.
+  const spawnedAt = Number(player.spawnedAtTick);
+  if (Number.isFinite(spawnedAt) && currentTick > spawnedAt) {
+    const elapsedSecs = (currentTick - spawnedAt) / (config.TICK_RATE || 20);
+    bumpOwnEscape(player, player.species, elapsedSecs);
+  } else {
+    bumpOwnEscape(player, player.species, 0); // still count the escape, no time
+  }
   // Animal collection: bank the herd. Awards points for your own animal + each
   // following animal that escapes with you (stolen ones worth more), credits
   // escaped-by-species for the player and every follower, stamps player.lastScore

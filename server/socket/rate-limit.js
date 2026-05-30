@@ -45,13 +45,24 @@ const COARSE_REFILL_PER_SEC = parseFloat(process.env.RL_COARSE_REFILL_PER_SEC) |
 const INPUT_BURST = parseFloat(process.env.RL_INPUT_BURST) || 60;
 const INPUT_REFILL_PER_SEC = parseFloat(process.env.RL_INPUT_REFILL_PER_SEC) || 40;
 
+// LEADERBOARD class — the on-demand leaderboard:request. The client fetches on
+// opening the panel and re-polls every few seconds WHILE it's open, plus a fetch
+// per sort-change click. Sized for that: a burst that absorbs a flurry of sort
+// clicks, refilling ~1/sec so an open panel polling at ~0.25 Hz is never throttled
+// while a spammer (the query touches every account row) is stopped cold.
+//   burst 8, refill 1/sec ⇒ ~8 immediate, then 1/sec sustained.
+const LEADERBOARD_BURST = parseFloat(process.env.RL_LEADERBOARD_BURST) || 8;
+const LEADERBOARD_REFILL_PER_SEC = parseFloat(process.env.RL_LEADERBOARD_REFILL_PER_SEC) || 1;
+
 // Per-kind bucket spec. `allow(socketId, kind)` looks the kind up here.
 const SPECS = {
   // auth:login and lobby:join share the COARSE budget (separate buckets, same size).
   'auth:login': { burst: COARSE_BURST, refillPerSec: COARSE_REFILL_PER_SEC },
   'lobby:join': { burst: COARSE_BURST, refillPerSec: COARSE_REFILL_PER_SEC },
   // the high-rate movement stream.
-  input: { burst: INPUT_BURST, refillPerSec: INPUT_REFILL_PER_SEC }
+  input: { burst: INPUT_BURST, refillPerSec: INPUT_REFILL_PER_SEC },
+  // the on-demand leaderboard fetch/poll.
+  'leaderboard:request': { burst: LEADERBOARD_BURST, refillPerSec: LEADERBOARD_REFILL_PER_SEC }
 };
 
 /**

@@ -153,9 +153,17 @@ export interface UserStats {
   animalsStolen: number;
   /** Side-quest events completed (cumulative). */
   questsCompleted: number;
-  /** Animals escaped through the gate, broken down by species (cumulative).
+  /** Animals escaped through the gate, broken down by species (cumulative — counts
+   *  the player's own animal AND every follower led out, each by its species).
    *  Stored server-side as a JSON TEXT column; absent on legacy rows. */
   escapesBySpecies?: Record<string, number>;
+  /** The player's OWN gate escapes by the species it WAS (excludes followers) —
+   *  the denominator for average escape time. JSON column; absent on legacy rows. */
+  ownEscapesBySpecies?: Record<string, number>;
+  /** Cumulative spawn→gate time (seconds) by the species the player escaped as.
+   *  Paired with `ownEscapesBySpecies` to derive an average escape time per species.
+   *  JSON column; absent on legacy rows. */
+  escapeSecsBySpecies?: Record<string, number>;
   /** Species used in the most recent session (drives the selector default). */
   lastSpecies?: string;
   /** When the account was created (ISO 8601). */
