@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.90: **Quest arrow: string-pulled path (clean angles, not a staircase).** The shared A*
+  is 4-connected (E/W/S/N only), so the arrow's raw route was a tile-by-tile staircase that
+  read as jagged axis-aligned hops. Added a client-side line-of-sight smoothing pass
+  (`smoothWaypoints` + `losClear` in `client/src/render/phaser.ts`): a greedy string-pull that
+  collapses the polyline to the fewest corner waypoints by skipping any point still reachable
+  in a straight line (sampling the segment against the same collision grid the integrator uses,
+  via shared `boxHitsSolid` with a small clearance radius). The arrow now darts on clean
+  diagonals/angles and only bends at real obstacle corners — staying fully collision-safe (no
+  segment ever clips a wall). Client-cosmetic only; reuses shared collision, no new pathfinder.
+
 - 0.2.89: **Quest arrow: ~10× faster travel.** The quest-direction arrow crept along its
   path at 60px/s, which felt sluggish. Bumped `QUEST_ARROW.SPEED` to 600px/s (a brisk dart)
   and scaled `RAMP_PX` 40→120 so the opacity fade-in still reads at the higher speed instead

@@ -22,7 +22,7 @@ import Phaser from 'phaser';
 import type { IRenderer, Entity, WorldMap, QuestGuide } from '@shared/renderer';
 import type { AuxKind, Building } from '@shared/world';
 import type { Dir8 } from '@shared/types';
-import { facingFromVec, hash32 } from '@shared/step';
+import { facingFromVec, hash32, boxHitsSolid } from '@shared/step';
 import { locomotionFor } from '@shared/locomotion';
 import { TILE_BY_INDEX } from '@shared/tiles';
 import { foodByKey } from '@shared/food';
@@ -993,11 +993,16 @@ class WorldScene extends Phaser.Scene {
     const gTy = Math.floor(gy / tile);
     const tilePath = findPath(map.collision, map.w, map.h, sTx, sTy, gTx, gTy, this.pathScratch!);
     if (tilePath.length === 0) return; // unreachable / over budget → no arrow this cycle
-    const waypoints = toWorldWaypoints(tilePath, tile);
+    const raw = toWorldWaypoints(tilePath, tile);
     // Anchor the first waypoint at the player's exact position and the last at the
     // true goal point (tile centres are close enough, but this makes the ends crisp).
-    waypoints[0] = { x: px, y: py };
-    waypoints[waypoints.length - 1] = { x: gx, y: gy };
+    raw[0] = { x: px, y: py };
+    raw[raw.length - 1] = { x: gx, y: gy };
+    // A* is 4-connected (E/W/S/N only), so the raw route is a tile-centre STAIRCASE
+    // that reads as jagged axis-aligned hops. String-pull it: collapse to the fewest
+    // corner waypoints by skipping any point still reachable in a straight line, so
+    // the arrow darts on clean angles and only bends at real obstacle corners.
+    const waypoints = this.smoothWaypoints(raw);
 
     // A slim isosceles triangle pointing +x (rotated each frame to its heading), plus
     // a larger additive-blend copy beneath it for the soft glow. Both start invisible.
@@ -1016,6 +1021,51 @@ class WorldScene extends Phaser.Scene {
     const tri = mk(1.0, Phaser.BlendModes.NORMAL);
 
     this.questArrow = { tri, glow, waypoints, index: 1, travelled: 0, fadingSince: null };
+  }
+
+  /**
+   * String-pull a 4-connected A* polyline into the fewest straight segments: a
+   * greedy line-of-sight smooth. Keep the first point; from the current anchor,
+   * walk forward and keep the FARTHEST point still reachable in a straight line
+   * (no wall between, per losClear); make it the new anchor; repeat. The result
+   * is collision-safe (every kept segment has clear line-of-sight) but cuts across
+   * on clean diagonals/angles instead of the tile-by-tile staircase A* emits.
+   */
+  private smoothWaypoints(pts: Point[]): Point[] {
+    if (pts.length <= 2) return pts;
+    const out: Point[] = [pts[0]];
+    let anchor = 0;
+    while (anchor < pts.length - 1) {
+      // Farthest point visible from the anchor in one straight shot.
+      let next = anchor + 1;
+      for (let j = pts.length - 1; j > anchor + 1; j--) {
+        if (this.losClear(pts[anchor], pts[j])) { next = j; break; }
+      }
+      out.push(pts[next]);
+      anchor = next;
+    }
+    return out;
+  }
+
+  /** True if a straight segment a→b stays clear of solid tiles (line-of-sight). We
+   *  sample the segment at ~half-tile steps and box-test each point against the same
+   *  collision grid the integrator uses, with a small radius so the route keeps a
+   *  hair of clearance from walls (so a smoothed diagonal never clips a corner). */
+  private losClear(a: Point, b: Point): boolean {
+    const map = this.map!;
+    const tile = map.tile;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    const steps = Math.max(1, Math.ceil(len / (tile * 0.5)));
+    const r = tile * 0.3; // small footprint → keeps the line off wall corners
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      if (boxHitsSolid(a.x + dx * t, a.y + dy * t, r, map.collision, map.w, map.h, tile)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /** Advance one arrow along its cached route, ramping/pulsing alpha and fading near
