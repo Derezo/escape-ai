@@ -4,16 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.98: **Leaderboard validation fix — persist the escape-time JSON maps (real bug).** The
+  `/plan-validation-and-review` gate caught (and a clean-DB round-trip confirmed) that the
+  committed `server/db.js` `incStats` only merged `escapesBySpecies` — the old single-map
+  branch — and silently dropped the two new maps (`ownEscapesBySpecies`, `escapeSecsBySpecies`),
+  so escape-time-by-species never persisted (`own={}`/`secs={}` on read). The table-driven
+  `JSON_MAP_COLUMNS` merge loop (which handles all three identically and does NOT round the
+  fractional `escapeSecsBySpecies` seconds) had been defined but never wired into `incStats`.
+  Replaced the hardcoded single-map branch with the loop. Round-trip now ALL PASS (ape=2 own
+  escapes, 40.0s float-preserved); the 18-check leaderboard integration test and the e2e socket
+  wire check both green. (Corrects the prior 0.2.97 note, which wrongly called this a false
+  positive — it was real.)
+
 - 0.2.97: **Leaderboard validation fix — restore the missing datatable CSS.** The
   `/plan-validation-and-review` gate caught that the leaderboard's stylesheet block (the
   `#lb-*` / `.lb-*` rules the L-key overlay in `client/src/leaderboard.ts` depends on) was
   absent from `client/src/style.css` — the panel would have rendered unstyled. Re-added the
   wide centered-modal chrome: sticky click-to-sort headers, right-aligned tabular metric
   columns, the gold own-row highlight + outside-top-N separator, and the expandable
-  per-species detail grid (38 selectors). Client build green; the CSS bundle grew 12.68 → 15.32 kB.
-  (Two other "critical" findings from the review — `incStats` dropping the new JSON maps, and a
-  broken `DELTA_COLUMNS` reference — were verified FALSE POSITIVES via a clean-DB round-trip:
-  all three by-species maps persist correctly, float seconds preserved.)
+  per-species detail grid (30 selectors). Client build green; the CSS bundle grew to ~14.9 kB.
 
 - 0.2.96: **Leaderboard, polish — export the scorer from the shared barrel.** Add
   `export * from './score.js'` to `shared/src/index.ts` so the composite scorer is reachable

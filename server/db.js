@@ -273,7 +273,7 @@ function parseJsonMap(text) {
  * a read-modify-write. Only present keys are touched; negatives clamp to no effect.
  * No-op on a falsy userId or an empty delta.
  * @param {string} userId
- * @param {{games?, escapes?, caught?, ordersIssued?, abilitiesUsed?, playSeconds?, foodCollected?, animalsStolen?, questsCompleted?, escapesBySpecies?: Record<string,number>}} delta
+ * @param {{games?, escapes?, caught?, ordersIssued?, abilitiesUsed?, playSeconds?, foodCollected?, animalsStolen?, questsCompleted?, escapesBySpecies?: Record<string,number>, ownEscapesBySpecies?: Record<string,number>, escapeSecsBySpecies?: Record<string,number>}} delta
  */
 function incStats(userId, delta) {
   if (!userId || !delta) return;
@@ -294,25 +294,29 @@ function incStats(userId, delta) {
     db.prepare(`UPDATE stats SET ${sets.join(', ')} WHERE user_id = @userId`).run(params);
   }
 
-  // 2) Per-species escapes: merge the {species:count} delta into the JSON column.
-  // Read-modify-write (the col=col+@x trick can't sum a JSON map). Only writes when
-  // there is something to add, so the common (empty) case touches nothing.
-  const bySpecies = delta.escapesBySpecies;
-  if (bySpecies && typeof bySpecies === 'object' && Object.keys(bySpecies).length > 0) {
+  // 2) Per-species JSON maps: merge each present {species:number} delta into its TEXT
+  // column via a read-modify-write (the col=col+@x trick can't sum a JSON map). Driven
+  // by JSON_MAP_COLUMNS so all three maps (escapesBySpecies, ownEscapesBySpecies,
+  // escapeSecsBySpecies) are handled identically — adding a map is one table entry.
+  // Only the maps that actually have entries are touched, so the common (empty) case
+  // reads the row at most once and writes nothing. Sums are NOT rounded —
+  // escapeSecsBySpecies accumulates fractional seconds; non-finite/≤0 values are skipped.
+  const presentMaps = Object.entries(JSON_MAP_COLUMNS).filter(([key]) => {
+    const m = delta[key];
+    return m && typeof m === 'object' && Object.keys(m).length > 0;
+  });
+  if (presentMaps.length > 0) {
     const row = stmts.statsByUser.get(userId);
     if (row) {
-      let merged = {};
-      try {
-        merged = JSON.parse(row.escapes_by_species || '{}') || {};
-      } catch {
-        merged = {}; // corrupt/legacy value → start fresh rather than throw
+      for (const [key, column] of presentMaps) {
+        const merged = parseJsonMap(row[column]);
+        for (const [species, value] of Object.entries(delta[key])) {
+          const v = Number(value);
+          if (Number.isFinite(v) && v > 0) merged[species] = (merged[species] || 0) + v;
+        }
+        db.prepare(`UPDATE stats SET ${column} = @json WHERE user_id = @userId`)
+          .run({ json: JSON.stringify(merged), userId });
       }
-      for (const [species, count] of Object.entries(bySpecies)) {
-        const n = Number(count);
-        if (Number.isFinite(n) && n > 0) merged[species] = (merged[species] || 0) + Math.round(n);
-      }
-      db.prepare('UPDATE stats SET escapes_by_species = @json WHERE user_id = @userId')
-        .run({ json: JSON.stringify(merged), userId });
     }
   }
 }
