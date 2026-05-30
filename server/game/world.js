@@ -399,6 +399,29 @@ function getGuardBoundsByRobotId(roomName) {
 }
 
 /**
+ * The aux-building INTERIOR rects in world units, as a plain array (the same inset
+ * wall-ring math as getGuardBoundsByRobotId, but unkeyed — the awareness filter only
+ * asks "is this point inside ANY aux interior", not which one). Used to make an
+ * animal that has somehow ended up inside an aux building invisible to robots (it's
+ * "where it belongs", same rule as a contained pen animal). Computed once per map.
+ * @param {string} roomName
+ * @returns {{minX:number,minY:number,maxX:number,maxY:number}[]}
+ */
+function getAuxInteriorRects(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tile = map.tile;
+  const rects = [];
+  for (const b of map.buildings.filter((bb) => bb.auxKind)) {
+    const minX = (b.rx + 1) * tile;
+    const minY = (b.ry + 1) * tile;
+    const maxX = Math.max((b.rx + b.rw - 1) * tile, minX);
+    const maxY = Math.max((b.ry + b.rh - 1) * tile, minY);
+    rects.push({ minX, minY, maxX, maxY });
+  }
+  return rects;
+}
+
+/**
  * The `map` event payload meta for a room: everything a client needs to
  * regenerate the tilemap deterministically. Creates the room on demand.
  * @param {string} roomName
@@ -537,6 +560,7 @@ module.exports = {
   getHomeBoundsBySpecies,
   getHomeCentersBySpecies,
   getGuardBoundsByRobotId,
+  getAuxInteriorRects,
   auxBuildingById,
   isDoorLocked,
   unlockDoor,

@@ -4,6 +4,26 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.55: **NPC pathfinding — Phase 2 (situational awareness: contained animals invisible to robots).**
+  Fixes the bug where robots froze/investigated/pursued idle animals sitting INSIDE their own
+  enclosures — peeling patrols pointlessly into pens. An animal that is "where it belongs" is no longer
+  a stealth target.
+  - **Server (`server/game/world.js`):** new `getAuxInteriorRects(roomName)` — the aux-building interior
+    rects in world units (same inset wall-ring math as `getGuardBoundsByRobotId`, unkeyed), exported.
+  - **Server (`server/game/stealth.js`):** `loadShared` now also imports + fail-loud-validates
+    `shared/dist/pathfind.js` and caches it (handed to `behaviors`/`follow` for later phases). New
+    `auxInteriorRectsForRoom` per-room cache + `isAtHomeAnimal(e, homeBounds, auxRects)` predicate (an
+    O(1) `pathfind.inBounds` point-in-rect against the already-cached enclosure bounds + aux interiors).
+    `gatherAnimals` — the SINGLE chokepoint feeding both `robotDecision` (perception/freeze/pursue) AND
+    `behaviors.pickInvestigateTarget` — now skips an idle animal when `!isLeashed && !returningHome &&
+    isAtHomeAnimal`. So a contained pen/aux animal is invisible to robots, while a leashed follower, a
+    returning-home animal still outside its pen, an animal wandered out of bounds, a fox decoy, and
+    every player stay visible.
+  - Verified live (boot `loadShared`, then exercise `gatherAnimals`): pathfind exports validate; a
+    contained pen animal is hidden; leashed / returning-home / out-of-bounds / fox-decoy animals stay
+    visible; 30 NPC ticks run clean with the filter active. shared **68/68**, client `tsc && vite build`
+    green. No `net.ts` / world-gen change — the filter is server-side, derived from cached map bounds.
+
 - 0.2.54: **NPC pathfinding — Phase 1 (deterministic A* substrate, no consumers yet).**
   Adds the missing GLOBAL route layer the reactive `steerAround` (one-tile-ahead probe) structurally
   lacks: it can round a corner but cannot FIND a two-tile door gap from outside a walled enclosure.
