@@ -3,6 +3,10 @@ dist/
 .env
 .DS_Store
 
+# Python bytecode cache (scripts/sunoapi/ — the Suno generation pipeline).
+__pycache__/
+*.pyc
+
 # SQLite store for username-only accounts + per-user stats (server/db.js). The
 # DB file plus its WAL/SHM sidecars are runtime state, never committed.
 server/data/

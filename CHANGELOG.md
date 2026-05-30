@@ -4,6 +4,21 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.67: **Audio pipeline Phase 2 — Python generation CLIs (`scripts/sunoapi/` + wrappers, new).**
+  The credit-spending half of the pipeline, **stdlib-only** (urllib/json/argparse/os/shutil/pathlib/time —
+  zero pip installs; Python 3.8+). A shared `scripts/sunoapi/` package (`client.py` urllib HTTP +
+  bearer-auth from `SUNOAPI_KEY` system env; `compose.py` theme+manifest → exact Suno request body;
+  `extract.py` HAR-verified `data.response.sunoData[].audioUrl` for **both** kinds; `manifest.py`,
+  `paths.py`, `core.py` engine) behind four thin wrappers: `generate-music.py`, `generate-sfx.py`,
+  `change-music-track.py`, `change-sfx-track.py`. Music posts `/api/v1/generate` (instrumental, no
+  `prompt`, style ≤1000 chars); SFX posts `/api/v1/generate/sounds` (`model:V5`, descriptor-led prompt
+  ≤500 chars). Both poll the same `/api/v1/generate/record-info`. **Cost-safe by construction:**
+  `--dry-run`/`--list` make zero network calls (work with the key unset); already-generated assets skip
+  unless `--force`; both samples are saved to `asset-pipeline/output/<key>/` with a provenance `.json`
+  and sample #1 auto-placed; `change-*-track.py` swaps to sample #2 (or an explicit `--input`). Exit
+  codes 0/1/2/3/4 (ok/usage/auth/api/integrity). No real generation runs in this phase — the user runs
+  it (see Phase 5). `scripts/requirements.txt` documents the intentional stdlib-only choice.
+
 - 0.2.66: **Audio pipeline Phase 1 — manifest→client codegen + drift gate (`scripts/audio/`, new).**
   Makes `asset-pipeline/manifest.json` the single source of truth for the client. `scripts/audio/
   gen-bindings.js` renders the committed `client/src/audio.generated.ts` (deterministic; `SFX_FILES`
