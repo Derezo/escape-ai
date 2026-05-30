@@ -22,7 +22,10 @@ import { SPECIES_KEYS } from '../dist/species.js';
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
 const PINNED_COLLISION_HASH = 651189019;
-const PINNED_ENTITYSPEC_HASH = 901741202;
+// v5: re-pinned for the per-species `foodSource` specs (the animal-collection
+// feature). Collision hash is UNCHANGED — food sources co-locate with the
+// already-non-solid questObject tiles, so forcing them walkable is a no-op there.
+const PINNED_ENTITYSPEC_HASH = 198123412;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -106,6 +109,20 @@ test('coverage: every species has exactly one home and exactly one quest object'
   assert.equal(questCounts.size, SPECIES_KEYS.length, 'no extra quest objects beyond the roster');
 });
 
+test('coverage: every species has exactly one food source, with a foodKey', () => {
+  const map = generateWorld(PIN_SEED);
+  const foodCounts = new Map();
+  for (const e of map.entitySpecs) {
+    if (e.kind !== 'foodSource') continue;
+    foodCounts.set(e.species, (foodCounts.get(e.species) ?? 0) + 1);
+    assert.ok(e.meta && typeof e.meta.foodKey === 'string' && e.meta.foodKey, `food source ${e.species} carries a foodKey`);
+  }
+  for (const key of SPECIES_KEYS) {
+    assert.equal(foodCounts.get(key), 1, `species ${key} should have exactly one food source`);
+  }
+  assert.equal(foodCounts.size, SPECIES_KEYS.length, 'no extra food sources beyond the roster');
+});
+
 test('validity: gate and every spawn sit on non-solid tiles; exactly one gate spec', () => {
   const map = generateWorld(PIN_SEED);
   assert.ok(
@@ -141,6 +158,9 @@ test('reachability: gate, every door, every housing center and every quest objec
     if (e.kind === 'questObject') {
       assert.ok(reach(tx(map, e.x), tx(map, e.y)), `quest object ${e.species} reachable`);
     }
+    if (e.kind === 'foodSource') {
+      assert.ok(reach(tx(map, e.x), tx(map, e.y)), `food source ${e.species} reachable`);
+    }
   }
   for (const s of map.spawns) {
     assert.ok(reach(tx(map, s.x), tx(map, s.y)), 'spawn reachable from spawn[0]');
@@ -163,6 +183,9 @@ test('reachability holds across several seeds (not just the pinned one)', () => 
     for (const e of map.entitySpecs) {
       if (e.kind === 'questObject') {
         assert.ok(reach(tx(map, e.x), tx(map, e.y)), `seed ${seed}: quest ${e.species} reachable`);
+      }
+      if (e.kind === 'foodSource') {
+        assert.ok(reach(tx(map, e.x), tx(map, e.y)), `seed ${seed}: food ${e.species} reachable`);
       }
     }
   }

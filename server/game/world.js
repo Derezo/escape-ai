@@ -59,6 +59,12 @@ async function loadSharedWorld() {
   // quest model from — game/quests.js then calls world.questForSpecies(species)
   // rather than maintaining its own loader/cache.
   const questMod = await import('../../shared/dist/quests.js');
+  // The per-species liked-food table lives in shared/dist/food.js (the ONE source
+  // of truth for the animal-collection feature). Loaded here alongside the world
+  // generator + quests so the server draws the map, the quest model AND the food
+  // model from one shared-world cache — game/follow.js then calls
+  // world.foodForSpecies(species) rather than maintaining its own loader.
+  const foodMod = await import('../../shared/dist/food.js');
 
   const required = {
     generateWorld: worldMod.generateWorld,
@@ -69,7 +75,8 @@ async function loadSharedWorld() {
     isSolidAt: worldMod.isSolidAt,
     worldToTile: worldMod.worldToTile,
     seedFromString: rngMod.seedFromString,
-    questForSpecies: questMod.questForSpecies
+    questForSpecies: questMod.questForSpecies,
+    foodForSpecies: foodMod.foodForSpecies
   };
   const missing = Object.keys(required).filter((name) => required[name] === undefined);
   if (missing.length) {
@@ -146,6 +153,22 @@ function spawnFromMap(map) {
           meta: spec.meta
         });
         break;
+      case 'foodSource': {
+        // A per-species food source (animal-collection feature). Runtime entity
+        // kind is 'food'; the foodKey rides in spec.meta (stamped deterministically
+        // by the generator), with a defensive fallback to the shared food table.
+        const def = sharedWorld.foodForSpecies(spec.species);
+        add({
+          id: spec.id,
+          x: spec.x,
+          y: spec.y,
+          kind: 'food',
+          species: spec.species,
+          foodKey: (spec.meta && spec.meta.foodKey) || def.key,
+          name: def.label
+        });
+        break;
+      }
       default:
         // Unknown spec kind — skip rather than spawn a malformed entity. The
         // generator only emits the kinds above; a new kind is a deliberate
@@ -316,6 +339,24 @@ function questForSpecies(species) {
   return sharedWorld.questForSpecies(species);
 }
 
+/**
+ * The shared liked-food definition for a species (animal-collection feature). A
+ * pure lookup into the cached shared/dist/food.js — the ONE source of truth for
+ * per-species food. Total (never undefined). Throws if called before
+ * loadSharedWorld() resolves (a programmer error; the engine awaits it at boot).
+ * @param {string} species
+ * @returns {{species:string,key:string,label:string,tint:number,icon:string,blurb:string}}
+ */
+function foodForSpecies(species) {
+  if (!sharedWorld) {
+    throw new Error(
+      'world.foodForSpecies() called before loadSharedWorld() resolved. ' +
+      'engine.init() must await world.loadSharedWorld() before any player joins.'
+    );
+  }
+  return sharedWorld.foodForSpecies(species);
+}
+
 module.exports = {
   loadSharedWorld,
   getOrCreateRoomWorld,
@@ -329,5 +370,6 @@ module.exports = {
   pruneExpired,
   nextTempId,
   questForSpecies,
+  foodForSpecies,
   INITIAL_WORLD_STATE
 };

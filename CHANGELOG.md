@@ -4,6 +4,27 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.34: **Animal collection — Phase 2: deterministic food placement.** The world now
+  contains one collectable food source per species, so every food is findable and
+  reachable.
+  - **`shared/src/world.ts`:** `WORLD_GEN_VERSION` 4 → 5. A new `WorldEntitySpec` kind
+    `'foodSource'` (id `food-<species>`, `meta.foodKey` from the shared food table) is
+    emitted per species at a FIXED position in the per-species loop (penAnchor → foodSource
+    → questObject), co-located with the quest object on its already-proven-reachable home
+    tile — so **no new reachability target** is needed. The on-map `TROUGH_FOOD` marker is
+    stamped in a separate pass AFTER the reachability carve (so a corridor carve can't erase
+    it) and the cell is forced non-solid (a feeder must be able to stand on it).
+  - **`shared/test/world.test.mjs`:** re-pinned `PINNED_ENTITYSPEC_HASH` (901741202 →
+    198123412) for the 14 new specs; the **collision hash is unchanged** (food tiles
+    co-locate with the already-non-solid quest tiles). Added a `foodSource` coverage test
+    (exactly one per species, each with a `foodKey`) and extended both reachability tests to
+    assert every food source is reachable across all seeds. 15/15 green.
+  - **`server/game/world.js`:** loads `foodForSpecies` from `shared/dist/food.js` in
+    `loadSharedWorld` (alongside the quest model); `spawnFromMap` learns the `'foodSource'`
+    kind → a `{kind:'food', species, foodKey, name}` entity; exposes a `foodForSpecies`
+    accessor for the follow module. Verified: 14 food entities spawn, all with a foodKey,
+    all on walkable tiles.
+
 - 0.2.33: **Animal collection — Phase 1: contract foundation.** First commit of the
   food / inventory / follow / steal / score feature: the frozen cross-side contract,
   before any behavior. Four parallel subsystem designs were reconciled by an adversarial

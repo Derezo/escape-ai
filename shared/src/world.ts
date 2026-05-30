@@ -18,10 +18,12 @@
 
 import { mulberry32, randInt, pick, shuffle } from './rng.js';
 import { SPECIES_KEYS } from './species.js';
+import { foodForSpecies } from './food.js';
 import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
 
-/** Bump whenever generateWorld's OUTPUT changes, so client/server parity is asserted. */
-export const WORLD_GEN_VERSION = 4;
+/** Bump whenever generateWorld's OUTPUT changes, so client/server parity is asserted.
+ *  v5: one `foodSource` entity spec per species (the animal-collection feature). */
+export const WORLD_GEN_VERSION = 5;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -71,7 +73,7 @@ export interface Housing {
 /** A gameplay entity the SERVER spawns from the map (not a tile). */
 export interface WorldEntitySpec {
   id: string;
-  kind: 'gate' | 'terminal' | 'questObject' | 'robotSpawn' | 'prop' | 'penAnchor';
+  kind: 'gate' | 'terminal' | 'questObject' | 'robotSpawn' | 'prop' | 'penAnchor' | 'foodSource';
   /** World-unit position. */
   x: number;
   y: number;
@@ -851,6 +853,20 @@ export function generateWorld(seed: number): WorldMap {
         });
       }
     }
+    // Food source: one per species, co-located with the quest object on the same
+    // already-proven-reachable home tile (so all 14 foods are findable + reachable
+    // with NO new reachability target). Emitted at a FIXED position in the loop
+    // (penAnchor → foodSource → questObject) so JSON.stringify(entitySpecs) is
+    // stable. We push only the SPEC here; the on-map TROUGH_FOOD marker tile is
+    // stamped AFTER the reachability carve (below) so the carve can't erase it.
+    entitySpecs.push({
+      id: `food-${species}`,
+      kind: 'foodSource',
+      x: tileCenter(qp.tx, tile),
+      y: tileCenter(qp.ty, tile),
+      species,
+      meta: { foodKey: foodForSpecies(species).key },
+    });
     entitySpecs.push({
       id: `quest-${species}`,
       kind: 'questObject',
@@ -900,6 +916,20 @@ export function generateWorld(seed: number): WorldMap {
         `generateWorld(${seed}): reachability did not converge after ${MAX_ITERS} carve passes`,
       );
     }
+  }
+
+  // Food-source markers: stamp the TROUGH_FOOD tile AFTER the reachability carve so
+  // no corridor carve can erase it, and explicitly KEEP the cell non-solid (force
+  // collision = 0) — TROUGH_FOOD is normally solid, but a feeder must be able to
+  // stand on the food tile to collect. Deterministic: fixed SPECIES_KEYS order, no
+  // rng, co-located with the questObject tile (already proven reachable, so this is
+  // the ONLY deco/collision discrepancy and it's intentional + confined to 14 tiles).
+  for (const species of SPECIES_KEYS) {
+    const qp = questPos.get(species);
+    if (!qp) continue;
+    const fi = tileIndex(w, qp.tx, qp.ty);
+    deco.data[fi] = TILE_INDEX.TROUGH_FOOD; // visual feeding-spot marker
+    collision[fi] = 0; // override TROUGH_FOOD solidity — the tile stays walkable
   }
 
   return {
