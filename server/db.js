@@ -78,6 +78,23 @@ function init() {
     );
   `);
 
+  // Animal-collection stat columns. CREATE TABLE IF NOT EXISTS above will NOT add
+  // columns to an EXISTING escapeai.db, so migrate in place with guarded ALTERs:
+  // ADD COLUMN throws "duplicate column name" once the column exists, which we
+  // swallow (idempotent). New flat counters default 0; the by-species breakdown is
+  // a JSON TEXT column (not a flat +=x counter — see incStats) defaulting to '{}'.
+  const migrate = (ddl) => {
+    try {
+      db.exec(`ALTER TABLE stats ADD COLUMN ${ddl}`);
+    } catch (err) {
+      if (!/duplicate column name/i.test(err.message)) throw err;
+    }
+  };
+  migrate('food_collected     INTEGER DEFAULT 0');
+  migrate('animals_stolen     INTEGER DEFAULT 0');
+  migrate('quests_completed   INTEGER DEFAULT 0');
+  migrate("escapes_by_species TEXT DEFAULT '{}'");
+
   stmts = {
     userByToken: db.prepare('SELECT * FROM users WHERE token = ?'),
     userByUsername: db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE'),
@@ -177,6 +194,12 @@ function getStatsForUser(userId) {
   const user = stmts.userById.get(userId);
   if (!user) return undefined;
   const row = stmts.statsByUser.get(userId) || {};
+  let escapesBySpecies = {};
+  try {
+    escapesBySpecies = JSON.parse(row.escapes_by_species || '{}') || {};
+  } catch {
+    escapesBySpecies = {}; // corrupt/legacy value → empty rather than throw
+  }
   return {
     games: row.games || 0,
     escapes: row.escapes || 0,
@@ -184,33 +207,46 @@ function getStatsForUser(userId) {
     ordersIssued: row.orders_issued || 0,
     abilitiesUsed: row.abilities_used || 0,
     playSeconds: row.play_seconds || 0,
+    foodCollected: row.food_collected || 0,
+    animalsStolen: row.animals_stolen || 0,
+    questsCompleted: row.quests_completed || 0,
+    escapesBySpecies,
     lastSpecies: user.last_species || undefined,
     firstSeen: user.created_at || undefined,
     lastSeen: user.last_seen || undefined
   };
 }
 
-// Map camelCase delta keys → snake_case stat columns. Only these are writable.
+// Map camelCase delta keys → snake_case stat columns for the col=col+@key path.
+// Only flat INTEGER counters belong here. `escapesBySpecies` is DELIBERATELY absent
+// — it is a JSON TEXT column handled by a dedicated read-modify-write branch in
+// incStats (a `col = col + @x` against TEXT would be invalid SQL).
 const DELTA_COLUMNS = {
   games: 'games',
   escapes: 'escapes',
   caught: 'caught',
   ordersIssued: 'orders_issued',
   abilitiesUsed: 'abilities_used',
-  playSeconds: 'play_seconds'
+  playSeconds: 'play_seconds',
+  foodCollected: 'food_collected',
+  animalsStolen: 'animals_stolen',
+  questsCompleted: 'quests_completed'
 };
 
 /**
- * Add the provided deltas to a user's stat counters in a single UPDATE. Only the
- * keys present in `delta` are touched; negative values clamp to no effect. No-op
- * on a falsy userId or an empty/zero delta.
+ * Add the provided deltas to a user's stat counters. Flat counters go in a single
+ * col=col+@key UPDATE; the per-species escape breakdown (`escapesBySpecies`, a
+ * {species:count} map) is merged into the JSON `escapes_by_species` TEXT column via
+ * a read-modify-write. Only present keys are touched; negatives clamp to no effect.
+ * No-op on a falsy userId or an empty delta.
  * @param {string} userId
- * @param {{games?, escapes?, caught?, ordersIssued?, abilitiesUsed?, playSeconds?}} delta
+ * @param {{games?, escapes?, caught?, ordersIssued?, abilitiesUsed?, playSeconds?, foodCollected?, animalsStolen?, questsCompleted?, escapesBySpecies?: Record<string,number>}} delta
  */
 function incStats(userId, delta) {
   if (!userId || !delta) return;
   ensure();
 
+  // 1) Flat counters: a single additive UPDATE built from the present >0 keys.
   const sets = [];
   const params = {};
   for (const [key, column] of Object.entries(DELTA_COLUMNS)) {
@@ -220,10 +256,32 @@ function incStats(userId, delta) {
       params[key] = Math.round(raw);
     }
   }
-  if (sets.length === 0) return; // nothing to add
+  if (sets.length > 0) {
+    params.userId = userId;
+    db.prepare(`UPDATE stats SET ${sets.join(', ')} WHERE user_id = @userId`).run(params);
+  }
 
-  params.userId = userId;
-  db.prepare(`UPDATE stats SET ${sets.join(', ')} WHERE user_id = @userId`).run(params);
+  // 2) Per-species escapes: merge the {species:count} delta into the JSON column.
+  // Read-modify-write (the col=col+@x trick can't sum a JSON map). Only writes when
+  // there is something to add, so the common (empty) case touches nothing.
+  const bySpecies = delta.escapesBySpecies;
+  if (bySpecies && typeof bySpecies === 'object' && Object.keys(bySpecies).length > 0) {
+    const row = stmts.statsByUser.get(userId);
+    if (row) {
+      let merged = {};
+      try {
+        merged = JSON.parse(row.escapes_by_species || '{}') || {};
+      } catch {
+        merged = {}; // corrupt/legacy value → start fresh rather than throw
+      }
+      for (const [species, count] of Object.entries(bySpecies)) {
+        const n = Number(count);
+        if (Number.isFinite(n) && n > 0) merged[species] = (merged[species] || 0) + Math.round(n);
+      }
+      db.prepare('UPDATE stats SET escapes_by_species = @json WHERE user_id = @userId')
+        .run({ json: JSON.stringify(merged), userId });
+    }
+  }
 }
 
 /**

@@ -4,6 +4,26 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.36: **Animal collection — Phase 4: stat persistence + DB migration.** The new
+  counters now survive across sessions (`server/db.js`).
+  - **Guarded in-place migration:** `init()` runs `ALTER TABLE stats ADD COLUMN` for
+    `food_collected` / `animals_stolen` / `quests_completed` (INTEGER) and
+    `escapes_by_species` (TEXT `'{}'`), swallowing the "duplicate column name" error so it
+    is idempotent — an existing `escapeai.db` upgrades in place, a fresh one is unaffected.
+  - **`DELTA_COLUMNS`** gains the three flat counters (the `col = col + @key` path).
+    `escapesBySpecies` is deliberately NOT in it — a `+=` against a TEXT column is invalid
+    SQL.
+  - **`incStats`** splits into two: the flat additive UPDATE, plus a dedicated read-modify-write
+    that MERGES the `{species:count}` delta into the JSON `escapes_by_species` column (so the
+    by-species totals accumulate across escapes). The species merge runs even when no flat
+    counter changed, and the common empty case touches nothing.
+  - **`getStatsForUser`** returns the three new counters + the parsed `escapesBySpecies` map
+    (corrupt/legacy JSON degrades to `{}` rather than throwing).
+  - Verified on the live `escapeai.db`: the 7-column table migrates to 11 columns in place;
+    a roundtrip persists food/stolen/quests, merges per-species escapes (ape 2+1=3, fox 1)
+    while the flat `escapes` path still works; a second `init()` does not crash (idempotent);
+    server boots clean.
+
 - 0.2.35: **Animal collection — Phase 3: server mechanics (collect/feed/follow/steal/score).**
   The authoritative simulation for the whole loop.
   - **`server/game/follow.js` (new):** owns the rules (mirrors `quests.js`/`stealth.js`);
