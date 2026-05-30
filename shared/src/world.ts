@@ -1289,7 +1289,13 @@ export function generateWorld(seed: number): WorldMap {
       const anyZone: Zone = { id: 'savanna', tx: 2, ty: 2, tw: eastLimit - 2, th: h - 5, cx: 0, cy: 0 };
       plot = findFreeRect(anyZone, 8, 8, claimed, w);
     }
-    if (!plot) continue; // genuinely no room (shouldn't happen at 128²)
+    if (!plot) {
+      // No room for this species' home after all fallbacks. This would silently
+      // break the one-home-per-species invariant the parity test relies on, so
+      // FAIL LOUD instead (mirrors the reachability-non-convergence throw below).
+      // Unreachable at 128² with 14 homes ≤ 11×10 each, but enforced not assumed.
+      throw new Error(`generateWorld(${seed}): no room to place a home for "${species}"`);
+    }
 
     let placed: PlacedHome;
     if (kind === 'building') {

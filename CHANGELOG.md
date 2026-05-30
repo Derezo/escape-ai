@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.36: **Map overhaul validation remediation (post-`/plan-validation-and-review`).** The
+  validation pass (requirements trace, connectivity audit, dedup scan, three-group code review,
+  build/test) found the overhaul complete and connected — every requirement implemented, zero
+  dead/duplicate code, determinism clean. It surfaced two defensive gaps, both fixed here (neither
+  changes generator output, so the pinned hashes / `WORLD_GEN_VERSION` are untouched):
+  - **Fail loud on home-placement failure (`shared/src/world.ts`):** if `findFreeRect` ever
+    exhausted all fallbacks, the loop `continue`d and silently dropped a species — breaking the
+    one-home-per-species invariant the parity test relies on. It now throws (mirroring the
+    reachability-non-convergence throw), so the invariant is enforced, not assumed. Unreachable at
+    128² with 14 homes ≤ 11×10, but no longer silent.
+  - **Clamp containment bounds (`server/game/world.js`):** `getHomeBoundsBySpecies` now clamps
+    `maxX/maxY ≥ minX/minY` so a degenerate home rect could never hand `wanderStep` an inverted
+    bound (which would freeze an animal). World-gen already guarantees rw/rh ≥ 8, so this is
+    belt-and-suspenders.
+  - One out-of-scope, pre-existing finding (the spawn fallback can add a still-solid tile that the
+    reachability carve then rescues) logged to `FINDINGS_OUTSIDE_SCOPE.md` — not fixed here.
+  - Verified: shared 20/20, client build, server boot, and a 2000-tick 42-animal containment sim
+    (0 escaped, 0 frozen, 0 inverted bounds) all green.
+
 - 0.2.35: **Map overhaul Phase C — per-enclosure NPC animals + containment.** Every enclosure is
   now inhabited by 2–3 wandering NPC animals of its species, kept inside their pen.
   `WORLD_GEN_VERSION` 6 → 7; hashes re-pinned. The wire shape of an animal is byte-identical to

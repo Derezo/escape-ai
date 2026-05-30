@@ -222,10 +222,13 @@ function getHomeBoundsBySpecies(roomName) {
   const add = (species, rx, ry, rw, rh) => {
     if (!species) return; // gatehouse has no species → no animals
     // Interior wall ring inset by one tile (the barrier ring is the outer edge).
+    // World-gen guarantees rw>=8/rh>=8 (interior >=6x6), so the inset never
+    // inverts; clamp defensively anyway so a degenerate rect can't hand wanderStep
+    // an inverted bound (which would pin/freeze an animal) — keep min<=max.
     const minX = (rx + 1) * tile;
     const minY = (ry + 1) * tile;
-    const maxX = (rx + rw - 1) * tile;
-    const maxY = (ry + rh - 1) * tile;
+    const maxX = Math.max((rx + rw - 1) * tile, minX);
+    const maxY = Math.max((ry + rh - 1) * tile, minY);
     bounds.set(species, { minX, minY, maxX, maxY });
   };
   for (const h of map.housing) add(h.species, h.rx, h.ry, h.rw, h.rh);

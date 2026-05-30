@@ -39,3 +39,21 @@ the audit trail).
 - **Refs:** `client/package.json` (Vite dev dependency); advisory
   GHSA-67mh-4wv8-2f99.
 - **Effort:** M (major-version upgrade + build re-verification).
+
+### Spawn fallback can add a still-solid tile (relies on the reachability carve)
+- **Status:** open — pre-existing, low risk, out of scope of the map-overhaul plan.
+- **Surfaced:** `/plan-validation-and-review` of the map-overhaul plan, 2026-05-29
+  (code-comprehension review). The plan did not touch the spawn-generation block.
+- **Detail:** in `shared/src/world.ts` `generateWorld`, the final spawn fallback (when the
+  block scan and the gate-row widen both find nothing) pushes a spawn tile *without*
+  re-checking that it's non-solid. It's the reachability carve that later guarantees the
+  spawn is walkable, and the `validity` test asserts every final spawn is non-solid — so
+  the end state is safe. But the fallback itself is undefended: if the carve ever failed to
+  reach that tile (it throws on non-convergence first), a solid spawn could slip through.
+- **Why deferred:** the path is unchanged by this plan, never fires on the tested seed set,
+  and is covered by the `validity` (spawns non-solid) + reachability tests. A defensive
+  collision check on the fallback tile would be cheap but belongs to a spawn-hardening pass,
+  not the map overhaul.
+- **Refs:** `shared/src/world.ts` `generateWorld` spawn fallback (the `if (spawns.length === 0)`
+  block); `shared/test/world.test.mjs` `validity:` + `reachability:` tests.
+- **Effort:** S.
