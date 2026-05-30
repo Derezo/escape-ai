@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.73: **Generated audio assets committed (`assets/sfx/*.mp3`, `assets/music/*.mp3`).** The
+  first real Suno generations: 9 SFX (robot_alert, panic_warning, lockdown_alarm, lockdown_clear,
+  door_lock, quest_complete, hit, error, confirm) and 2 music tracks (title_theme, explore_loop).
+  Committed directly to git — matching the repo's "a clean clone boots with all assets present"
+  philosophy (like the committed sprite atlas + tileset + placeholder WAVs): the APK bundles them at
+  build time, and judges get a fully working clone with no VPS dependency. The drift gate now reports
+  these as present (the placeholder-WAV fallbacks deactivate for the generated keys). The gitignored
+  raw samples + provenance stay in `asset-pipeline/output/`. Remaining manifest keys are ungenerated
+  (WARN, fallbacks active) until generated.
+
 - 0.2.72: **Docs — README + in-game controls accuracy.** The README's controls list was
   missing **E** (interact/collect food), **F** (feed → herd), and **I** (inventory), and didn't
   mention the food-collection/herding loop or the quest-gated gate — now a full controls table +
