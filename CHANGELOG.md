@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.95: **Leaderboard, phase 3 — the L-key datatable overlay.** The client face of the
+  leaderboard. New `client/src/leaderboard.ts` (`createLeaderboard`) builds a hidden, pure-DOM
+  overlay — the inventory/help modal idiom — toggled with **L** (added to the movement-key
+  early-return guard in `main.ts` alongside H/?/I, and documented in the help Controls tab).
+  It's a comprehensive, **click-to-sort datatable**: rank · player (with last-species sprite) ·
+  score · escapes · quests · stolen · food · caught · orders · abilities · games · play time.
+  Clicking a column header re-requests that sort from the server (which re-ranks
+  authoritatively); the local player's row is highlighted gold and **pinned at the bottom when
+  it falls outside the top-N**, so you always see your standing; clicking any row expands its
+  per-species escape breakdown. Data is fetched on open and **polled every 4s while open**
+  (stops on close), via the new `leaderboard:request`/`leaderboard:data` round-trip wired into
+  `NetClient` (`requestLeaderboard` + `onLeaderboard`). The server owns score + rank; the
+  client only displays them (a stale-sort reply is ignored). New CSS in `style.css` mirrors the
+  existing modal chrome (wider, sticky sortable headers, sprite cells). Verified: shared 84/84,
+  client tsc clean, Vite production build green.
+
 - 0.2.94: **Leaderboard, phase 2 — server query + escape-time-by-species stat.** The
   server side of the L-key leaderboard. New `server/socket/leaderboard.js` handles
   `leaderboard:request` → `leaderboard:data`: it validates the (only) client-supplied

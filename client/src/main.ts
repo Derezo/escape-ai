@@ -36,6 +36,7 @@ import { initMusic, playMusicState } from './music';
 import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
 import { createInventory } from './inventory';
+import { createLeaderboard } from './leaderboard';
 import { runMenu } from './menu';
 
 // Client prediction uses the SAME collision-aware integration as the server
@@ -153,6 +154,14 @@ async function main(): Promise<void> {
   // (and chosen species) once auth:result returns ok. ---
   const net = new NetClient();
   net.connect(SERVER_URL);
+
+  // --- Leaderboard overlay (L). Built hidden; a sortable datatable of the top
+  // players by every stat + the server-computed composite score. Opening it (and
+  // each sort/poll tick) requests fresh data over the wire; the server's reply
+  // (leaderboard:data) is routed to the overlay's render(). Wired here, after the
+  // net client exists, so its request callback can close over `net`. ---
+  const leaderboard = createLeaderboard((sort) => net.requestLeaderboard({ sort, limit: 100 }));
+  net.onLeaderboard((msg) => leaderboard.render(msg));
 
   const { username, species } = await runMenu(net);
   // Identity: the authenticated username. The server assigns the authoritative
@@ -315,9 +324,9 @@ async function main(): Promise<void> {
       }
       return;
     }
-    // The help (H/?) and inventory (I) toggle keys are handled in their own
-    // modules; don't let them leak into the movement key set.
-    if (key === 'h' || key === '?' || key === 'i') return;
+    // The help (H/?), inventory (I), and leaderboard (L) toggle keys are handled
+    // in their own modules; don't let them leak into the movement key set.
+    if (key === 'h' || key === '?' || key === 'i' || key === 'l') return;
     keys.add(key);
   });
   window.addEventListener('keyup', (e) => {

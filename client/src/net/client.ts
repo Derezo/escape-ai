@@ -22,6 +22,8 @@ import {
   type LobbyState,
   type SnapshotMsg,
   type MapMsg,
+  type LeaderboardRequest,
+  type LeaderboardMsg,
 } from '@shared/net';
 
 /** How often (ms) to send a ping for the latency estimate. */
@@ -37,6 +39,7 @@ export class NetClient {
   private lobbyCb: (msg: LobbyState) => void = () => {};
   private authCb: (msg: AuthResult) => void = () => {};
   private mapCb: (msg: MapMsg) => void = () => {};
+  private leaderboardCb: (msg: LeaderboardMsg) => void = () => {};
 
   /** Open the connection. Wires server->client handlers and starts the ping loop. */
   connect(url: string): void {
@@ -65,6 +68,12 @@ export class NetClient {
     // defaults to a no-op until main.ts registers via onMap().
     this.socket.on(SERVER_EVENTS.MAP, (msg: MapMsg) => {
       this.mapCb(msg);
+    });
+
+    // The leaderboard reply (to leaderboard:request). Registered here; the cb
+    // defaults to a no-op until the leaderboard overlay registers via onLeaderboard().
+    this.socket.on(SERVER_EVENTS.LEADERBOARD_DATA, (msg: LeaderboardMsg) => {
+      this.leaderboardCb(msg);
     });
 
     // Latency: server echoes our timestamp back in pong {t}; rtt = now - t.
@@ -123,6 +132,18 @@ export class NetClient {
   /** Register the map handler (the seed-only world map, sent once on join). */
   onMap(cb: (msg: MapMsg) => void): void {
     this.mapCb = cb;
+  }
+
+  /** Emit leaderboard:request {sort?, limit?}. The server replies with
+   *  leaderboard:data (register the handler via onLeaderboard). Sent on opening
+   *  the L panel, on a sort-change, and on the while-open poll. */
+  requestLeaderboard(req: LeaderboardRequest = {}): void {
+    this.socket?.emit(CLIENT_EVENTS.LEADERBOARD_REQUEST, req);
+  }
+
+  /** Register the leaderboard-data handler (the reply to requestLeaderboard). */
+  onLeaderboard(cb: (msg: LeaderboardMsg) => void): void {
+    this.leaderboardCb = cb;
   }
 
   /** Current smoothed latency in ms, or -1 if not yet measured. */

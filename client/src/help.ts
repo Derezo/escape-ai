@@ -58,6 +58,7 @@ const CONTROLS_HTML = `
     <li><b>Q</b> — order a robot (Second Law)</li>
     <li><b>Space</b> — your species ability</li>
     <li><b>I</b> — inventory (food + who it feeds)</li>
+    <li><b>L</b> — leaderboard (top players + your score)</li>
     <li><b>H</b> or <b>?</b> — toggle this help</li>
   </ul>
   <h2>Goal</h2>
