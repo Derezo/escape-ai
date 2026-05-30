@@ -17,7 +17,7 @@
  *   - `gate`     a perimeter or zone door (static, openable)
  *   - `prop`     a carryable disguise item (the Clipboard) — the ape's courier prop
  */
-export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop' | 'hazard' | 'questObject';
+export type EntityKind = 'animal' | 'robot' | 'pen' | 'terminal' | 'gate' | 'prop' | 'hazard' | 'questObject' | 'food';
 
 /**
  * The 8 facing directions in screen space (y-down), used to pick the right
@@ -36,7 +36,10 @@ export type Dir8 = 's' | 'se' | 'e' | 'ne' | 'n' | 'nw' | 'w' | 'sw';
 export type FxKind =
   | 'flit' | 'skitter' | 'shove' | 'carry'
   | 'cloak' | 'dazzle' | 'stink' | 'burrow'
-  | 'dash' | 'mimic' | 'shell' | 'leap' | 'hush' | 'decoy';
+  | 'dash' | 'mimic' | 'shell' | 'leap' | 'hush' | 'decoy'
+  // Animal-collection feedback (Phase: food/follow): a food pickup, a successful
+  // feed-to-follow, and a steal (feeding away another player's follower).
+  | 'collect' | 'feed' | 'steal';
 
 /**
  * The render-echo of an ability effect, carried in the snapshot so ANY client
@@ -102,6 +105,30 @@ export interface Entity {
   quest?: QuestProgress;
   /** For `animal` (player): the last tick it brushed the gate WITHOUT a complete quest. */
   questBlocked?: number;
+
+  // --- Animal collection (food / follow / steal / score) -------------------
+  // All optional; serialized onto the snapshot by engine.toEntity (player fields)
+  // or written directly on the world entity (follower fields). They ride the
+  // delta diff like every other entity field.
+
+  /** For `food`: which food key this source dispenses (drives tint/label + feed match). */
+  foodKey?: string;
+  /** For an `animal` follower: the playerId currently leading it (its owner). */
+  followerOf?: string;
+  /** For an `animal` follower: the tick the follow lapses (server-authoritative TICKS). */
+  followUntilTick?: number;
+  /** For an `animal` follower: the tick the CURRENT follow window started — the
+   *  client decaying-ring denominator: frac = (followUntilTick - tick)/(followUntilTick - followSince). */
+  followSince?: number;
+  /** For an `animal` follower: true if it was STOLEN from another player (worth more at the gate). */
+  stolen?: boolean;
+  /** For `animal` (player): the owner's collected-food bag, foodKey → count. Owner's own entity only. */
+  inventory?: Record<string, number>;
+  /** For `animal` (player): the award stamped on the escape edge (a one-shot client toast). */
+  lastScore?: { points: number; herd: number; stolen: number; tick: number };
+  /** For `animal` (player): the running session/round score (persists across respawns). */
+  scoreTotal?: number;
+
   [key: string]: unknown;
 }
 

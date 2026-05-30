@@ -23,6 +23,7 @@
 
 const config = require('../config');
 const world = require('./world');
+const { bumpStat } = require('./stats-delta');
 
 // Reach radius for the 'reach' quest: a generous brush of the species'
 // questObject tile counts as "home". RECT_SIZE * 1.5 mirrors the gate's escape
@@ -103,6 +104,9 @@ function stepReach(player, roomName) {
   const reach = config.RECT_SIZE * REACH_MULT;
   if (dist2(player, target) <= reach * reach) {
     markComplete(quest);
+    // Persistent stat: a quest event completed (counted once — the guard above
+    // returns early once quest.complete is set, so this is the completion edge).
+    bumpStat(player, 'questsCompleted');
   }
 }
 
@@ -141,7 +145,12 @@ function onInteract(player, roomName) {
   if (player.questTerminals.has(term.id)) return false; // already counted
   player.questTerminals.add(term.id);
   quest.done = Math.min(quest.need, player.questTerminals.size);
-  if (quest.done >= quest.need) markComplete(quest);
+  if (quest.done >= quest.need) {
+    markComplete(quest);
+    // Persistent stat: a quest event completed (the early-return guard above keeps
+    // this on the completion edge, and onInteract only fires for a NEW terminal).
+    bumpStat(player, 'questsCompleted');
+  }
   return true;
 }
 
@@ -160,6 +169,9 @@ function stepFetchAtGate(player, gate, gateReach) {
   if (!player.carrying) return;
   if (dist2(player, gate) <= gateReach * gateReach) {
     markComplete(quest);
+    // Persistent stat: a quest event completed (the guard above keeps this on the
+    // completion edge — the ape's fetch completes exactly once at the gate).
+    bumpStat(player, 'questsCompleted');
   }
 }
 

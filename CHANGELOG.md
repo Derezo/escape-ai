@@ -4,6 +4,40 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.33: **Animal collection — Phase 1: contract foundation.** First commit of the
+  food / inventory / follow / steal / score feature: the frozen cross-side contract,
+  before any behavior. Four parallel subsystem designs were reconciled by an adversarial
+  integration critic; this lands the names everything downstream is built against.
+  - **`shared/src/food.ts` (new):** the ONE source of truth for per-species liked food —
+    14 foods, one per species, each liked by exactly one species, species-appropriate by
+    common knowledge (ape→banana, elephant→peanuts, tortoise→lettuce, fox→grapes, …).
+    Mirrors `quests.ts`/`species.ts` purity: a fixed literal table + `foodForSpecies`
+    (TOTAL, never undefined), `foodByKey`, `isFoodKey`, `FOODS`/`FOOD_KEYS`/`FOOD_COUNT`.
+    Exported from the shared barrel.
+  - **`shared/src/types.ts`:** `EntityKind += 'food'`; `FxKind += 'collect'|'feed'|'steal'`;
+    new optional `Entity` fields — `foodKey`, `followerOf`, `followUntilTick`, `followSince`,
+    `stolen`, `inventory`, `lastScore{points,herd,stolen,tick}`, `scoreTotal`.
+  - **`shared/src/net.ts`:** `PlayerAction += 'feed'` (a dedicated verb, not overloaded on
+    `interact`, so it never collides with the terminal/`activate`-quest path); `UserStats +=
+    foodCollected, animalsStolen, questsCompleted, escapesBySpecies?`.
+  - **`server/game/stats-delta.js` (new):** the single owner of the per-player stat-delta
+    shape + `bumpStat`/`bumpEscapedSpecies`/`hasAny`/`reset`. The zero-shape was previously
+    hardcoded in three places (stealth `bumpStat`, engine `anyNonZero`/`flushStatsDelta`);
+    centralizing it means a new counter is added once and never silently fails to persist.
+    `stealth.js`, `quests.js` and `engine.js` migrated onto it (no require cycle — the module
+    depends on nothing).
+  - **`server/game/engine.js`:** `toEntity` now forwards `inventory` (unconditionally, even
+    when empty, so a cleared bag clears the client overlay), `lastScore` (while escaped) and
+    `scoreTotal` — without this, none of the later client UI could ever receive data. The
+    flush path uses `stats-delta.hasAny`/`reset`.
+  - **`server/game/quests.js`:** bumps `questsCompleted` at each of the three `markComplete`
+    callers (reach/activate/fetch), on the completion edge.
+  - **`server/socket/connection.js`:** the disconnect flush spreads the full accumulator (all
+    new counters + the by-species map) instead of hand-listing four keys.
+  - No behavior yet — food sources, feeding, following, stealing, scoring, the inventory UI
+    and DB columns land in later phases. Verified: shared builds + 14/14 tests green; server
+    boots, ticks at 20Hz, `/health` ok.
+
 - 0.2.32: **Plan-validation remediation (post-`/plan-validation-and-review`).** The validation
   pass (requirements trace, connectivity audit, dedup scan, three-group code review, build/test)
   found the tilemap work complete and connected; it surfaced three fixable items, all fixed here:

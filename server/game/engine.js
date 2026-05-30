@@ -29,6 +29,7 @@ const config = require('../config');
 const world = require('./world');
 const stealth = require('./stealth');
 const quests = require('./quests');
+const statsDelta = require('./stats-delta');
 
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
@@ -190,31 +191,21 @@ function integratePlayers(dt) {
   }
 }
 
-/** True if a stat-delta accumulator holds any non-zero count. */
-function anyNonZero(delta) {
-  return !!delta && (
-    (delta.escapes || 0) > 0 ||
-    (delta.caught || 0) > 0 ||
-    (delta.ordersIssued || 0) > 0 ||
-    (delta.abilitiesUsed || 0) > 0
-  );
-}
-
 /**
  * Flush a player's pending stat delta to the DB and zero it. No-op unless the
  * player has an account (userId), the DB is wired, and the delta is non-empty —
- * so the hot path stays free of DB writes except on event-edge ticks.
+ * so the hot path stays free of DB writes except on event-edge ticks. The delta
+ * shape (which counters exist, what "non-empty" means, and how to zero it) is
+ * owned by game/stats-delta.js so this path can never drift out of sync with the
+ * bump sites.
  * @param {object} player
  */
 function flushStatsDelta(player) {
   if (!db || !player.userId) return;
   const delta = player.statsDelta;
-  if (!anyNonZero(delta)) return;
+  if (!statsDelta.hasAny(delta)) return;
   db.incStats(player.userId, delta);
-  delta.escapes = 0;
-  delta.caught = 0;
-  delta.ordersIssued = 0;
-  delta.abilitiesUsed = 0;
+  statsDelta.reset(delta);
 }
 
 /** Step the NPC simulation (robots) + the panic/overflow meter for every active
@@ -277,6 +268,15 @@ function toEntity(player) {
     entity.quest = player.quest;
     if (player.questBlocked) entity.questBlocked = player.questBlocked;
   }
+  // Animal collection: the player's food bag rides its OWN entity so the client
+  // inventory overlay reads it. Forward it UNCONDITIONALLY (even when empty {}) so
+  // a catch/respawn that clears the bag actually clears the client UI — an absent
+  // field on a delta would leave the client showing stale food.
+  if (player.inventory) entity.inventory = player.inventory;
+  // The gate award (a one-shot client toast) rides along only while escaped; the
+  // running total rides whenever non-zero. Both are plain JSON on the delta diff.
+  if (player.escaped && player.lastScore != null) entity.lastScore = player.lastScore;
+  if (player.scoreTotal) entity.scoreTotal = player.scoreTotal;
   return entity;
 }
 

@@ -57,11 +57,16 @@ export interface LobbyJoin {
  * A discrete, non-movement action the player triggers this frame. Movement is
  * the continuous dx/dy; this is the "press a button" intent layer. Resolved by
  * the server against nearby entities (Phase 2+):
- *   - `interact` use the nearest terminal / pick up the disguise prop
+ *   - `interact` use the nearest terminal / pick up the disguise prop / COLLECT
+ *                food from the nearest food source (a disjoint target class from
+ *                terminals — food sources live inside enclosures, terminals on roads)
  *   - `order`    issue a Second-Law order to the nearest robot
  *   - `ability`  trigger this species' special (climb/fly/squeeze/smash)
+ *   - `feed`     give the nearest feedable animal its liked food → it FOLLOWS you
+ *                (a dedicated verb, not overloaded onto `interact`, so it never
+ *                collides with the terminal/`activate`-quest path)
  */
-export type PlayerAction = 'interact' | 'order' | 'ability';
+export type PlayerAction = 'interact' | 'order' | 'ability' | 'feed';
 
 /**
  * Payload for `input`. Carries an Input plus an optional discrete action and a
@@ -105,6 +110,15 @@ export interface UserStats {
   abilitiesUsed: number;
   /** Total play time accumulated across sessions, in seconds. */
   playSeconds: number;
+  /** Food units collected from food sources (cumulative). */
+  foodCollected: number;
+  /** Following animals stolen away from other players (cumulative). */
+  animalsStolen: number;
+  /** Side-quest events completed (cumulative). */
+  questsCompleted: number;
+  /** Animals escaped through the gate, broken down by species (cumulative).
+   *  Stored server-side as a JSON TEXT column; absent on legacy rows. */
+  escapesBySpecies?: Record<string, number>;
   /** Species used in the most recent session (drives the selector default). */
   lastSpecies?: string;
   /** When the account was created (ISO 8601). */

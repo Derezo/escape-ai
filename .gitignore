@@ -45,3 +45,6 @@ android/capacitor-cordova-android-plugins/
 *.aab
 *.keystore
 *.jks
+
+# Claude Code session scratch (worktrees, locks) — never commit
+.claude/

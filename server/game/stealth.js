@@ -18,6 +18,7 @@ const config = require('../config');
 const world = require('./world');
 const quests = require('./quests');
 const speciesRoster = require('../socket/species-roster');
+const { bumpStat } = require('./stats-delta');
 
 // The cached shared module (resolved by loadShared() before the loop starts).
 let shared = null;
@@ -44,21 +45,6 @@ let rooms = null;            // Map<roomName, Set<socketId>>
 function setRefs(players, roomsMap) {
   connectedPlayers = players;
   rooms = roomsMap;
-}
-
-/**
- * Bump a per-player persistent-stat counter. The game math stays decoupled from
- * the DB: we only accumulate onto `player.statsDelta` (created lazily) and the
- * engine flushes a non-empty delta to SQLite on the next tick (and connection.js
- * on disconnect). No-op on a falsy player.
- * @param {object} player
- * @param {'escapes'|'caught'|'ordersIssued'|'abilitiesUsed'} key
- * @param {number} [by=1]
- */
-function bumpStat(player, key, by = 1) {
-  if (!player) return;
-  player.statsDelta ||= { escapes: 0, caught: 0, ordersIssued: 0, abilitiesUsed: 0 };
-  player.statsDelta[key] = (player.statsDelta[key] || 0) + by;
 }
 
 /**

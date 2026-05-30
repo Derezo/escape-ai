@@ -43,14 +43,14 @@ function cleanup(socket, deps) {
   if (db && player && player.userId) {
     const joinedAt = (state && state.joinedAt) || Date.now();
     const playSeconds = Math.max(0, Math.round((Date.now() - joinedAt) / 1000));
-    const delta = { playSeconds };
-    if (player.statsDelta) {
-      delta.escapes = player.statsDelta.escapes || 0;
-      delta.caught = player.statsDelta.caught || 0;
-      delta.ordersIssued = player.statsDelta.ordersIssued || 0;
-      delta.abilitiesUsed = player.statsDelta.abilitiesUsed || 0;
-      player.statsDelta = null;
-    }
+    // Flush the session: play time plus whatever the engine hadn't yet flushed
+    // this tick. Spread the full accumulator (owned by game/stats-delta.js — all
+    // counters, including the new food/steal/quest scalars AND the by-species
+    // escapes map) so a disconnect mid-session never silently drops a stat.
+    // db.incStats handles each key (the scalars via +=, escapesBySpecies via a
+    // JSON read-modify-write) and ignores the rest.
+    const delta = { ...(player.statsDelta || {}), playSeconds };
+    player.statsDelta = null;
     db.incStats(player.userId, delta);
   }
 
