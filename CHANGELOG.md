@@ -4,6 +4,13 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.79: **Regenerated SFX with the sound-describing prompts + new wired keys.** Re-ran
+  Suno generation for several SFX now that the descriptors describe the *sound* rather than
+  the game event (0.2.74): `robot_alert`, `panic_warning`, `lockdown_alarm`, `lockdown_clear`,
+  `door_lock`, `gate_open`, plus the newly-wired `quest_progress`, `robot_footstep`, and the
+  looping `robot_pursuit`. These replace the old generations / placeholder-WAV fallbacks; the
+  loader now plays the themed `.mp3` for each. Drift gate green.
+
 - 0.2.78: **Seamless terrain + a tree that actually reads as a tree (WORLD_GEN_VERSION 12).**
   Ground tiles drew a per-cell top/bottom light/shade band, so identical tiles stacked into
   a visible light/dark stripe at every 32px seam — the "grid" effect on grass/dirt/paved.
