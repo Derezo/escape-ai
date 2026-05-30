@@ -45,14 +45,16 @@ function treeTrunk() {
 
 function pineTrunk() {
   const b = TILE_PAL.bark;
-  // A short barked stub with a lit/shaded side, bark grain, and a small root flare
-  // so the conifer above has a believable base.
-  let out = plainRect(14, 6, 4, 22, b.base);
-  out += plainRect(14, 6, 1.4, 22, b.light, { opacity: 0.6 });   // lit side
-  out += plainRect(16.6, 6, 1.4, 22, b.shade, { opacity: 0.6 }); // shade side
+  // A barked stub with a lit/shaded side, bark grain, and a small root flare. Like
+  // TREE_TRUNK it fills from the cell TOP (y=0) down to a root flare, so the conifer
+  // canopy in the cell directly ABOVE meets the trunk at the seam with NO grass gap
+  // (the canopy's lowest boughs reach its cell bottom — see pineCanopy).
+  let out = plainRect(14, 0, 4, 28, b.base);
+  out += plainRect(14, 0, 1.4, 28, b.light, { opacity: 0.6 });   // lit side
+  out += plainRect(16.6, 0, 1.4, 28, b.shade, { opacity: 0.6 }); // shade side
   // bark grain striations
   for (let i = 0; i < 4; i++) {
-    out += path(`M15 ${(9 + i * 5).toFixed(1)} l2 1`, 'none', { stroke: TILE_PAL.bark.deep, width: 0.6, opacity: 0.5 });
+    out += path(`M15 ${(6 + i * 5).toFixed(1)} l2 1`, 'none', { stroke: TILE_PAL.bark.deep, width: 0.6, opacity: 0.5 });
   }
   // root flare
   out += polygon([[11, 28], [14, 23], [14, 28]], b.shade, { stroke: 'none' });
@@ -126,8 +128,11 @@ function pineCanopy() {
     return s;
   };
   let out = tier(1, 12, 7, 6);     // top tier
-  out += tier(7, 20, 10, 13);      // middle tier
-  out += tier(14, 27, 13, 20);     // bottom tier
+  out += tier(7, 21, 10, 14);      // middle tier
+  out += tier(14, 31, 14, 22);     // bottom tier — reaches the cell bottom (y~31) so
+                                   // the boughs meet the trunk in the cell below with
+                                   // no grass gap at the canopy/trunk seam (mirrors the
+                                   // broadleaf TREE_CANOPY lower-lobe fix).
   // a tiny snow-free green crown tuft at the very tip
   out += circle(16, 2, 1.4, p.light, { stroke: 'none', opacity: 0.6 });
   return out;

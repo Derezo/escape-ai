@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.88: **Pine tree: close the trunk↔canopy gap.** The PINE tile (a canopy cell over a
+  trunk cell) had a visible band of grass between the lowest bough and the trunk top: the
+  canopy's bottom tier stopped at y≈27 (5px short of its cell bottom) and the trunk started
+  at y=6 (6px below its cell top), leaving an ~11px seam gap — so it didn't read as one tree.
+  Fixed both halves in `scripts/tiles/builders/nature.js`, mirroring the broadleaf TREE fix
+  (dc78c79): `pineCanopy`'s bottom tier now reaches the cell bottom (base y≈31, slightly
+  wider) and `pineTrunk` now fills from the cell top (y=0, like `treeTrunk`) down to its root
+  flare. Regenerated the pine SVGs + repacked `assets/tiles/tileset.png` via `npm run tiles`;
+  the verify drift gate passes (art only — no tile index/flag/order change, no
+  `WORLD_GEN_VERSION` bump). The conifer now renders as a connected whole.
+
 - 0.2.87: **Quest clarity — a pathfinding direction arrow + hiding the misleading "quest
   point" marker.** Players couldn't tell what their quest wanted: the ape's "Courier the
   Clipboard" quest (`type: 'fetch'`) completes by carrying the prop to the *gate*, but the
