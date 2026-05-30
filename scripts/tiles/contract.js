@@ -209,6 +209,10 @@ const TILE_LIST = [
   { name: 'TRASH_BIN', index: 142, layer: 'deco', solid: true, ysort: 'none', build: 'buildTrashBin' },
   { name: 'BUSH_TRIMMED', index: 143, layer: 'deco', solid: true, ysort: 'none', build: 'buildBushTrimmed' },
   { name: 'BANNER', index: 144, layer: 'deco', solid: false, ysort: 'behind', build: 'buildBanner' },
+
+  // --- Bridges (145..146) ---
+  { name: 'BRIDGE_H', index: 145, layer: 'ground', solid: false, ysort: 'none', build: 'buildBridgeH' },
+  { name: 'BRIDGE_V', index: 146, layer: 'ground', solid: false, ysort: 'none', build: 'buildBridgeV' },
 ];
 
 /** Highest declared tile index (= TILE_LIST.length - 1, since indices are contiguous). */

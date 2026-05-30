@@ -17,6 +17,7 @@ const structures = require('./builders/structures');
 const fences = require('./builders/fences');
 const housing = require('./builders/housing');
 const props = require('./builders/props');
+const bridges = require('./builders/bridges');
 
 /** EMPTY (index 0): an explicit transparent cell. Phaser treats index 0 as no-tile;
  *  the packer leaves the slot blank, but a builder keeps the contract uniform. */
@@ -33,6 +34,7 @@ const REGISTRY = Object.assign(
   fences,
   housing,
   props,
+  bridges,
 );
 
 // Strip the non-builder helper terrain re-exports (e.g. `ground`) so the registry

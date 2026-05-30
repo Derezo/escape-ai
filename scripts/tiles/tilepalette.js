@@ -36,8 +36,14 @@ const TILE_PAL = {
   sand: makePalette('#d8c489', { accent: '#b8a468' }), // dry pale sand
   straw: makePalette('#c8a64e', { accent: '#a8863a' }), // pen straw bedding
   // --- Water ---
+  // waterDeep/waterShallow keep their LOCKED base hues (the renderer/world-gen read these);
+  // the extra tones below give the water builders + shoreline foam more tonal range.
   waterDeep: makePalette('#2f5d8a', { accent: '#244a70' }), // deep water (solid)
   waterShallow: makePalette('#4f96c8', { accent: '#3f86b8' }), // wadeable shallow
+  // An even darker abyss tone for the deep-water depth gradient (below waterDeep.shade).
+  waterAbyss: makePalette('#1d4060', { accent: '#142e46' }), // deep-centre darkening
+  // A pale green-blue the wadeable shallow lightens toward (reads greener/lighter than deep).
+  waterWade: makePalette('#5fb0c4', { accent: '#4a98ad' }),
   // --- Wood / floors ---
   woodFloor: makePalette('#b08a52', { accent: '#8a6a3c' }), // warm plank floor
   woodFloorDark: makePalette('#7a5a36', { accent: '#5e4528' }), // dark plank floor
@@ -62,6 +68,67 @@ const TILE_PAL = {
   wood: makePalette('#9c7444', { accent: '#7a5a34' }), // generic prop wood (crate/barrel/bench)
 };
 
+// Extra tones for materials that need more than the base 3-tone family for depth.
+// APPEND-ONLY: these add keys to existing families (never rename base/shade/light).
+//   fence.grain — a darker mid-brown for wood-grain streaks on rails/posts.
+//   fence.deep  — the deepest core shadow on the round side of a turned post.
+//   metal.dark  — a darker steel for the shaded side of a round bar.
+//   metal.hi    — a bright steel specular highlight down a bar's lit edge.
+TILE_PAL.fence.grain = shade(TILE_PAL.fence.base, 0.34);
+TILE_PAL.fence.deep = shade(TILE_PAL.fence.base, 0.5);
+TILE_PAL.metal.dark = shade(TILE_PAL.metal.base, 0.34);
+TILE_PAL.metal.hi = tint(TILE_PAL.metal.base, 0.42);
+
+// NATURE/PROP detail tones (APPEND-ONLY — add keys to existing families).
+//   rock.crack — dark line for facet edges / cracks on stone.
+//   rock.grain — a mid tone for grain striations across a rock face.
+//   bark.deep  — deepest heartwood ring / bark-crevice shadow (stump/log).
+//   wood.grain — darker streak for plank wood-grain (barrel/crate/bench).
+//   wood.deep  — core shadow on the round side of a barrel stave.
+//   straw.grain— darker straw streak for hay-bale texture.
+//   leafPine.deep — shaded underside of a conifer tier.
+TILE_PAL.rock.crack = shade(TILE_PAL.rock.base, 0.5);
+TILE_PAL.rock.grain = shade(TILE_PAL.rock.base, 0.18);
+TILE_PAL.bark.deep = shade(TILE_PAL.bark.base, 0.5);
+TILE_PAL.wood.grain = shade(TILE_PAL.wood.base, 0.32);
+TILE_PAL.wood.deep = shade(TILE_PAL.wood.base, 0.5);
+TILE_PAL.straw.grain = shade(TILE_PAL.straw.base, 0.34);
+TILE_PAL.leafPine.deep = shade(TILE_PAL.leafPine.base, 0.34);
+// Moss specks for stone/stump; cattail brown for seed-heads (full 3-tone families).
+TILE_PAL.moss = makePalette('#5a7a36', { accent: '#43602a' });
+TILE_PAL.cattail = makePalette('#7a4a26', { accent: '#5e3a1c' });
+// Layered petal families (base/shade/light) for readable blooms; the accent
+// hexes mirror ACCENT.flower* so a bloom and a flat dab still match in colour.
+TILE_PAL.petalRed = makePalette('#d6485a');
+TILE_PAL.petalYellow = makePalette('#e8c44a');
+TILE_PAL.petalBlue = makePalette('#5a7ad6');
+TILE_PAL.lily = makePalette('#e8d8e8');
+
+// Terracotta shingle tones (roofRed). The 3-tone family is too flat for overlapping
+// clay tabs, so add:
+//   roofRed.mid  — an alternating-course clay (a touch deeper than base) for running-bond.
+//   roofRed.deep — the lip-shadow under each tab's overhang (the row separation).
+//   roofRed.hi   — a warm sun-catch along a tab's top edge (the highlight roll).
+TILE_PAL.roofRed.mid = shade(TILE_PAL.roofRed.base, 0.12);
+TILE_PAL.roofRed.deep = shade(TILE_PAL.roofRed.base, 0.42);
+TILE_PAL.roofRed.hi = tint(TILE_PAL.roofRed.base, 0.3);
+
+// Brick/stone coursing tones (wall, exterior stucco-brick). Add:
+//   wall.mid    — an alternating brick face (every other course/brick reads distinct).
+//   wall.mortar — the recessed joint colour (a real darker line, not a 1px ghost).
+//   wall.deep   — the bottom-of-brick contact shadow under each course.
+//   wall.quoin  — a bright dressed-stone block for terminating ends / corner quoins.
+TILE_PAL.wall.mid = shade(TILE_PAL.wall.base, 0.12);
+TILE_PAL.wall.mortar = shade(TILE_PAL.wall.base, 0.4);
+TILE_PAL.wall.deep = shade(TILE_PAL.wall.base, 0.55);
+TILE_PAL.wall.quoin = tint(TILE_PAL.wall.base, 0.26);
+
+// Interior plaster-brick counterparts (lighter, lower contrast than exterior).
+TILE_PAL.wallInt.mid = shade(TILE_PAL.wallInt.base, 0.1);
+TILE_PAL.wallInt.mortar = shade(TILE_PAL.wallInt.base, 0.34);
+TILE_PAL.wallInt.deep = shade(TILE_PAL.wallInt.base, 0.46);
+TILE_PAL.wallInt.quoin = tint(TILE_PAL.wallInt.base, 0.24);
+
 /** Flower / accent spot colours (small dabs, not 3-tone families). */
 const ACCENT = {
   flowerRed: '#d6485a',
@@ -74,6 +141,10 @@ const ACCENT = {
   signYellow: '#e8c44a',
   lamp: '#ffe9a8',
   food: '#caa24a',
+  // --- Shoreline / water detail ---
+  foam: '#eaf4f8',        // near-white surf foam at the grass↔water line
+  foamSoft: '#cfe6ef',    // a softer foam tint (the wet-sand fringe just inside the foam)
+  pathWorn: '#7a6446',    // a trodden dirt margin where grass meets a path
 };
 
 module.exports = { TILE_PAL, ACCENT, EDGE, shade, tint };

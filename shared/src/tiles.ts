@@ -222,6 +222,14 @@ export const TILES = {
   TRASH_BIN: t(142, 'deco', true),
   BUSH_TRIMMED: t(143, 'deco', true),
   BANNER: t(144, 'deco', false, 'behind'),
+
+  // --- Bridges (145..146) ----------------------------------------------------
+  // Wooden bridge decks: a ground tile that reads as planking over water so the
+  // river crossing looks like a bridge, not bare PAVED. Walkable (solid:false).
+  // BRIDGE_H spans an E-W path over N-S water (rails top+bottom, planks vertical);
+  // BRIDGE_V spans a N-S path over E-W water (rails left+right, planks horizontal).
+  BRIDGE_H: t(145, 'ground'),
+  BRIDGE_V: t(146, 'ground'),
 } as const satisfies Record<string, TileDef>;
 
 /** Every semantic tile name (a precise union, e.g. 'GRASS_A' | 'TREE_TRUNK' | …). */

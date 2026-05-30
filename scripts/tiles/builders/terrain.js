@@ -12,7 +12,7 @@
 const T = require('../template-tile');
 const { TILE_PAL, ACCENT } = require('../tilepalette');
 
-const { fillCell, topLight, bottomShade, plainRect, scatter, circle, ellipse } = T;
+const { fillCell, topLight, bottomShade, plainRect, scatter, circle, ellipse, path } = T;
 
 /**
  * Common ground base: full fill only, NO per-cell top/bottom banding.
@@ -123,26 +123,89 @@ function mud() {
 }
 
 function mudPuddle() {
+  const shal = TILE_PAL.waterShallow;
+  const wade = TILE_PAL.waterWade;
   return (
     ground(TILE_PAL.mud) +
-    ellipse(16, 17, 10, 7, TILE_PAL.waterShallow.base, { stroke: 'none' }) +
-    ellipse(16, 16, 9, 6, TILE_PAL.waterShallow.light, { stroke: 'none', opacity: 0.5 })
+    // A wet muddy rim ringing the pool so the water sits in a shallow basin.
+    ellipse(16, 17, 11, 8, TILE_PAL.mud.shade, { stroke: 'none' }) +
+    // The water body: a darker pool with a lighter, smaller surface (depth read).
+    ellipse(16, 17, 9.5, 6.5, shal.shade, { stroke: 'none' }) +
+    ellipse(16, 16.5, 8.5, 5.5, shal.base, { stroke: 'none' }) +
+    ellipse(16, 16, 6.5, 4, wade.base, { stroke: 'none', opacity: 0.65 }) +
+    // A single ripple line + a small surf-glint highlight on the near edge.
+    path('M9 16 Q16 13.5 23 16', 'none', { stroke: wade.light, width: 1, opacity: 0.55 }) +
+    ellipse(13, 14.5, 2.2, 0.9, wade.light, { stroke: 'none', opacity: 0.6 })
   );
 }
 
-// --- Water (full-bleed; deep is solid, shallow is wadeable) ---
+// --- Water (full-bleed; deep is solid, shallow is wadeable) -------------------
+//
+// Both water tiles are SEAMLESS: every deep cell is byte-identical and every
+// shallow cell is byte-identical, so the full-width horizontal wave bands below
+// line up edge-to-edge across abutting cells into continuous waves (water reads
+// as banded horizontally — that continuity is the desired look, not a seam). The
+// "depth gradient" is faked with stacked translucent bands (NO gradients — librsvg
+// rasterises those inconsistently). Each band is a full-width wave whose path
+// returns to its start y at x=0 and x=32, so it also wraps horizontally.
+
+/**
+ * One full-width seamless wave STROKE at vertical position `y`. The quadratic
+ * `M0 y Q(q) y-amp 2q y T S y` starts and ends at the same y (x=0 and x=32), so
+ * the line is continuous across the left/right cell seam. `amp` is the crest
+ * height, `q` the half-wavelength (S/q must be even for a clean T-chain to 32).
+ */
+function waveLine(y, amp, color, width, opacity) {
+  const q = 8; // half-wavelength → one full wave per 16px, two per 32 → wraps at x=32
+  const d = `M0 ${y} Q${q} ${y - amp} ${2 * q} ${y} T${4 * q} ${y}`;
+  return path(d, 'none', { stroke: color, width, opacity });
+}
+
+/**
+ * A full-width translucent wave BAND (a thick wave stroke) used to fake depth
+ * banding. Same seamless geometry as waveLine; the thick stroke reads as a soft
+ * trough/crest of darker or lighter water.
+ */
+function waveBand(y, amp, color, thickness, opacity) {
+  return waveLine(y, amp, color, thickness, opacity);
+}
+
 function waterDeep() {
-  return (
-    fillCell(TILE_PAL.waterDeep.base) +
-    scatter('WATER_DEEP', 4, (x, y) => ellipse(x, y, 4, 1.2, TILE_PAL.waterDeep.light, { stroke: 'none', opacity: 0.35 }), { margin: 5 })
-  );
+  const deep = TILE_PAL.waterDeep;
+  const abyss = TILE_PAL.waterAbyss;
+  let out = fillCell(deep.base);
+  // Depth banding: darker abyss troughs low/centre, a hint of lit crest up top.
+  // Full-width waves → seamless horizontally; identical neighbours → seamless
+  // vertically. Bands sit toward the vertical centre so the field reads "deeper".
+  out += waveBand(20, 3, abyss.base, 9, 0.30);  // broad dark trough through the centre
+  out += waveBand(27, 2.5, abyss.shade, 7, 0.28); // deeper, darker band lower down
+  out += waveBand(6, 2.5, deep.light, 5, 0.16);   // faint lit crest near the top
+  // Crisp ripple lines on top of the banding (the moving-surface read).
+  out += waveLine(11, 2.5, deep.light, 1, 0.40);
+  out += waveLine(24, 2.5, deep.light, 1, 0.30);
+  // A few deterministic sparkle dashes for surface glint (seeded by tile name).
+  out += scatter('WATER_DEEP', 4, (x, y) =>
+    ellipse(x, y, 3.5, 1, deep.light, { stroke: 'none', opacity: 0.35 }), { margin: 5 });
+  return out;
 }
 
 function waterShallow() {
-  return (
-    fillCell(TILE_PAL.waterShallow.base) +
-    scatter('WATER_SHALLOW', 5, (x, y) => ellipse(x, y, 4.5, 1.3, TILE_PAL.waterShallow.light, { stroke: 'none', opacity: 0.4 }), { margin: 5 })
-  );
+  const shal = TILE_PAL.waterShallow;
+  const wade = TILE_PAL.waterWade;
+  let out = fillCell(shal.base);
+  // Shallow lightens toward the pale green-blue wade tone (reads lighter/greener
+  // than deep), with gentler, more frequent ripples (the wadeable surface).
+  out += waveBand(9, 2.5, wade.light, 8, 0.32);   // broad lit shallow crest up top
+  out += waveBand(22, 2.5, wade.base, 7, 0.26);   // a second lit band lower down
+  out += waveBand(28, 2, shal.shade, 5, 0.18);    // a faint shade trough at the bottom
+  // Crisp closely-spaced ripples — shallow water chops finer than deep.
+  out += waveLine(5, 2, wade.light, 1, 0.45);
+  out += waveLine(15, 2, wade.light, 1, 0.40);
+  out += waveLine(25, 2, wade.light, 1, 0.35);
+  // Deterministic light sparkle.
+  out += scatter('WATER_SHALLOW', 5, (x, y) =>
+    ellipse(x, y, 3.5, 1, wade.light, { stroke: 'none', opacity: 0.40 }), { margin: 5 });
+  return out;
 }
 
 // --- Floors (interior) ---

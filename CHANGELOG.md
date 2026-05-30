@@ -4,6 +4,43 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.81: **Zoo tilemap overhaul (WORLD_GEN_VERSION 13).** A broad pass over the generator
+  and tile art so the map reads like a zoo. World-gen (`shared/src/world.ts`): paths no longer
+  carve over pen/building interiors (path routing skips claimed rects); pen fences use the right
+  orientation — `FENCE_V`/`CAGE_BARS_V` on vertical walls, `FENCE_H` on horizontal, corners join —
+  and the entrance now shows a real `FENCE_GATE`/`CAGE_GATE`/`KEEPER_GATE` (re-stamped after the
+  reachability carve so it isn't erased). The tortoise/animal pond is bigger and rounded with a
+  `WATER_SHALLOW` margin + edge tiles, and a new invariant guarantees `WATER_DEEP` only ever
+  touches shallow/deep (never grass/path) — applied to the river too. River crossings now lay
+  the new **`BRIDGE_H`/`BRIDGE_V`** wooden-deck tiles (indices 145–146) instead of plain `PAVED`.
+  Buildings use the full directional roof/wall sets (`ROOF_RED_EDGE/_CORNER/_RIDGE/_PEAK`,
+  `WALL_EXT_CORNER/_END`, `WINDOW`, `DOOR`) instead of a flat `ROOF_RED_MID` fill. ~40 previously
+  unused tiles are now placed for richness (pines, stumps, logs, mushrooms, tall grass, cattails,
+  lily flowers, benches, lamp posts, signs, troughs, hay bales, nests, burrow mounds, trimmed
+  bushes, flower beds). Tile art: roofs are overlapping terracotta shingle courses; walls are
+  coursed brick/stone with directional quoins; fences are connecting wooden posts+rails with a
+  distinct gate; nature/props gained facets, grain, layered petals, and material texture. New
+  `bridges.js` builder + palette sub-tones (append-only). `WORLD_GEN_VERSION` 12→13; both parity
+  hashes re-pinned. 70/70 shared tests; 147-tile drift gate green; client + shared build.
+  **Known follow-ups:** path layout still reads as diagonal striations (routing, not edges), and
+  river bridges span wider than ideal.
+
+- 0.2.80: **Water + shoreline glow-up.** `WATER_DEEP` / `WATER_SHALLOW` were flat blue with a
+  few faint ripples; they now read as real water. Both get a seamless depth gradient (faked with
+  stacked full-width wave bands — no SVG gradients, which librsvg rasterises inconsistently) plus
+  crisp ripple lines; every band is a quadratic wave that returns to its start-y at x=0 and x=32,
+  so it wraps horizontally, and identical neighbours keep the rows continuous vertically (verified
+  on a 3×3 tiling — no seams). Deep stays dark/abyssal (un-wadeable); shallow lightens toward a
+  pale green-blue so the two depths read distinct. `MUD_PUDDLE` became a small basined pool with a
+  muddy rim, depth shading, a ripple and a surf glint. The `WATER_*` shoreline edges/corners now
+  draw a **foam line** — a paler shallow band + a soft wet-sand fringe + a bright foam ridge + surf
+  specks biased to the water side — and the corner/inner-corner variants **round the shoreline**
+  (convex grass headlands, concave foam coves) instead of stepping. `PATH_*` edges gained a soft
+  trodden dirt margin straddling the grass↔path line (no hard gray rectangle / striation). New
+  append-only palette tones: `waterAbyss`, `waterWade`, and `ACCENT.foam` / `foamSoft` / `pathWorn`
+  (LOCKED `waterDeep`/`waterShallow` base hues unchanged). Deterministic + byte-stable; `npm run
+  tiles` verify-tileset green.
+
 - 0.2.79: **Regenerated SFX with the sound-describing prompts + new wired keys.** Re-ran
   Suno generation for several SFX now that the descriptors describe the *sound* rather than
   the game event (0.2.74): `robot_alert`, `panic_warning`, `lockdown_alarm`, `lockdown_clear`,

@@ -22,14 +22,13 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v12: re-pinned after trees became a 2×2 crown over a center-bottom trunk. The
-// WORLD_GEN_VERSION 12 changed the CANOPY ART (a single full crown per tile) but
-// reverted tree PLACEMENT to the original single-canopy-over-trunk, so the solid
-// trunk cells — and thus the collision grid — match the v11 layout. The version is
-// still bumped because the visible map (canopy tiles) changed. entitySpecs are not
-// affected by nature scattering. Recomputed from generateWorld(123).
-const PINNED_COLLISION_HASH = 915161051;
-const PINNED_ENTITYSPEC_HASH = 530761931;
+// v13: re-pinned for the zoo overhaul — BRIDGE tiles, enhanced tile art, and the
+// rewritten zoo placement (pens/paths/gates/pond/river/buildings, unused tiles wired
+// in). Both the collision grid (new pond/river/fence/bridge solids + relocated
+// buildings) and the entitySpecs (rewritten placement) drifted, so BOTH hashes are
+// re-pinned. Recomputed from generateWorld(123).
+const PINNED_COLLISION_HASH = 2794058600;
+const PINNED_ENTITYSPEC_HASH = 293418140;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -93,11 +92,11 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v10: auxiliary service buildings + relocated food sources + per-building guard
-  // robot & door-terminal. Both pinned hashes above are re-pinned (collision +
-  // entitySpecs both changed); the bump is the deliberate cache-bust so old clients
+  // v13: zoo overhaul (BRIDGE tiles + enhanced tile art + rewritten pen/path/gate/
+  // pond/river/building placement). Both pinned hashes above are re-pinned (collision
+  // + entitySpecs both changed); the bump is the deliberate cache-bust so old clients
   // (which assert msg.version === WORLD_GEN_VERSION) fail loud rather than desync.
-  assert.equal(WORLD_GEN_VERSION, 12, 'version pinned at 12');
+  assert.equal(WORLD_GEN_VERSION, 13, 'version pinned at 13');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 
