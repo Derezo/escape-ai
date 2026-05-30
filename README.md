@@ -95,10 +95,26 @@ cd client && npm install && npm run dev
 
 Open the printed Vite URL in **two or more browser tabs** — each joins the default
 room as an escaped animal. The manual opens on first load (toggle with **H**/**?**).
-**Walk** with WASD/arrows (stay still to look human and freeze the keeper-robots),
-**Shift** to sprint, **Q** to order a robot, **Space** for your species ability, and
-reach the **gate** on the right edge to escape. The HUD shows latency, the panic
-meter, your human-likeness, and the lockdown state.
+Reach the **gate** on the right edge to escape — but the gate is locked until you've
+finished your **side-quest** (shown in the HUD). The HUD also shows latency, the panic
+meter, your human-likeness, the lockdown state, and what you're carrying.
+
+**Controls:**
+
+| Key | Action |
+|-----|--------|
+| **WASD** / **arrows** | Walk — staying still reads as *human* and freezes the keeper-robots |
+| **Shift** | Sprint — fast, but reads as *prey* (robots may give chase) |
+| **E** | Interact — use a terminal, pick up a disguise prop, or collect food |
+| **F** | Feed the nearest animal its liked food → it joins your herd and follows you |
+| **Q** | Order a robot to stand down (Second Law) — but every order raises the panic meter |
+| **Space** | Your species ability (a big on-screen effect everyone sees) |
+| **I** | Inventory — collected food and which species each feeds |
+| **H** / **?** | Toggle the in-game manual |
+
+**Herd & escape.** Collecting food (**E**) and feeding animals (**F**) builds a herd
+that follows you to the gate — a bigger herd scores more, and you can *steal* followers
+fed by rivals. Finish your side-quest, gather your herd, and reach the gate together.
 
 You're assigned one of **14 playable species** (cycling by join order), each with a
 distinct, Three-Laws-tied **Space** ability — disguise (ape carry, chameleon cloak,
@@ -163,19 +179,33 @@ original geometric shapes (the kit still boots with zero art). Edit a species in
 node scripts/gen-placeholder-sfx.js       # → assets/sfx/*.wav (synthesized, zero-dep)
 ```
 
-For a real audio identity there's a **Suno generation pipeline** ([sunoapi.org](https://sunoapi.org/)).
+For a real audio identity there's a **Suno generation pipeline** ([sunoapi.org](https://sunoapi.org/)),
+themed eerie/creepy horror — *light and spooky* music, *punchy* SFX.
 `asset-pipeline/manifest.json` is the single source of truth for every music track and
-SFX; `asset-pipeline/theme.json` is the editable eerie/creepy aesthetic. Generation is
-user-run and spends credits — `--dry-run`/`--list` are free:
+SFX; `asset-pipeline/theme.json` is the editable global aesthetic. The Python scripts
+(stdlib-only) read **`SUNOAPI_KEY` from your system environment** — never a repo file:
 
 ```bash
-cd scripts && npm run audio                       # codegen client bindings + drift gate (free)
-python3 scripts/generate-sfx.py --list            # status of every sfx (free, no network)
-python3 scripts/generate-sfx.py --key=robot_alert # generate one (spends credits)
+export SUNOAPI_KEY=...                             # your sunoapi.org key (system env, not .env)
+
+cd scripts && npm run audio                        # codegen client bindings + drift gate (free)
+python3 scripts/generate-sfx.py --list             # status of every asset (free, no network)
+python3 scripts/generate-sfx.py --key=robot_alert --dry-run   # preview the request (free)
+
+python3 scripts/generate-sfx.py --key=robot_alert  # generate one (spends credits)
+python3 scripts/generate-music.py --generate-all --only must  # the must-have batch
+python3 scripts/change-sfx-track.py --key=robot_alert --sample=2   # prefer the 2nd sample
 ```
 
-SFX fall back to a synth WAV until their `.mp3` is generated, so the game always has
-sound. Full guide: [`docs/AUDIO_PIPELINE.md`](docs/AUDIO_PIPELINE.md).
+Generation is **user-run and spends credits**; `--dry-run`/`--list`/`--credits` are free.
+Each run downloads both samples to the gitignored `asset-pipeline/output/<key>/`, auto-places
+sample #1 at the manifest target, and writes a provenance JSON. SFX fall back to a synth WAV
+until their `.mp3` exists, so the game always has sound. Full guide (cost notes, prompt
+best-practices, how to add an asset): [`docs/AUDIO_PIPELINE.md`](docs/AUDIO_PIPELINE.md).
+
+> The API sits behind Cloudflare bot protection, so the client sends browser-like headers; a
+> `403 error code: 1010` means a header/IP block, **not** a bad key.
+
 `scripts/gen-placeholder-sprites.js` still emits simple static SVGs as a fallback reference.
 
 ## Development workflow

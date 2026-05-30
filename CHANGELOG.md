@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.72: **Docs — README + in-game controls accuracy.** The README's controls list was
+  missing **E** (interact/collect food), **F** (feed → herd), and **I** (inventory), and didn't
+  mention the food-collection/herding loop or the quest-gated gate — now a full controls table +
+  a "Herd & escape" note. The Audio section now documents `SUNOAPI_KEY` setup (system env), the
+  free `--dry-run`/`--list`/`--credits` path, the sample-swap command, provenance output, and the
+  Cloudflare-`1010`-is-not-a-bad-key caveat. The in-game help (`client/src/help.ts`) Controls tab
+  was likewise out of sync — it now lists **F** and **I** (and a richer **E** description) to match
+  the authoritative `ACTION_KEYS` map in `main.ts`. Client still typechecks/builds.
+
 - 0.2.71: **Audio pipeline — fix Cloudflare 403 (error 1010) on every Suno request.**
   `api.sunoapi.org` sits behind Cloudflare bot protection, which bans the default
   `Python-urllib` User-Agent before the request reaches Suno's auth layer (the symptom is a

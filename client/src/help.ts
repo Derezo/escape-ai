@@ -53,9 +53,11 @@ const CONTROLS_HTML = `
   <ul class="cols">
     <li><b>WASD / arrows</b> — walk (stays human)</li>
     <li><b>Shift</b> — sprint (fast, but reads as prey)</li>
-    <li><b>E</b> — interact (terminal)</li>
+    <li><b>E</b> — interact: terminal / prop / collect food</li>
+    <li><b>F</b> — feed the nearest animal (it joins your herd)</li>
     <li><b>Q</b> — order a robot (Second Law)</li>
     <li><b>Space</b> — your species ability</li>
+    <li><b>I</b> — inventory (food + who it feeds)</li>
     <li><b>H</b> or <b>?</b> — toggle this help</li>
   </ul>
   <h2>Goal</h2>
