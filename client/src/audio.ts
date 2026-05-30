@@ -216,11 +216,6 @@ export function stopLoop(name: SfxName): void {
   ensureLoop(name);
 }
 
-/** Whether a loop is currently desired (started and not yet stopped). */
-export function isLooping(name: SfxName): boolean {
-  return loops.get(name)?.want === true;
-}
-
 /**
  * Re-drive every desired loop. Called after unlockAudio() resumes the context so
  * loops requested while audio was still locked (e.g. ambient_bed at join) begin

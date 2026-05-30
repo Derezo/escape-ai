@@ -17,8 +17,8 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 - 0.2.76: **Looping SFX subsystem — ambient room-tone + robot pursuit motif.**
   `playSfx()` is one-shot; two manifest SFX are marked `soundLoop` and need to run
-  continuously. Added a small loop API to `client/src/audio.ts` (`startLoop`/`stopLoop`/
-  `isLooping`) that models a loop as desired-state: at most one `BufferSource` per key,
+  continuously. Added a small loop API to `client/src/audio.ts` (`startLoop`/`stopLoop`)
+  that models a loop as desired-state: at most one `BufferSource` per key,
   idempotent start (re-calling just syncs gain), and deferred start — if the buffer is
   still decoding or the context still suspended pre-gesture, the loop begins itself the
   moment it can (the `load()` tail and `unlockAudio()`'s resume both re-drive pending
