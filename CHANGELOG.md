@@ -4,6 +4,18 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.76: **Looping SFX subsystem — ambient room-tone + robot pursuit motif.**
+  `playSfx()` is one-shot; two manifest SFX are marked `soundLoop` and need to run
+  continuously. Added a small loop API to `client/src/audio.ts` (`startLoop`/`stopLoop`/
+  `isLooping`) that models a loop as desired-state: at most one `BufferSource` per key,
+  idempotent start (re-calling just syncs gain), and deferred start — if the buffer is
+  still decoding or the context still suspended pre-gesture, the loop begins itself the
+  moment it can (the `load()` tail and `unlockAudio()`'s resume both re-drive pending
+  loops). Wired in `main.ts`: `ambient_bed` starts at join as a near-subliminal constant
+  steel hum (0.3, layered under the music), and `robot_pursuit` loops for as long as at
+  least one robot is in `pursue` mode (stops when the last pursuer breaks off). Both use
+  their placeholder-WAV fallback until the `.mp3`s are generated. Client typechecks + builds.
+
 - 0.2.75: **Wire 5 themed SFX that were authored but never played.** The manifest
   defined `food_pickup`, `feed_follow`, `follower_lost`, `quest_progress`, and
   `quest_blocked`, but the game still played generic placeholder synth WAVs (or nothing)

@@ -29,7 +29,7 @@ import { PhaserRenderer } from './render/phaser';
 
 import { NetClient } from './net/client';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
-import { preloadSfx, playSfx, type SfxName } from './audio';
+import { preloadSfx, playSfx, startLoop, stopLoop, type SfxName } from './audio';
 import { initMusic, playMusicState } from './music';
 import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
@@ -147,6 +147,13 @@ async function main(): Promise<void> {
   // entity id; we match "our" entity by this name (roster match below).
   const myName = username;
   net.join(DEFAULT_ROOM, myName, species);
+
+  // --- Ambient facility room-tone: a constant low steel hum under everything for
+  // as long as we're in the world. It's a looping SFX (not music), so it layers
+  // beneath whatever track the music state machine is playing. If audio is still
+  // locked, startLoop defers and begins on the first user gesture. Volume tracks
+  // the manifest default (0.3) — deliberately near-subliminal. ---
+  startLoop('ambient_bed', 0.3);
 
   // --- Authoritative-ish world state, keyed by entity id ---
   // Snapshots are DELTAS (only changed entities) but lobby:state is the full
@@ -574,7 +581,10 @@ async function main(): Promise<void> {
     if (panicHigh && !prevPanicHigh) playSfx('panic_warning');
     prevPanicHigh = panicHigh;
 
-    // --- Robot-alert edge: fire once when any robot enters 'pursue' mode. ---
+    // --- Robot-alert edge + pursuit loop: fire robot_alert once when any robot
+    // enters 'pursue', and run the looping robot_pursuit motif for as long as at
+    // least one robot is chasing (it stops when the last pursuer breaks off). ---
+    let anyPursuing = false;
     for (const e of list) {
       if (e.kind !== 'robot') continue;
       const modeNow = typeof e.mode === 'string' ? e.mode : '';
@@ -582,8 +592,13 @@ async function main(): Promise<void> {
       if (modePrev !== 'pursue' && modeNow === 'pursue') {
         playSfx('robot_alert');
       }
+      if (modeNow === 'pursue') anyPursuing = true;
       robotModeSeen.set(e.id, modeNow);
     }
+    // Idempotent start/stop (self-dedupes), so driving it from the per-frame
+    // aggregate is safe and needs no separate edge state.
+    if (anyPursuing) startLoop('robot_pursuit', 0.6);
+    else stopLoop('robot_pursuit');
 
     // --- Music state machine: select and crossfade the appropriate track. ---
     playMusicState(selectMusic());
