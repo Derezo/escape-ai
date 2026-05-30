@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.103: **Validation follow-up for the multi-step quests.** `/plan-validation-and-review`
+  surfaced a wire-contract honesty gap: `server/game/quests.js` `makeQuest` serializes a
+  per-step `done` on every `steps[]` entry, but `QuestStepProgress` (shared/src/types.ts)
+  didn't declare it — so clients reading per-step progress would be reading an
+  undeclared field. Added `done: number` to `QuestStepProgress` (forward-compatible: a
+  future HUD can show a full step-by-step checklist). Recorded a deferred balance note
+  (cheetah's tight `recruit ×2 → escort ×2` has no re-feed buffer step — playable, not a
+  hard lock) in `FINDINGS_OUTSIDE_SCOPE.md`. Builds + 89/89 tests green.
+
 - 0.2.102: **Multi-step side-quests (the 10 "reach home" quests become 2–3 step objectives).**
   The trivially-simple "walk back to your cage / reptile house" quests are now ordered multi-step
   objectives that draw on the full gameplay loop — food gathering, recruiting fellow animals to

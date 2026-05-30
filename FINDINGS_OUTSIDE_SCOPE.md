@@ -49,6 +49,30 @@ the audit trail).
   `server/socket/connection.js`; `server/game/stealth.js` `bumpStat`.
 - **Effort:** S.
 
+### Cheetah escort quest has no re-feed buffer step (balance, not a hard lock)
+- **Status:** open — a balance/playtesting judgment for the game owner, not a correctness bug.
+- **Surfaced:** `/plan-validation-and-review` of the multi-step quest feature, 2026-05-30
+  (code-comprehension satisfiability check).
+- **Detail:** cheetah's quest is a tight 2-step `recruit ×2 → escort ×2`
+  (`shared/src/quests.ts` `cheetah`). recruit-need == escort-need (2), so the HAPPY path
+  works, and it is NOT a hard soft-lock: feeding re-leashes a lapsed follower, there are
+  2–3 feedable decoys in every one of the 14 pens, and a catch runs `resetSteps` (restart
+  at step 0). But unlike kangaroo's `recruit ×2 → reach → escort ×2` (the middle `reach`
+  gives breathing room to re-feed if a follower lapses on the way home), cheetah has no
+  buffer between assembling the herd and needing it intact at the gate. If a follower
+  lapses mid-sprint the escort step just won't complete until the player re-feeds — mildly
+  punishing, and the cheetah's dash ability keeps the lapse window small.
+- **Why deferred:** changing the step list is a deliberate game-design decision (difficulty
+  tuning), not a defect fix. The feature ships correct and playable as-is.
+- **Suggested approach if picked up:** mirror kangaroo — insert a `reach` (home) step
+  between cheetah's recruit and escort, OR drop both needs to 1. Re-pin nothing (quest
+  defs are not in the world hash); update `shared/test/quests.test.mjs` if it asserts
+  cheetah's step count.
+- **Refs:** `shared/src/quests.ts` `cheetah` (and `kangaroo` as the buffered pattern);
+  `server/game/follow.js` `feedNearbyAnimal` (re-leash on re-feed); `server/game/quests.js`
+  `stepEscort`.
+- **Effort:** S.
+
 ### Client dev-dependency advisory: esbuild ≤0.24.2 via Vite (2 moderate)
 - **Status:** open — pre-existing, out of scope, needs a human decision.
 - **Surfaced:** `/plan-validation-and-review` of the 0.2.9 gameplay-depth plan, 2026-05-29

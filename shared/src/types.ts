@@ -119,6 +119,13 @@ export interface QuestStepProgress {
   blurb: string;
   /** Target count for this step. */
   need: number;
+  /**
+   * Per-step progress (0..need). The server carries it on every step (re-zeroed
+   * until that step becomes active), so a future HUD can show a full step-by-step
+   * checklist; today only the ACTIVE step's `done` is surfaced via the top-level
+   * QuestProgress.done. Declared here so the wire shape the server sends is honest.
+   */
+  done: number;
 }
 
 /**
