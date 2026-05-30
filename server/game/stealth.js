@@ -26,16 +26,25 @@ const { secsToTicks, findPlayerById } = require('./room-utils');
 // The cached shared modules (resolved by loadShared() before the loop starts).
 // `shared` is shared/dist/step.js (the Three-Laws math + collision integrator);
 // `movement` is shared/dist/movement.js (steering/patrol/wander-avoid primitives);
-// `locomotion` is shared/dist/locomotion.js (per-species gait registry + applicator).
+// `locomotion` is shared/dist/locomotion.js (per-species gait registry + applicator);
+// `pathfind` is shared/dist/pathfind.js (deterministic A* + inBounds containment).
 let shared = null;
 let movement = null;
 let locomotion = null;
+let pathfind = null;
 
 // Collision half-extent for moving entities. Players, robots and idle decoys all
 // share roughly one entity rect; 0.4×RECT_SIZE keeps them clear of walls without
 // snagging on tile corners. Mirrors the radius engine.integratePlayers passes via
 // movePlayerWithCollision (config.RECT_SIZE * 0.4).
 const ROBOT_RADIUS = config.RECT_SIZE * 0.4;
+
+// Fraction of a returning animal's OPEN-FIELD heading taken from the ambient wander
+// (vs. the A* path waypoint), so the long walk home still reads as a leisurely
+// saunter rather than a beeline. Low enough that the path still dominates and the
+// animal makes steady progress; the blend is dropped entirely inside the gate band
+// (PATHFIND.GATE_BAND_TILES) so the chokepoint threads at full fidelity.
+const RETURN_WANDER_BLEND = 0.3;
 
 // Cached references to the engine's live player + room maps. Most per-tick
 // functions receive these as args, but the ape "carry" hand-off needs to scan a
@@ -72,7 +81,12 @@ async function loadShared() {
     // Phase 4: collision-aware movement for players AND robots/idle animals.
     'moveWithCollision',
     // NPC movement refactor: home-return drift for released followers.
-    'homeBiasedWanderStep'
+    'homeBiasedWanderStep',
+    // Pathfinding plan: the return-home / robot path-follow uses these step.js
+    // primitives directly in the hot loop — validate them at boot so a stale
+    // shared/dist fails LOUD here, not mid-tick. (boxHitsSolid: near-wall test;
+    // wanderVec: open-field saunter blend; hash32: per-entity repath phasing.)
+    'boxHitsSolid', 'wanderVec', 'hash32'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -108,10 +122,27 @@ async function loadShared() {
   }
   locomotion = locoMod;
 
+  // The deterministic A* pathfinder (shared/dist/pathfind.js): the GLOBAL route
+  // layer for return-home-through-the-gate and robot routing around walls, plus the
+  // O(1) inBounds containment test the awareness filter uses. Loaded + validated the
+  // same fail-loud way so a stale shared/dist trips at boot, not mid-tick.
+  const pathMod = await import('../../shared/dist/pathfind.js');
+  // The exports the server actually calls. (gateInsideTile is a shared/test helper —
+  // world.js computes the gate-inside goal tile inline — so it's not validated here.)
+  const pathRequired = ['findPath', 'makeScratch', 'toWorldWaypoints', 'nextWaypoint', 'inBounds'];
+  const pathMissing = pathRequired.filter((name) => pathMod[name] === undefined);
+  if (pathMissing.length) {
+    throw new Error(
+      `shared/dist/pathfind.js is missing expected exports: ${pathMissing.join(', ')}. ` +
+      'Did you run `npm run build` in shared/?'
+    );
+  }
+  pathfind = pathMod;
+
   // Hand the cached shared modules to the other orchestrators so there is exactly
   // ONE cached copy of each ESM module (they don't import() it themselves).
-  follow.setShared(shared, movement, locomotion);
-  behaviors.setShared(shared, movement);
+  follow.setShared(shared, movement, locomotion, pathfind);
+  behaviors.setShared(shared, movement, pathfind);
   return shared;
 }
 
@@ -252,6 +283,16 @@ function entersHazard(nx, ny, worldEntities) {
  * it's invisible to robot perception this tick, so robotDecision can neither
  * freeze on it nor pursue it — the squeeze-through-a-gap escape.
  *
+ * SITUATIONAL AWARENESS: an idle world-animal sitting "where it belongs" — inside
+ * its own enclosure, or inside an aux building — is INVISIBLE to robots (it is not
+ * a stealth target, so a robot must not freeze/investigate/pursue it and pointlessly
+ * peel into a pen). Only animals OUTSIDE their home register: a follower being led
+ * (leashed), an escaped/wandering animal, an animal still mid-return that hasn't
+ * re-entered its pen yet (returningHome), and a fox decoy (no home rect). Players are
+ * NEVER filtered (their branch has no pen rect). The filter is one point-in-rect per
+ * idle animal — see isAtHomeAnimal. This is the single chokepoint feeding BOTH
+ * robotDecision (perception/freeze/pursue) AND behaviors.pickInvestigateTarget.
+ *
  * @param {string} roomName
  * @param {Map<string, object>} connectedPlayers
  * @param {Map<string, Set<string>>} rooms
@@ -261,6 +302,9 @@ function entersHazard(nx, ny, worldEntities) {
  */
 function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, currentTick) {
   const animals = [];
+  // Containment bounds for the awareness filter (cached once per room).
+  const homeBounds = homeBoundsForRoom(roomName);
+  const auxRects = auxInteriorRectsForRoom(roomName);
 
   // Player-animals: the real quarry. Reference the live player so the catch
   // hook can mutate it (respawn / reset likeness) when touched.
@@ -287,6 +331,12 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, current
   // Idle world animals: decoys the robot may chase instead of a player.
   for (const e of worldEntities) {
     if (e.kind === 'animal') {
+      // AWARENESS: an animal that is "where it belongs" is invisible to robots. A
+      // LEASHED follower (being led around) or one mid-RETURN (returningHome, still
+      // outside its pen) stays visible — only a genuinely at-home idler is hidden.
+      if (!follow.isLeashed(e, currentTick) && !e.returningHome && isAtHomeAnimal(e, homeBounds, auxRects)) {
+        continue;
+      }
       animals.push({
         id: e.id,
         x: e.x,
@@ -332,6 +382,10 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
   // cached per room. A guard robot wanders ONLY inside its building (behaviors.js
   // reads idleCtx.guardBounds); a plain patrol robot has no entry → undefined.
   const guardBoundsById = guardBoundsForRoom(roomName);
+  // The room's reusable A* scratch + the path-follow helpers, handed to behaviors so
+  // a robot routes AROUND walls / through a gate to an off-route goal (investigate a
+  // noise behind a fence) instead of pressing into it with one-tile-ahead steering.
+  const scratch = pathScratchForRoom(roomName, rm);
   const idleCtx = {
     rm,
     route,
@@ -341,6 +395,9 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     dt,
     entersHazard,
     guardBounds: undefined, // set per-robot below before stepRobotIdle
+    scratch,
+    followPathToGoal,
+    clearPath,
   };
 
   // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
@@ -501,10 +558,12 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
  * @param {number} currentTick
  */
 function stepIdleAnimals(dt, roomName, currentTick) {
-  if (!shared || !movement || !locomotion) return;
+  if (!shared || !movement || !locomotion || !pathfind) return;
   const rm = world.getRoomMap(roomName);
   const mapB = mapBounds(rm);
   const homeBySpecies = homeBoundsForRoom(roomName);
+  const gateBySpecies = homeGateForRoom(roomName);
+  const scratch = pathScratchForRoom(roomName, rm);
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
     // An animal still LEASHED to a player (active follower OR in its grace window)
@@ -514,41 +573,86 @@ function stepIdleAnimals(dt, roomName, currentTick) {
 
     const species = penSpeciesOf(e.id);
 
-    // RETURN HOME: a follower whose leash lapsed drifts back to its enclosure
-    // (home-biased wander) rather than snapping to a generic wander. The enclosure
-    // GATE is a needle to thread with local steering, so "home" is a PROXIMITY check:
-    // once the animal is within homeArrivalRadius of its home center we clear the flag
-    // and hand it back to the normal contained wander (whose soft inward bias then
-    // settles it into the pen). Keyed by e.species (how releaseToHome set homeX/Y),
-    // with the id-parsed species as a fallback so a pen animal still matches.
+    // RETURN HOME: a follower whose leash lapsed PATHS back into its enclosure,
+    // routing around walls and THROUGH the gate (A*), rather than drifting toward the
+    // center and jamming on the outside of the fence (the old proximity-hack bug).
+    // The slow, ambient cadence is preserved: same WANDER_ANIMAL_SPEED + species
+    // gait, and an open-field wander blend so it still reads as a saunter home — only
+    // the chokepoint near the gate is followed at high fidelity so the gap threads.
+    // "Home" is now a TRUE re-entry test (inside the inset interior bounds), not a
+    // proximity guess. Keyed by e.species (how releaseToHome stamped it) with the
+    // id-parsed species as a fallback so a pen animal still matches.
     if (e.returningHome) {
+      const homeSpecies = (gateBySpecies.has(e.species) && e.species) || species;
       const homeBounds = homeBySpecies.get(e.species) || (species && homeBySpecies.get(species));
-      const home = { x: e.homeX || 0, y: e.homeY || 0 };
-      // Arrival radius: the distance from the home CENTER to the farthest pen
-      // corner, plus a couple of tiles of slack — so the animal counts as home once
-      // it reaches the pen's vicinity (even pressed against the outside of the far
-      // fence), since the gate is too small to thread reliably with local steering.
-      // (The home center can sit in a corner of the bounds, not the middle, so we
-      // measure to the farthest corner rather than assume half-diagonal.)
-      const arrive = homeArrivalRadius(home, homeBounds, rm.tile);
-      if (!homeBounds || shared.dist2(e, home) <= arrive * arrive) {
+      const goalTile = homeSpecies && gateBySpecies.get(homeSpecies);
+
+      // ARRIVED: genuinely inside the enclosure interior → done returning.
+      if (homeBounds && pathfind.inBounds(e.x, e.y, homeBounds)) {
         e.returningHome = false;
         e.homeX = undefined;
         e.homeY = undefined;
+        clearPath(e);
         // fall through to the normal contained wander below this tick.
       } else {
-        // Drift home across the WHOLE map (it starts outside its pen), gait-applied,
-        // collision-aware. homeBiasedWanderStep gives the biased heading; locomotionStep
-        // commits it (sliding along any fence in the way) with the species gait — a
-        // returning tortoise still crawls home at ½ speed.
+        const bx = e.x;
+        const by = e.y;
+        const waypoint = goalTile
+          ? followPathToGoal(e, rm, scratch, goalTile.tx, goalTile.ty, currentTick)
+          : null;
+
+        if (waypoint) {
+          // Head toward the next (dense, 1-tile) path waypoint. In genuinely OPEN
+          // terrain blend a light ambient wander so the long walk still reads as a
+          // leisurely saunter; whenever a WALL is near (within the gate band) follow
+          // the path PURELY so the body never gets perturbed into a fence corner and
+          // oscillates — this is the fix for the "stuck against the wall by the gate"
+          // case. The wander is cosmetic; the slow cadence (speed + gait) is what
+          // "looks good", and that is preserved either way.
+          let dx = waypoint.x - e.x;
+          let dy = waypoint.y - e.y;
+          let len = Math.hypot(dx, dy) || 1;
+          dx /= len; dy /= len;
+          const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
+          const nearWall = shared.boxHitsSolid(e.x, e.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile);
+          if (nearWall) {
+            // NEAR A WALL (the gate chokepoint): the dense path already routes around
+            // the wall — the next waypoint is one tile away and reachable — so feed the
+            // heading STRAIGHT to the axis-separated integrator. We deliberately do NOT
+            // run steerAround here: its probe fan would re-aim the clean path heading
+            // and, combined with a diagonal toward a waypoint past a corner, oscillate
+            // the body against the fence (the "stuck by the gate" bug). The slide in
+            // moveWithCollision threads the gap one axis at a time.
+            locomotion.locomotionStep(e, dx, dy, currentTick, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+          } else {
+            // OPEN terrain: blend a light ambient wander (the "looks good" saunter) and
+            // route through steerAround for reactive avoidance of any stray obstacle.
+            const wv = shared.wanderVec(e.id, currentTick);
+            const w = RETURN_WANDER_BLEND;
+            dx = (1 - w) * dx + w * wv.dirX;
+            dy = (1 - w) * dy + w * wv.dirY;
+            len = Math.hypot(dx, dy) || 1;
+            dx /= len; dy /= len;
+            const heading = movement.steerAround(e, dx, dy, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+            const hx = (heading.dirX === 0 && heading.dirY === 0) ? dx : heading.dirX;
+            const hy = (heading.dirX === 0 && heading.dirY === 0) ? dy : heading.dirY;
+            locomotion.locomotionStep(e, hx, hy, currentTick, dt, config.WANDER_ANIMAL_SPEED, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+          }
+          // Commit faces the actual drift; UNCHANGED ambient speed + gait (cadence
+          // preserved — a returning tortoise still crawls home at ½ speed).
+          e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
+          continue;
+        }
+
+        // FALLBACK (no route — degenerate seed / unreachable goal / no home tile):
+        // the original home-biased wander drift, so an animal never strands forever.
+        const home = { x: e.homeX || 0, y: e.homeY || 0 };
         const next = shared.homeBiasedWanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED, mapB, home);
         const ddx = next.x - e.x;
         const ddy = next.y - e.y;
-        const len = Math.hypot(ddx, ddy) || 1;
-        const bx = e.x;
-        const by = e.y;
+        const dlen = Math.hypot(ddx, ddy) || 1;
         locomotion.locomotionStep(
-          e, ddx / len, ddy / len, currentTick, dt, config.WANDER_ANIMAL_SPEED,
+          e, ddx / dlen, ddy / dlen, currentTick, dt, config.WANDER_ANIMAL_SPEED,
           rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS,
         );
         e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
@@ -585,23 +689,6 @@ function gaitWanderSpeed(entity, currentTick) {
   return locomotion.gaitSpeed(entity.species, entity.id, currentTick, config.WANDER_ANIMAL_SPEED);
 }
 
-/** The "you're home" proximity radius for a returning animal: the distance from
- *  the home CENTER to the farthest pen corner (the center can sit in a corner of
- *  the bounds, not the middle), plus two tiles of slack so being pressed against
- *  the outside of the far fence still counts as home — the gate is too small to
- *  thread reliably with local steering. Falls back to two tiles if no bounds. */
-function homeArrivalRadius(home, bounds, tile) {
-  const slack = 2 * (tile || 32);
-  if (!bounds) return slack;
-  const corners = [
-    Math.hypot(bounds.minX - home.x, bounds.minY - home.y),
-    Math.hypot(bounds.maxX - home.x, bounds.minY - home.y),
-    Math.hypot(bounds.minX - home.x, bounds.maxY - home.y),
-    Math.hypot(bounds.maxX - home.x, bounds.maxY - home.y),
-  ];
-  return Math.max(...corners) + slack;
-}
-
 /** The species owning a pen-anchor id (`pen-fox` / `pen-fox-2` → 'fox'), else null. */
 function penSpeciesOf(id) {
   if (typeof id !== 'string' || !id.startsWith('pen-')) return null;
@@ -630,6 +717,144 @@ function guardBoundsForRoom(roomName) {
     guardBoundsByRoom.set(roomName, b);
   }
   return b;
+}
+
+/** Per-room cache of the aux-building INTERIOR rects (built once per room). Used by
+ *  the awareness filter to treat any animal inside an aux interior as contained
+ *  (invisible to robots), the same rule as a pen animal inside its enclosure. */
+const auxInteriorRectsByRoom = new Map();
+function auxInteriorRectsForRoom(roomName) {
+  let r = auxInteriorRectsByRoom.get(roomName);
+  if (!r) {
+    r = world.getAuxInteriorRects(roomName);
+    auxInteriorRectsByRoom.set(roomName, r);
+  }
+  return r;
+}
+
+/** Per-room cache of species → home gate-INSIDE goal tile (the return-home A*
+ *  target — one tile inside the enclosure gate / building door). Built once per room. */
+const homeGateByRoom = new Map();
+function homeGateForRoom(roomName) {
+  let g = homeGateByRoom.get(roomName);
+  if (!g) {
+    g = world.getHomeGateInsideBySpecies(roomName);
+    homeGateByRoom.set(roomName, g);
+  }
+  return g;
+}
+
+/** Per-room reusable A* scratch buffer (sized to the room's grid). One per room,
+ *  reused across every findPath call there so a search allocates nothing per call.
+ *  Lazily built once the pathfinder + room map are available. */
+const pathScratchByRoom = new Map();
+function pathScratchForRoom(roomName, rm) {
+  let s = pathScratchByRoom.get(roomName);
+  if (!s) {
+    s = pathfind.makeScratch(rm.w, rm.h);
+    pathScratchByRoom.set(roomName, s);
+  }
+  return s;
+}
+
+/**
+ * Ensure `entity` has a cached A* path toward goal TILE (goalTx,goalTy) and return
+ * the current world-unit waypoint to head for — or null when no route exists (the
+ * caller falls back to its reactive drift). The path is cached on the entity
+ * (pathGoalTx/Ty + path + pathIndex + pathRepathTick) and recomputed only when the
+ * goal tile changed, the path was exhausted/empty, or the slow repath cadence
+ * elapsed (REPATH_TICKS, phased per-entity by hash32 so recomputes spread across
+ * ticks and the look stays ambient). The waypoint list is simplified to turning
+ * points with the gate-inside goal kept mandatory so the AABB threads the gap.
+ *
+ * Pure-ish: mutates only the entity's path-cache scratch (server-only, never
+ * serialized) and reads the room collision grid; deterministic given (entity-state,
+ * grid, goal, tick).
+ *
+ * @returns {{x:number,y:number}|null} the world-unit waypoint, or null if unreachable
+ */
+function followPathToGoal(entity, rm, scratch, goalTx, goalTy, currentTick, clearance) {
+  const stale =
+    !Array.isArray(entity.path) ||
+    entity.path.length === 0 ||
+    entity.pathGoalTx !== goalTx ||
+    entity.pathGoalTy !== goalTy ||
+    currentTick >= (entity.pathRepathTick || 0);
+
+  if (stale) {
+    const startTx = Math.floor(entity.x / rm.tile);
+    const startTy = Math.floor(entity.y / rm.tile);
+    // `clearance` (optional, {tile,radius}) is radius-aware routing that keeps a
+    // body off wall corners — useful for a robot rounding an OPEN-ended barrier. But
+    // a body that slid into a sub-radius nook mid-journey can have NO clearance-legal
+    // neighbour and would repath to [] and jam, so when a clearance search comes up
+    // empty we RETRY point-based (which the local steering can still follow out). The
+    // gate-return path (animals) omits clearance entirely — the 2-tile gates thread
+    // fine point-based, and point-based never has the nook problem. See callers.
+    let tilePath = pathfind.findPath(rm.collision, rm.w, rm.h, startTx, startTy, goalTx, goalTy, scratch, undefined, clearance);
+    if (tilePath.length === 0 && clearance) {
+      tilePath = pathfind.findPath(rm.collision, rm.w, rm.h, startTx, startTy, goalTx, goalTy, scratch);
+    }
+    if (tilePath.length === 0) {
+      entity.path = null; // unreachable / over-budget → caller falls back
+      entity.pathGoalTx = goalTx;
+      entity.pathGoalTy = goalTy;
+      // Re-attempt after the cadence (a transient block may clear); phased by id.
+      entity.pathRepathTick = currentTick + config.PATHFIND.REPATH_TICKS + (shared.hash32(entity.id) % config.PATHFIND.REPATH_TICKS);
+      return null;
+    }
+    // Follow the DENSE tile path (no simplify): consecutive waypoints are one tile
+    // apart and 4-neighbour-adjacent, so a straight step toward the next one is always
+    // wall-clear. Simplifying to turning points let the body steer straight at a
+    // distant waypoint THROUGH a wall corner and oscillate against it (the gate is on
+    // the far face), which stranded animals approaching a pen from the wrong side.
+    entity.path = pathfind.toWorldWaypoints(tilePath, rm.tile);
+    entity.pathIndex = 0;
+    entity.pathGoalTx = goalTx;
+    entity.pathGoalTy = goalTy;
+    entity.pathRepathTick = currentTick + config.PATHFIND.REPATH_TICKS + (shared.hash32(entity.id) % config.PATHFIND.REPATH_TICKS);
+  }
+
+  if (!entity.path || entity.path.length === 0) return null;
+  const arriveR = rm.tile * config.PATHFIND.ARRIVE_TILES;
+  const step = pathfind.nextWaypoint(entity.path, entity.pathIndex || 0, entity, arriveR);
+  entity.pathIndex = step.index;
+  return step.target;
+}
+
+/** Clear an entity's cached A* path scratch (on a goal/behavior change so a stale
+ *  route can't bleed into the next one). Server-only fields, never serialized. */
+function clearPath(entity) {
+  entity.path = null;
+  entity.pathIndex = 0;
+  entity.pathGoalTx = undefined;
+  entity.pathGoalTy = undefined;
+  entity.pathRepathTick = 0;
+}
+
+/**
+ * Whether an idle world-animal is "where it belongs" and so INVISIBLE to robots:
+ * sitting inside its own species' enclosure, OR inside any aux-building interior.
+ * A point-in-rect test (pathfind.inBounds) against the already-cached containment
+ * bounds — O(1), deterministic, zero new wire state. Keyed by the id-parsed pen
+ * species (penSpeciesOf) with e.species as a fallback. An animal with no home rect
+ * (a transient fox decoy `decoy-N`, an unlisted species) is never contained → stays
+ * visible (a decoy MUST draw pursuit). The caller has already excluded leashed +
+ * returning-home animals, so this only fires for genuinely at-home idlers.
+ * @param {object} e            the animal entity
+ * @param {Map} homeBounds      species → enclosure bounds (homeBoundsForRoom)
+ * @param {object[]} auxRects   aux interior rects (auxInteriorRectsForRoom)
+ * @returns {boolean}
+ */
+function isAtHomeAnimal(e, homeBounds, auxRects) {
+  if (!pathfind) return false; // not loaded yet (boot) → don't hide anything
+  const species = penSpeciesOf(e.id) || e.species;
+  const home = species && homeBounds.get(species);
+  if (home && pathfind.inBounds(e.x, e.y, home)) return true;
+  for (const rect of auxRects) {
+    if (pathfind.inBounds(e.x, e.y, rect)) return true;
+  }
+  return false;
 }
 
 /**

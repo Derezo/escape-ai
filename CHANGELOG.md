@@ -4,6 +4,130 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.60: **NPC pathfinding — Phase 5 (`/plan-validation-and-review`).**
+  Validation pass: requirements trace (6/6 implemented + connected), connectivity audit (zero dead code),
+  dedup scan, code-comprehension review of the determinism-critical pathfinder + the server integration,
+  full build/test. The pathfinder core was reviewed as ship-ready (total-order open set, correct heap +
+  generation-stamp scratch, deterministic clearance, guaranteed termination). Three items fixed:
+  - **Server (`server/game/stealth.js`):** `loadShared` now also fail-loud-validates the step.js
+    primitives the new hot-loop code calls directly — `boxHitsSolid` (near-wall test), `wanderVec`
+    (open-field saunter blend), `hash32` (per-entity repath phasing) — so a stale `shared/dist` trips at
+    boot, not mid-tick.
+  - **Server (`server/game/stealth.js`):** dropped `gateInsideTile` from the pathfind export-validation
+    list — it's a shared/test helper (`world.js` computes the gate-inside goal tile inline), so validating
+    it as a server dependency was misleading.
+  - **`FINDINGS_OUTSIDE_SCOPE.md`:** filed the deliberately-deferred robot **pursue** pathing (a moving
+    quarry has no fixed goal tile; both design critiques + the user opted to defer it) with a reproducer
+    pointer and a suggested approach.
+  - Verified: shared **69/69**, client `tsc && vite build` green, server boots clean (validates the added
+    exports), a 2500-tick full real-map loop (idle + followers + robots) returned all animals home with no
+    throw. Working tree clean. **Result: Pass with Caveats** (one documented deferral: pursue pathing).
+
+- 0.2.59: **NPC pathfinding — Phase 4 (robot investigate routing around walls + path-follow hardening).**
+  Robots now route AROUND walls and THROUGH gates to reach an off-route investigate goal (a noise
+  behind a fence) instead of pressing one-tile-ahead into the barrier. Patrol-loop, guard-wander, and
+  pursue are unchanged (pursue stays reactive — a moving quarry can't use a cached path; deferred to a
+  measured follow-up).
+  - **Server (`server/game/behaviors.js`):** `setShared` takes the pathfind module; `moveTowardPoint`
+    (the investigate + linger-to-last-known mover) routes via `ctx.followPathToGoal` to the target tile
+    (radius-aware, with a point-based retry so a wedged robot is never stranded), then commits. `stepRobotIdle`
+    resets the cached path on every FSM transition (investigate↔resume↔guard) so a stale route can't bleed
+    across modes. Falls back to raw `steerAround` toward the point when no route exists.
+  - **Server (`server/game/stealth.js`):** `stepRobots` hands the per-room A* scratch + the
+    `followPathToGoal`/`clearPath` helpers into the robot idle ctx.
+  - **Path-follow hardening (fixes wall-corner oscillation for BOTH robots and animals):** the dense tile
+    path is followed verbatim (no collinear simplification — a simplified waypoint past a wall corner made
+    the body cut the corner and oscillate); `ARRIVE_TILES` lowered to 0.6 so each step targets the
+    immediate next tile center (axis-aligned); and within the gate band of a wall the heading is fed
+    STRAIGHT to the axis-separated integrator (NOT through `steerAround`, whose probe fan re-aimed the
+    clean heading into the fence). `findPath` gained an optional radius-aware `Clearance` (memoized,
+    deterministic) so a robot rounding an OPEN-ended barrier never hugs a corner; animals omit it (the
+    2-tile gates thread point-based and clearance can strand a body wedged in a sub-radius nook mid-walk).
+  - **Dead-code sweep:** `simplifyPath` + `tileClearsRadius` (obsoleted by the dense-path / inline-clearance
+    decisions) removed from `pathfind.ts` and their tests; the server's pathfind export-validation list
+    trimmed to what it actually calls.
+  - Verified: robots route through the gate into a closed enclosure to investigate (38 ticks); all 14
+    species re-enter their pens across **15 map seeds (210/210)**; a 3000-tick full real-map loop (idle +
+    followers + robots) ran clean with all 9 robots traveling; 42 simultaneous returns over a 600-tick loop
+    ran **0.184ms avg / 15.52ms worst** (50ms budget). shared **69/69**, client `tsc && vite build` green.
+
+- 0.2.58: **NPC pathfinding — Phase 3 (return home THROUGH the gate; slow cadence preserved).**
+  Fixes the bug where an animal whose follow-leash lapsed drifted toward its enclosure center, jammed
+  on the OUTSIDE of the fence, and never found the 2-tile gate — the old code papered over it by
+  declaring the animal "home" while merely pressed against the outer wall. It now PATHS back in.
+  - **Server (`server/game/world.js`):** new `getHomeGateInsideBySpecies(roomName)` — the per-species
+    gate-INSIDE goal tile (one row inside the enclosure gate / building door, always non-solid and
+    inside the inset bounds, so a solid pond/den core can never make the goal unreachable), exported.
+  - **Server (`server/config.js`):** new `PATHFIND` block — `REPATH_TICKS` (recompute cadence, ~1.5s),
+    `GATE_BAND_TILES` (chokepoint band width), `ARRIVE_TILES` (waypoint advance radius).
+  - **Server (`server/game/stealth.js`):** `followPathToGoal` (ensure + follow a cached A* route to a
+    goal tile — recomputed only on goal-change / exhaustion / the slow phased cadence; route simplified
+    to turning points with the gate goal kept mandatory) + `clearPath` + per-room gate-tile & A*-scratch
+    caches. `stepIdleAnimals` returningHome branch rewritten: A* to the gate-inside tile, an open-field
+    ambient-wander blend (`RETURN_WANDER_BLEND`) so the long walk still reads as a saunter, switching to
+    PURE path-following inside the gate band so the 2-tile gap threads deterministically (no fence-post
+    clip). Commit is via the EXISTING `steerAround` + `locomotionStep` at the UNCHANGED
+    `WANDER_ANIMAL_SPEED` + species gait — so the slow cadence is preserved (a returning tortoise still
+    crawls, a kangaroo hops). Arrival is now a TRUE re-entry test (`pathfind.inBounds` of the interior
+    bounds), not a proximity guess. The `homeArrivalRadius` hack is DELETED; `homeBiasedWanderStep` is
+    KEPT as the documented fallback for the rare unreachable-goal / degenerate-seed case.
+  - Verified live: ALL 14 species path from the far spawn corner across the map, through their gate, and
+    re-enter their pen (`returningHome` clears only when genuinely inside the inset bounds); gait cadence
+    preserved per species; 42 animals returning simultaneously over a 600-tick full loop (idle +
+    followers + robots) ran in **0.167ms avg / 14.97ms worst tick** (50ms budget). Paths are per-entity
+    server-only scratch, never serialized. shared **68/68**, client `tsc && vite build` green.
+
+- 0.2.57: **NPC pathfinding — Phase 2 (situational awareness: contained animals invisible to robots).**
+  Fixes the bug where robots froze/investigated/pursued idle animals sitting INSIDE their own
+  enclosures — peeling patrols pointlessly into pens. An animal that is "where it belongs" is no longer
+  a stealth target.
+  - **Server (`server/game/world.js`):** new `getAuxInteriorRects(roomName)` — the aux-building interior
+    rects in world units (same inset wall-ring math as `getGuardBoundsByRobotId`, unkeyed), exported.
+  - **Server (`server/game/stealth.js`):** `loadShared` now also imports + fail-loud-validates
+    `shared/dist/pathfind.js` and caches it (handed to `behaviors`/`follow` for later phases). New
+    `auxInteriorRectsForRoom` per-room cache + `isAtHomeAnimal(e, homeBounds, auxRects)` predicate (an
+    O(1) `pathfind.inBounds` point-in-rect against the already-cached enclosure bounds + aux interiors).
+    `gatherAnimals` — the SINGLE chokepoint feeding both `robotDecision` (perception/freeze/pursue) AND
+    `behaviors.pickInvestigateTarget` — now skips an idle animal when `!isLeashed && !returningHome &&
+    isAtHomeAnimal`. So a contained pen/aux animal is invisible to robots, while a leashed follower, a
+    returning-home animal still outside its pen, an animal wandered out of bounds, a fox decoy, and
+    every player stay visible.
+  - Verified live (boot `loadShared`, then exercise `gatherAnimals`): pathfind exports validate; a
+    contained pen animal is hidden; leashed / returning-home / out-of-bounds / fox-decoy animals stay
+    visible; 30 NPC ticks run clean with the filter active. shared **68/68**, client `tsc && vite build`
+    green. No `net.ts` / world-gen change — the filter is server-side, derived from cached map bounds.
+
+- 0.2.56: **NPC pathfinding — Phase 1 (deterministic A* substrate, no consumers yet).**
+  Adds the missing GLOBAL route layer the reactive `steerAround` (one-tile-ahead probe) structurally
+  lacks: it can round a corner but cannot FIND a two-tile door gap from outside a walled enclosure.
+  This is the foundation for fixing return-home-through-the-gate and robot routing around walls.
+  - **Shared (`shared/src/pathfind.ts`, new):** a pure, deterministic 4-connected tile-grid A* over
+    the existing `collision` Uint8Array. The open set pops by an EXPLICIT TOTAL ORDER (f, then g,
+    then flat tile index) so equal-cost frontiers resolve bit-identically across V8 builds; neighbour
+    expansion is E,W,S,N — IDENTICAL to `world.ts` `floodReachable`, so "reachable" and "pathable"
+    can never disagree. Integer step-count g-scores + integer Manhattan heuristic (no float fragility).
+    Reusable `PathScratch` (generation-stamped, so a search resets in O(1) and costs O(cells expanded),
+    allocating nothing per call). `maxExpand` defaults to one full grid sweep (`w*h`) so a genuinely
+    reachable cross-map goal is never abandoned, yet the search always terminates; on overflow /
+    unreachable / solid-or-OOB endpoint it returns `[]` and the caller falls back to reactive steering
+    — never a hang. Doors/gates are already non-solid tiles, so A* threads them with zero special-casing.
+    Helpers: `simplifyPath` (collinear collapse with a `keepTiles` allow-list so gate waypoints stay
+    mandatory + axis-aligned), `toWorldWaypoints`, `nextWaypoint` (arrive-radius advance like
+    `patrolStep`), `inBounds` (O(1) point-in-rect, for the awareness filter + the true return-home
+    arrival test), `gateInsideTile` (the interior threshold tile = the return-home A* goal), and
+    `tileClearsRadius`. A LEAF peer of `step.ts` — imports only `boxHitsSolid`, no `world.ts` import
+    (no cycle). Server-only consumption; paths are per-entity scratch, NEVER serialized (no net change).
+  - **Shared (`shared/src/index.ts`):** export the new module.
+  - **Test (`shared/test/pathfind.test.mjs`, new):** 15 cases — determinism (byte-identical path twice
+    AND across a fresh `generateWorld` of the same seed; reused-scratch == fresh-scratch),
+    thread-the-door (routes from outside a walled enclosure through the 2-tile gate; the contrast test
+    proves pure `steerAround` does NOT), real-map walkability (every species home + every building door
+    reachable, every step a non-solid 4-neighbour move), mandatory gate waypoints, graceful degrade
+    (solid/OOB/sealed/over-budget → `[]`), `inBounds` truth table, `gateInsideTile`.
+  - Verified: shared **68/68** (`node --test test/*.test.mjs`, world parity hashes intact),
+    client `tsc && vite build` green. No behavior change to the running game — the substrate ships
+    behind a green test gate before any caller touches it.
+
 - 0.2.55: **Drop the locked-door mechanic + fix food distribution (two in-game food bugs).**
   - **Can't collect food (lock removed):** the locked-door gate played badly — the door tile is
     non-solid (you walk straight in), the terminal-unlock wasn't usable, and the lock SILENTLY

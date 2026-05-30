@@ -6,6 +6,7 @@
 export * from './types.js';
 export * from './net.js';
 export * from './step.js';
+export * from './pathfind.js';
 export * from './movement.js';
 export * from './locomotion.js';
 export * from './renderer.js';

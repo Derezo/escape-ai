@@ -77,6 +77,26 @@ module.exports = {
     LINGER_SECS: parseFloat(process.env.INVESTIGATE_LINGER_SECS) || 2.5
   },
 
+  // Global pathfinding (shared/dist/pathfind.js A*). NPCs cache a coarse waypoint
+  // route to a fixed goal and recompute only on a slow cadence — the route is
+  // followed via the existing steerAround for the local slide. These tune the
+  // recompute cadence and the "thread the gate" chokepoint band.
+  PATHFIND: {
+    // Ticks between recomputes of a cached path (also recomputed on goal change /
+    // path exhaustion). ~30 ticks ≈ 1.5s at 20Hz: cheap, and re-plans often enough
+    // to recover from a transient block while keeping the return-home look ambient.
+    REPATH_TICKS: parseInt(process.env.PATHFIND_REPATH_TICKS, 10) || 30,
+    // Within this many tiles of the gate-inside goal, a returning animal follows the
+    // path waypoint with HIGH FIDELITY (no ambient-wander blend) so the 2-tile gate
+    // is threaded deterministically — the open-field drift only applies further out.
+    GATE_BAND_TILES: parseFloat(process.env.PATHFIND_GATE_BAND_TILES) || 3,
+    // Arrive radius (tiles) for advancing along the DENSE (1-tile) waypoint list.
+    // Kept BELOW 1 so the body targets the immediate next tile center (an
+    // axis-aligned step the sliding integrator threads cleanly) instead of skipping
+    // ahead to a diagonal waypoint that would clip a wall corner near the gate.
+    ARRIVE_TILES: parseFloat(process.env.PATHFIND_ARRIVE_TILES) || 0.6
+  },
+
   // Species abilities (Phase 4). Each species has one edge-triggered power fired
   // by the 'ability' action; these are the server-orchestrated tunables. Timed
   // effects convert seconds -> ticks via TICK_RATE (deterministic, no wall clock).

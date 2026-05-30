@@ -44,7 +44,8 @@ let rooms = null;            // Map<roomName, Set<socketId>>
 
 /** Hand over the cached shared modules. Called from stealth.loadShared(). `moveMod`
  *  and `locoMod` are optional so older callers (and tests) that pass only the step
- *  module keep working; the chain/return-home paths require them. */
+ *  module keep working; the chain/return-home paths require them. (A 4th `pathMod`
+ *  arg is passed by stealth.loadShared and wired here in Phase 3 for return-home A*.) */
 function setShared(mod, moveMod, locoMod) {
   shared = mod;
   if (moveMod) movement = moveMod;

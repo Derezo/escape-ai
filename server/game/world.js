@@ -327,6 +327,34 @@ function hashStr(s) {
 }
 
 /**
+ * Per-species home GATE-INSIDE goal TILE, for the return-home pathfinder (the A*
+ * goal — one row inside the enclosure gate / building door, guaranteed non-solid
+ * and inside the inset containment bounds, so a solid pond/den core can never make
+ * the goal unreachable). Housing's gate is south-center (gateTx = rx+floor(rw/2),
+ * gateTy = ry+rh-1) — the same geometry stampHousing carves; a species building
+ * carries doorTx/doorTy directly. The gatehouse (species == null) is skipped.
+ * Computed once per map; the caller keys it by species. An animal whose species
+ * isn't here (a transient fox decoy) gets no entry → no path goal (it drifts).
+ * @param {string} roomName
+ * @returns {Map<string, {tx:number, ty:number}>}
+ */
+function getHomeGateInsideBySpecies(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tiles = new Map();
+  for (const h of map.housing) {
+    if (!h.species) continue;
+    const gateTx = h.rx + Math.floor(h.rw / 2);
+    const gateTy = h.ry + h.rh - 1;
+    tiles.set(h.species, { tx: gateTx, ty: gateTy - 1 }); // one row inside the gate
+  }
+  for (const b of map.buildings) {
+    if (!b.species) continue;
+    tiles.set(b.species, { tx: b.doorTx, ty: b.doorTy - 1 }); // one row inside the door
+  }
+  return tiles;
+}
+
+/**
  * The spawn point for a player of `species` in a room: the CENTER of that species'
  * OWN pen/home (world units), with a small deterministic per-player jitter so two
  * same-species players don't stack exactly. Spawning in the home pen — not the
@@ -385,6 +413,29 @@ function getGuardBoundsByRobotId(roomName) {
     bounds.set(`robot-guard-${b.auxKind}`, { minX, minY, maxX, maxY });
   }
   return bounds;
+}
+
+/**
+ * The aux-building INTERIOR rects in world units, as a plain array (the same inset
+ * wall-ring math as getGuardBoundsByRobotId, but unkeyed — the awareness filter only
+ * asks "is this point inside ANY aux interior", not which one). Used to make an
+ * animal that has somehow ended up inside an aux building invisible to robots (it's
+ * "where it belongs", same rule as a contained pen animal). Computed once per map.
+ * @param {string} roomName
+ * @returns {{minX:number,minY:number,maxX:number,maxY:number}[]}
+ */
+function getAuxInteriorRects(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tile = map.tile;
+  const rects = [];
+  for (const b of map.buildings.filter((bb) => bb.auxKind)) {
+    const minX = (b.rx + 1) * tile;
+    const minY = (b.ry + 1) * tile;
+    const maxX = Math.max((b.rx + b.rw - 1) * tile, minX);
+    const maxY = Math.max((b.ry + b.rh - 1) * tile, minY);
+    rects.push({ minX, minY, maxX, maxY });
+  }
+  return rects;
 }
 
 /**
@@ -526,7 +577,9 @@ module.exports = {
   getHomeBoundsBySpecies,
   getHomeCentersBySpecies,
   spawnForSpecies,
+  getHomeGateInsideBySpecies,
   getGuardBoundsByRobotId,
+  getAuxInteriorRects,
   getMapMeta,
   isSolidAtRoom,
   getWorldEntities,
