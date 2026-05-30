@@ -4,6 +4,21 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.74: **Audio prompts — describe the sound, not the game moment.** Several SFX
+  descriptors in `asset-pipeline/manifest.json` narrated the *event* instead of the
+  *sound* — Suno was being told to sonify clauses like "an animal now follows you" (feed_follow),
+  "you cannot escape yet" (quest_blocked), "the panic meter is filling" (panic_warning),
+  "a robot is paying attention" (tension_loop), "the room has sealed" (lockdown_loop),
+  "objective met" (quest_complete), "the herd shrinks" (follower_lost). Every descriptor is
+  now a pure acoustic description (timbre, attack, pitch motion, texture); the game-event
+  mapping stays where it belongs — the manifest `trigger` field. Also retuned the
+  `theme.json` **music** palette for more liveliness while keeping the cold/eerie identity:
+  dropped the energy-draining "sparse/restrained/light and spooky" stack for "a steady
+  underlying pulse / controlled momentum / atmospheric but moving", added a pulsing
+  sequencer + propulsive sub-bass + muted mechanical percussion, raised the tempo floor
+  50→70 BPM, and pushed the negative tags away from "beatless/sleepy/new age". Drift gate
+  green; `audio.generated.ts` unchanged (descriptors don't affect key→file bindings).
+
 - 0.2.73: **Generated audio assets committed (`assets/sfx/*.mp3`, `assets/music/*.mp3`).** The
   first real Suno generations: 9 SFX (robot_alert, panic_warning, lockdown_alarm, lockdown_clear,
   door_lock, quest_complete, hit, error, confirm) and 2 music tracks (title_theme, explore_loop).

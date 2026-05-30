@@ -21,22 +21,24 @@
     "model": "V4_5PLUS",
     "instrumental": true,
     "customMode": true,
-    "genreDescriptors": ["dark ambient", "horror synth", "minimal cinematic underscore", "tension drone"],
+    "genreDescriptors": ["dark ambient", "horror synth", "minimal cinematic underscore", "rhythmic tension score"],
     "instruments": [
       "low drones",
       "detuned synth pads",
+      "a steady pulsing synth sequencer",
       "distant metallic clangs",
       "sparse music-box bells",
-      "sub bass pulses",
+      "a propulsive sub-bass pulse",
+      "muted mechanical percussion",
       "reverberant piano",
       "granular textures"
     ],
-    "moodDescriptors": ["light and spooky", "haunting", "fragile", "ghostly", "quietly menacing"],
-    "energyDescriptors": ["sparse", "restrained", "slow-building", "atmospheric"],
-    "tempoRange": { "min": 50, "max": 80 },
+    "moodDescriptors": ["cold and eerie", "haunting", "tense", "quietly menacing"],
+    "energyDescriptors": ["a steady underlying pulse", "controlled momentum", "slow-building", "atmospheric but moving"],
+    "tempoRange": { "min": 70, "max": 95 },
     "styleWeight": 0.65,
     "weirdnessConstraint": 0.35,
-    "negativeTags": "upbeat, cheerful, major key, vocals, drums-heavy, dance, EDM"
+    "negativeTags": "cheerful, happy, major key, vocals, drums-heavy, dance, EDM, beatless, sleepy, new age"
   },
 
   "sfx": {

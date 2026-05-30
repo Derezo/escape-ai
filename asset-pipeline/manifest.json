@@ -26,7 +26,7 @@
       "loop": true,
       "durationHint": 90,
       "defaultVolume": 0.4,
-      "descriptor": "seamless low-energy exploration loop, sparse pulses and distant machinery, watchful and patient, never resolving"
+      "descriptor": "seamless exploration loop, a quiet steady pulse over distant machinery, a soft ticking sequencer keeping it moving, watchful and cold, never quite resolving"
     },
     {
       "key": "tension_loop",
@@ -39,7 +39,7 @@
       "durationHint": 60,
       "defaultVolume": 0.45,
       "styleWeight": 0.7,
-      "descriptor": "rising tension loop, pulsing sub bass and ticking detuned bells, a robot is paying attention, dread building"
+      "descriptor": "rising tension loop, a quickening pulsing sub-bass and ticking detuned bells, an insistent low arpeggio building underneath, cold and uneasy"
     },
     {
       "key": "panic_loop",
@@ -53,7 +53,7 @@
       "defaultVolume": 0.5,
       "styleWeight": 0.75,
       "weirdnessConstraint": 0.45,
-      "descriptor": "high-threat panic loop, driving sub-bass heartbeat and shrieking metallic textures, being actively hunted, claustrophobic"
+      "descriptor": "high-threat panic loop, a fast driving sub-bass heartbeat, hammering muted mechanical percussion and shrieking metallic textures, relentless and claustrophobic"
     },
     {
       "key": "lockdown_loop",
@@ -66,7 +66,7 @@
       "durationHint": 60,
       "defaultVolume": 0.5,
       "styleWeight": 0.75,
-      "descriptor": "oppressive lockdown loop, a low droning klaxon-like swell under grinding steel, the room has sealed, inescapable dread"
+      "descriptor": "oppressive lockdown loop, a low droning klaxon-like swell pulsing under grinding steel and a slow pounding mechanical thud, heavy and inescapable"
     },
     {
       "key": "victory_sting",
@@ -78,7 +78,7 @@
       "loop": false,
       "durationHint": 12,
       "defaultVolume": 0.6,
-      "descriptor": "short bittersweet victory sting, a fragile ascending music-box phrase breaking into cold open air, relief tinged with unease"
+      "descriptor": "short bittersweet victory sting, a fragile ascending music-box phrase opening into cold reverberant air, relief tinged with unease"
     },
     {
       "key": "caught_sting",
@@ -90,7 +90,7 @@
       "loop": false,
       "durationHint": 6,
       "defaultVolume": 0.6,
-      "descriptor": "short grim defeat sting, a sudden detuned downward swell and a cold mechanical snap, the moment of capture"
+      "descriptor": "short grim defeat sting, a sudden detuned downward swell ending in a cold hard mechanical snap, final and bleak"
     },
     {
       "key": "ambient_bed_music",
@@ -115,7 +115,7 @@
       "output": "assets/sfx/robot_alert.mp3",
       "placeholder": "error",
       "defaultVolume": 0.7,
-      "descriptor": "a robot's single rising alert chirp, cold synthetic detection tone, it has noticed something"
+      "descriptor": "a single sharp rising alert chirp, cold synthetic two-note detection tone with a quick metallic edge"
     },
     {
       "key": "robot_pursuit",
@@ -126,7 +126,7 @@
       "placeholder": "hit",
       "soundLoop": true,
       "defaultVolume": 0.6,
-      "descriptor": "a relentless looping robotic pursuit motif, fast mechanical servo footsteps and a low aggressive hum, closing in"
+      "descriptor": "a fast looping mechanical pursuit rhythm, rapid servo footsteps over a low aggressive motor hum, relentless and driving"
     },
     {
       "key": "robot_footstep",
@@ -147,7 +147,7 @@
       "output": "assets/sfx/panic_warning.mp3",
       "placeholder": "error",
       "defaultVolume": 0.7,
-      "descriptor": "a tense escalating warning pulse, the panic meter is filling, two quick anxious electronic beeps rising in pitch"
+      "descriptor": "two quick anxious electronic warning beeps rising sharply in pitch, tense and escalating"
     },
     {
       "key": "lockdown_alarm",
@@ -168,7 +168,7 @@
       "output": "assets/sfx/lockdown_clear.mp3",
       "placeholder": "confirm",
       "defaultVolume": 0.6,
-      "descriptor": "a descending all-clear chime, the lockdown lifts, three cool synthetic tones settling, cautious relief"
+      "descriptor": "a descending all-clear chime, three cool synthetic tones settling downward, calm and resolved"
     },
     {
       "key": "door_lock",
@@ -188,7 +188,7 @@
       "output": "assets/sfx/gate_open.mp3",
       "placeholder": "confirm",
       "defaultVolume": 0.65,
-      "descriptor": "a heavy gate unsealing and grinding open, hydraulic hiss and rolling steel, the way out reveals itself"
+      "descriptor": "a heavy gate unsealing and grinding open, a hydraulic hiss then slow rolling steel and a final settling clank"
     },
     {
       "key": "quest_progress",
@@ -198,7 +198,7 @@
       "output": "assets/sfx/quest_progress.mp3",
       "placeholder": "blip",
       "defaultVolume": 0.55,
-      "descriptor": "a short cool notification chime, one objective step done, a single clean synthetic tick"
+      "descriptor": "a short cool notification chime, a single clean bright synthetic tick with a soft tail"
     },
     {
       "key": "quest_complete",
@@ -208,7 +208,7 @@
       "output": "assets/sfx/quest_complete.mp3",
       "placeholder": "confirm",
       "defaultVolume": 0.7,
-      "descriptor": "a satisfying quest-complete flourish, a short rising arpeggio of cold synth bells, objective met"
+      "descriptor": "a short satisfying flourish, a quick rising arpeggio of cold synth bells resolving cleanly"
     },
     {
       "key": "quest_blocked",
@@ -218,7 +218,7 @@
       "output": "assets/sfx/quest_blocked.mp3",
       "placeholder": "error",
       "defaultVolume": 0.6,
-      "descriptor": "a denied buzzer, you cannot escape yet, a flat dissonant electronic refusal"
+      "descriptor": "a short flat denied buzzer, a low dissonant electronic double-honk, blunt and negative"
     },
     {
       "key": "food_pickup",
@@ -228,7 +228,7 @@
       "output": "assets/sfx/food_pickup.mp3",
       "placeholder": "pickup",
       "defaultVolume": 0.55,
-      "descriptor": "a quick light pickup blip, a soft synthetic chirp, something collected"
+      "descriptor": "a quick light pickup blip, a soft short upward synthetic chirp"
     },
     {
       "key": "feed_follow",
@@ -238,7 +238,7 @@
       "output": "assets/sfx/feed_follow.mp3",
       "placeholder": "confirm",
       "defaultVolume": 0.6,
-      "descriptor": "a warm positive confirmation, an animal now follows you, two friendly rounded tones"
+      "descriptor": "a warm positive confirmation, two friendly rounded tones rising a soft major third, gentle and rounded"
     },
     {
       "key": "follower_lost",
@@ -248,7 +248,7 @@
       "output": "assets/sfx/follower_lost.mp3",
       "placeholder": "error",
       "defaultVolume": 0.55,
-      "descriptor": "a sad fading descending tone, a follower has been lost, the herd shrinks"
+      "descriptor": "a sad soft descending tone fading out, a gentle downward two-note fall, wistful"
     },
     {
       "key": "ambient_bed",
