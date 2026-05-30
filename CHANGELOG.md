@@ -4,6 +4,12 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.96: **Leaderboard, polish — export the scorer from the shared barrel.** Add
+  `export * from './score.js'` to `shared/src/index.ts` so the composite scorer is reachable
+  via the `@shared` barrel like every other shared module (the server already imports
+  `shared/dist/score.js` directly; this lets a future client score-preview import `@shared/score`
+  too). Pure consistency fix; shared build + client tsc green.
+
 - 0.2.95: **Leaderboard, phase 3 — the L-key datatable overlay.** The client face of the
   leaderboard. New `client/src/leaderboard.ts` (`createLeaderboard`) builds a hidden, pure-DOM
   overlay — the inventory/help modal idiom — toggled with **L** (added to the movement-key

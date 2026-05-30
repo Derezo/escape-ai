@@ -16,3 +16,4 @@ export * from './tiles.js';
 export * from './world.js';
 export * from './quests.js';
 export * from './food.js';
+export * from './score.js';
