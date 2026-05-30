@@ -27,6 +27,12 @@ cd client  && npm run build                    # static bundle → client/dist
 # assets (zero deps)
 node scripts/gen-placeholder-sprites.js
 node scripts/gen-placeholder-sfx.js
+
+# audio pipeline (Suno) — see docs/AUDIO_PIPELINE.md
+cd scripts && npm run audio                    # codegen client bindings + drift gate
+python3 scripts/generate-sfx.py --list         # free: status of every sfx (no spend)
+python3 scripts/generate-sfx.py --key=robot_alert --dry-run   # free: preview the request
+python3 scripts/generate-sfx.py --key=robot_alert             # spends credits (you run it)
 ```
 
 ## Architecture rules
@@ -43,6 +49,11 @@ node scripts/gen-placeholder-sfx.js
 - **Keep the web build Capacitor-safe.** `vite.config.ts` uses `base: './'` so
   assets load in the Android WebView. Don't change it. `VITE_SERVER_URL` is baked
   at build time — set it before building the Android bundle.
+- **`asset-pipeline/manifest.json` is the single source of truth for audio.**
+  `client/src/audio.generated.ts` is generated from it — never hand-edit it; edit the
+  manifest and run `cd scripts && npm run audio` (codegen + drift gate). Suno
+  generation is user-run and spends credits; `--dry-run`/`--list` are free. See
+  `docs/AUDIO_PIPELINE.md`.
 
 ## Coding standards
 

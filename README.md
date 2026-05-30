@@ -157,15 +157,26 @@ clean clone runs without it. If the atlas is missing, the renderer falls back to
 original geometric shapes (the kit still boots with zero art). Edit a species in
 `scripts/sprites/species/<name>.js` (or add one + a `registry.js` line) and rerun.
 
-Audio (placeholder, zero deps):
+**Audio.** Zero-dep placeholder blips boot the game with sound on every action:
 
 ```bash
-node scripts/gen-placeholder-sfx.js       # → assets/sfx/*.wav
+node scripts/gen-placeholder-sfx.js       # → assets/sfx/*.wav (synthesized, zero-dep)
 ```
 
-`scripts/gen-placeholder-sprites.js` still emits the simple static single-shape SVGs as
-a fallback reference. Heavier Modia-derived generators (ElevenLabs / Suno) are
-documented in the playbook and installed only if a rule calls for them.
+For a real audio identity there's a **Suno generation pipeline** ([sunoapi.org](https://sunoapi.org/)).
+`asset-pipeline/manifest.json` is the single source of truth for every music track and
+SFX; `asset-pipeline/theme.json` is the editable eerie/creepy aesthetic. Generation is
+user-run and spends credits — `--dry-run`/`--list` are free:
+
+```bash
+cd scripts && npm run audio                       # codegen client bindings + drift gate (free)
+python3 scripts/generate-sfx.py --list            # status of every sfx (free, no network)
+python3 scripts/generate-sfx.py --key=robot_alert # generate one (spends credits)
+```
+
+SFX fall back to a synth WAV until their `.mp3` is generated, so the game always has
+sound. Full guide: [`docs/AUDIO_PIPELINE.md`](docs/AUDIO_PIPELINE.md).
+`scripts/gen-placeholder-sprites.js` still emits simple static SVGs as a fallback reference.
 
 ## Development workflow
 
@@ -180,12 +191,13 @@ Read [`CLAUDE.md`](CLAUDE.md) before contributing. Two standing rules:
 ## Layout
 
 ```
-client/   Vite + TS + Phaser app (entry: client/src/main.ts)
-server/   Node + Socket.IO authoritative server (entry: server/index.js)
-shared/   TS types, net contract, deterministic step(), renderer interface
-scripts/  asset/audio generators, deploy-server.sh, hooks/
-docs/     PLAYBOOK.md (hour-0 guide), ANDROID.md, ASIMOV_REFERENCE.md, ACT_OF_SUTSKEVER.md
-assets/   generated placeholder sprites + sfx
+client/         Vite + TS + Phaser app (entry: client/src/main.ts)
+server/         Node + Socket.IO authoritative server (entry: server/index.js)
+shared/         TS types, net contract, deterministic step(), renderer interface
+scripts/        asset/audio generators, Suno pipeline (sunoapi/, audio/), deploy, hooks/
+asset-pipeline/ Suno audio contracts: theme.json + manifest.json (output/ gitignored)
+docs/           PLAYBOOK.md, AUDIO_PIPELINE.md, ANDROID.md, ASIMOV_REFERENCE.md, ACT_OF_SUTSKEVER.md
+assets/         generated sprites, tiles, sfx (+ music/ once generated)
 ```
 
 ## License

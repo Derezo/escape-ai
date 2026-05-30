@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.69: **Audio pipeline Phase 4 — docs (`docs/AUDIO_PIPELINE.md`, new).** The best-practices
+  deliverable: data-flow overview, **cost-consciousness** (user-run generation, free `--dry-run`/`--list`,
+  skip-unless-`--force`, raw-reuse, `--credits`, rate/latency/retention), the theme system, **Suno prompt
+  best practices** (customMode instrumental music with no `prompt`; SFX `/generate/sounds` V5 with
+  `soundLoop`/`soundTempo`/`soundKey` and no `negativeTags` param), the eerie/creepy aesthetic vocabulary,
+  the poll-not-callback model (`callBackUrl` is a placeholder), how to add an asset, the full CLI
+  reference, sample-swapping, the drift gate, raw provenance layout, and deps/env. `CLAUDE.md` gains the
+  audio commands + an architecture rule ("`manifest.json` is the source of truth; `audio.generated.ts` is
+  generated — never hand-edit; run `npm run audio`"); `README.md` gains an Audio subsection and updated
+  layout. Docs land; `npm run audio` and the client build stay green.
+
 - 0.2.68: **Audio pipeline Phase 3 — client music layer + state machine (`client/src/music.ts`, new).**
   Background music, wired to gameplay. `music.ts` is a renderer-agnostic Web Audio crossfade manager
   sharing the one `AudioContext` from `audio.ts` (so the menu's first-gesture `unlockAudio()` unblocks
