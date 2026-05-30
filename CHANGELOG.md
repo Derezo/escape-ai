@@ -4,6 +4,14 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.82: **Full audio set generated — all 8 music tracks + all 18 SFX.** The remaining
+  ungenerated assets were produced with the sound-describing prompts (0.2.74) and the livelier
+  music palette: music `tension_loop`, `lockdown_loop`, `victory_sting`, `caught_sting`,
+  `ambient_bed_music` (plus regenerated `title_theme`/`explore_loop`/`panic_loop`); SFX
+  `ambient_bed`, `feed_follow`, `follower_lost`, `food_pickup`, `quest_blocked` (plus regenerated
+  `confirm`/`error`/`hit`). Every manifest key now has its real `.mp3` — the placeholder-WAV
+  fallbacks are fully retired. Drift gate green (26 SFX keys, 8 music tracks).
+
 - 0.2.81: **Zoo tilemap overhaul (WORLD_GEN_VERSION 13).** A broad pass over the generator
   and tile art so the map reads like a zoo. World-gen (`shared/src/world.ts`): paths no longer
   carve over pen/building interiors (path routing skips claimed rects); pen fences use the right
