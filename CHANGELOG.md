@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.55: **Drop the locked-door mechanic + fix food distribution (two in-game food bugs).**
+  - **Can't collect food (lock removed):** the locked-door gate played badly — the door tile is
+    non-solid (you walk straight in), the terminal-unlock wasn't usable, and the lock SILENTLY
+    blocked `collectNearbyFood`, so pressing E near food did nothing. Per the design call the lock is
+    removed entirely: food in the aux buildings is now freely collectable and the **guard robot is
+    the challenge**. Removed: the `foodSource` lock-skip in `server/game/follow.js`; the
+    door-terminal interact branch + `nearestDoorTerminal` helper in `server/game/stealth.js`; the
+    per-room `unlockedDoors` set + `isDoorLocked`/`unlockDoor`/`auxBuildingById` + their exports + the
+    terminal door-meta in `spawnFromMap` (`server/game/world.js`); the `terminal-door-*` entitySpecs
+    + `terminalTx/Ty` + `Building.locked` (`shared/src/world.ts`); the 🔒 door marker in
+    `client/src/render/phaser.ts`.
+  - **All food in the Commissary (distribution fixed):** the species→wall-slot assignment concatenated
+    all 3 buildings' wall slots into one list and filled it in order, so the commissary (≈26 slots)
+    swallowed all 14 foods. Now ROUND-ROBINS species across the 3 buildings → **5 / 5 / 4** spread,
+    each food still strictly inside an aux interior. Deterministic, unshuffled `SPECIES_KEYS` order.
+  - **Shared:** `WORLD_GEN_VERSION` 10 → 11; both pinned hashes re-pinned (collision 915161051,
+    entitySpec 530761931 — collision moved because the dropped door-terminals no longer pull the
+    reachability carve toward them). Tests: dropped the door-terminal invariant + the `locked`
+    assertion (kept the 3-guard-robots check), added a food-spread invariant.
+  - Verified: shared **19/19**; client `tsc && vite build` green; server boots clean; live-module
+    test collects food in two different buildings with NO unlock (`banana` + `seeds`); spread probe →
+    `{commissary:5, washroom:5, maintenance:4}`; no lock remnants remain in shared or the server modules.
+
 - 0.2.54: **Spawn players in their own species pen + post-catch grace (fixes the spawn-on-robot
   catch loop).** Players spawned in the gate-side block where robots patrol, so landing on a robot
   caused an instant re-catch every tick — an infinite loop.

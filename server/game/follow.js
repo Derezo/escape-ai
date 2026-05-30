@@ -96,13 +96,8 @@ function collectNearbyFood(player, roomName, currentTick) {
   let nearestD2 = Infinity;
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'food') continue;
-    // The food now lives inside an aux building whose door starts LOCKED. Skip a
-    // source whose building is still locked so it's invisible to collection until
-    // the player taps its door-terminal — but DON'T let a locked source shadow a
-    // reachable unlocked one in the same range (two buildings' walls can sit within
-    // a single RECT_SIZE). A source with no buildingId (defensive fallback) is never
-    // gated. The skip is the entire lock enforcement; the door tile stays non-solid.
-    if (e.buildingId && world.isDoorLocked(roomName, e.buildingId)) continue;
+    // Food in the aux buildings is freely collectable (the locked-door mechanic was
+    // dropped — the guard robot is the challenge). Just find the nearest in reach.
     const d2 = shared.dist2(player, e);
     if (d2 <= r2 && d2 < nearestD2) {
       nearestD2 = d2;

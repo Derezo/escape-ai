@@ -36,8 +36,7 @@ const INITIAL_WORLD_STATE = { panic: 0, panicCapacity: 100, lockdown: false };
 // created before this is warm rather than fall back to a broken empty map.
 let sharedWorld = null;
 
-// Map<roomName, { entities: Map<entityId, entity>, world: {...}, map, seed,
-//                 unlockedDoors: Set<buildingId> }>
+// Map<roomName, { entities: Map<entityId, entity>, world: {...}, map, seed }>
 const roomWorlds = new Map();
 
 /**
@@ -98,9 +97,7 @@ async function loadSharedWorld() {
  *
  * Spec kinds map as follows:
  *   - gate        → a static gate (the escape target)
- *   - terminal    → a static interactable (Second-Law order point); a spec with
- *                   meta.door is an aux-building DOOR terminal (carries door +
- *                   buildingId + auxKind so interact can unlock that building)
+ *   - terminal    → a static interactable (Second-Law order point)
  *   - prop        → the carryable Clipboard disguise (carrierId starts null)
  *   - robotSpawn  → a live robot (suspicion 0, facing south); a spec with meta.guard
  *                   is an aux-building GUARD (behavior 'guard' — stays contained)
@@ -125,19 +122,9 @@ function spawnFromMap(map) {
       case 'gate':
         add({ id: spec.id, x: spec.x, y: spec.y, name: 'Gate', kind: 'gate' });
         break;
-      case 'terminal': {
-        // A door-terminal (aux-building lock) carries door + building meta so the
-        // interact path can unlock the right building; the junction terminals
-        // (terminal-1..4) have no such meta and keep their plain stand-down behavior.
-        const t = { id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'terminal' };
-        if (spec.meta && spec.meta.door) {
-          t.door = true;
-          t.buildingId = spec.meta.buildingId;
-          t.auxKind = spec.meta.auxKind;
-        }
-        add(t);
+      case 'terminal':
+        add({ id: spec.id, x: spec.x, y: spec.y, name: spec.id, kind: 'terminal' });
         break;
-      }
       case 'prop':
         add({ id: spec.id, x: spec.x, y: spec.y, name: 'Clipboard', kind: 'prop', carrierId: null });
         break;
@@ -233,12 +220,7 @@ function getOrCreateRoomWorld(roomName) {
       entities: spawnFromMap(map),
       world: { ...INITIAL_WORLD_STATE },
       map,
-      seed,
-      // Aux-building doors start LOCKED (the building's `locked: true` flag is pure
-      // runtime state — the door TILE is non-solid). A door is opened by tapping its
-      // door-terminal, which adds the building id here; food inside stays out of reach
-      // until then. Empty = everything locked.
-      unlockedDoors: new Set()
+      seed
     };
     roomWorlds.set(roomName, roomWorld);
   }
@@ -378,47 +360,6 @@ function spawnForSpecies(roomName, species, jitterSeed) {
     y = Math.min(Math.max(center.y + jy, bounds.minY + 4), bounds.maxY - 4);
   }
   return { x, y };
-}
-
-/**
- * The aux Building (`aux-commissary` / `aux-washroom` / `aux-maintenance`) for an
- * id in a room, or null for an unknown / non-aux id. Only buildings carrying an
- * `auxKind` are aux buildings; the gatehouse + species homes are excluded.
- * @param {string} roomName
- * @param {string} id
- * @returns {object|null}
- */
-function auxBuildingById(roomName, id) {
-  if (!id) return null;
-  const map = getOrCreateRoomWorld(roomName).map;
-  return map.buildings.find((b) => b.auxKind && b.id === id) || null;
-}
-
-/**
- * Whether an aux building's door is currently LOCKED in a room. True unless the
- * building has been unlocked (its id is in the room's unlockedDoors set). Only
- * meaningful for aux buildings: an unknown / non-aux id returns false, so
- * non-gated food (a fallback or a future free food source) is never blocked.
- * @param {string} roomName
- * @param {string} buildingId
- * @returns {boolean}
- */
-function isDoorLocked(roomName, buildingId) {
-  if (!auxBuildingById(roomName, buildingId)) return false; // unknown / non-aux → not gated
-  const rw = getOrCreateRoomWorld(roomName);
-  return !rw.unlockedDoors.has(buildingId);
-}
-
-/**
- * Unlock an aux building's door in a room (idempotent). Adds the building id to the
- * room's unlockedDoors set so isDoorLocked returns false afterward and the food
- * inside becomes collectible. Creates the room on demand.
- * @param {string} roomName
- * @param {string} buildingId
- */
-function unlockDoor(roomName, buildingId) {
-  if (!buildingId) return;
-  getOrCreateRoomWorld(roomName).unlockedDoors.add(buildingId);
 }
 
 /**
@@ -586,9 +527,6 @@ module.exports = {
   getHomeCentersBySpecies,
   spawnForSpecies,
   getGuardBoundsByRobotId,
-  auxBuildingById,
-  isDoorLocked,
-  unlockDoor,
   getMapMeta,
   isSolidAtRoom,
   getWorldEntities,

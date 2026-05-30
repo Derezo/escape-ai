@@ -436,20 +436,11 @@ class WorldScene extends Phaser.Scene {
 
   /**
    * Static signage for one AUXILIARY building (commissary / washroom / maintenance):
-   * a title-cased name label centred over the footprint, plus a 🔒 marker pinned at
-   * the door. Both sit ABOVE the roof (DEPTH_AUX_OVERLAY) so they stay readable
-   * whether the roof is opaque (player outside) or faded (player inside), letting
-   * the three food halls be told apart at a glance. Drawn once in buildWorld.
-   *
-   * LOCK STATE IS STATIC. We render the door as locked iff `b.locked` — the
-   * generator's DEFAULT lock state from the seed-derived map. The SERVER owns the
-   * LIVE unlocked set (a room unlocks when its door-terminal is ordered), but that
-   * state is NOT on the wire today: the snapshot's terminal/food/robot entities
-   * carry no per-building unlock flag, so there is no client-observable signal to
-   * drive a live indicator. Wiring the marker to clear on unlock requires a
-   * server-sent flag (e.g. an `unlocked` field on the door-terminal entity or a
-   * map-room state message) — a future net addition, out of scope for this client
-   * phase. Until then the marker simply shows the initial locked state.
+   * a title-cased name label centred over the footprint. It sits ABOVE the roof
+   * (DEPTH_AUX_OVERLAY) so it stays readable whether the roof is opaque (player
+   * outside) or faded (player inside), letting the three food halls be told apart at
+   * a glance. Drawn once in buildWorld. (The buildings are not locked — food inside
+   * is freely collectable — so there is no door-lock marker.)
    */
   private buildAuxSignage(b: Building, TS: number): void {
     const auxKind = b.auxKind;
@@ -470,17 +461,6 @@ class WorldScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setDepth(DEPTH_AUX_OVERLAY);
     this.auxSignage.push(label);
-
-    // Locked-door marker at the door tile centre (static — see method doc).
-    if (b.locked === true) {
-      const dx = b.doorTx * TS + TS / 2;
-      const dy = b.doorTy * TS + TS / 2;
-      const marker = this.add
-        .text(dx, dy, '🔒', { fontFamily: 'sans-serif', fontSize: '16px' })
-        .setOrigin(0.5)
-        .setDepth(DEPTH_AUX_OVERLAY);
-      this.auxSignage.push(marker);
-    }
   }
 
   /**
