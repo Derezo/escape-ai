@@ -22,8 +22,8 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-const PINNED_COLLISION_HASH = 505499499;
-const PINNED_ENTITYSPEC_HASH = 3154250066;
+const PINNED_COLLISION_HASH = 266388496;
+const PINNED_ENTITYSPEC_HASH = 3934265980;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -209,6 +209,73 @@ test('water feature: no reach target sits on or adjacent to deep water', () => {
     for (const t of targets) {
       assert.ok(!nearDeep(map, t.x, t.y), `seed ${seed}: reach target ${t.name} is on/adjacent to deep water`);
       assert.ok(groundAt(map, t.x, t.y) !== TILE_INDEX.WATER_DEEP, `seed ${seed}: reach target ${t.name} is ON deep water`);
+    }
+  }
+});
+
+// --- Phase B (entrance plaza + tile accuracy) invariants ---------------------
+
+test('entrance plaza: a species-less gatehouse building exists with a reachable, non-solid door', () => {
+  for (const seed of [0, 7, 123, 9999]) {
+    const map = generateWorld(seed);
+    const gatehouses = map.buildings.filter((b) => b.species == null);
+    assert.equal(gatehouses.length, 1, `seed ${seed}: exactly one species-less gatehouse`);
+    const gh = gatehouses[0];
+    // Door is non-solid (DOOR_OPEN) so the reachability test can reach it.
+    assert.ok(
+      !tileSolid(map.collision, map.w, map.h, gh.doorTx, gh.doorTy),
+      `seed ${seed}: gatehouse door is non-solid`,
+    );
+    // Door reachable from spawn[0].
+    const s0 = map.spawns[0];
+    const seen = floodReachable(map, tx(map, s0.x), tx(map, s0.y));
+    assert.ok(seen[gh.doorTy * map.w + gh.doorTx], `seed ${seed}: gatehouse door reachable from spawn`);
+    // The escape gate is the single perimeter opening and is non-solid.
+    assert.ok(
+      !tileSolid(map.collision, map.w, map.h, tx(map, map.gate.x), tx(map, map.gate.y)),
+      `seed ${seed}: gate tile non-solid`,
+    );
+  }
+});
+
+test('tile accuracy: every single-edge/corner grass border gets a blend tile (idempotent pass)', () => {
+  // blendGroundEdges feathers a grass cell that borders a path/water region into
+  // the matching edge/corner tile — EXCEPT the ambiguous configs it deliberately
+  // leaves as base grass (target on OPPOSITE sides N+S or E+W, i.e. a 1-tile grass
+  // sliver between two regions, which no single edge tile can represent). So: a
+  // grass cell whose path/water neighbours form a single edge or an outer corner
+  // MUST have been blended; only the opposite-pair / all-four slivers may remain.
+  // This proves the pass is total over the cases it claims and thus idempotent
+  // (re-running finds only the same ambiguous cells, which it leaves alone).
+  const GRASS = new Set([
+    TILE_INDEX.GRASS_A, TILE_INDEX.GRASS_B, TILE_INDEX.GRASS_C,
+    TILE_INDEX.GRASS_FLOWERS, TILE_INDEX.GRASS_PATCHY,
+  ]);
+  const cls = (idx) => {
+    if (idx === TILE_INDEX.PAVED || idx === TILE_INDEX.PAVED_CRACK || idx === TILE_INDEX.COBBLE || idx === TILE_INDEX.COBBLE_WORN) return 'path';
+    if (idx === TILE_INDEX.WATER_DEEP || idx === TILE_INDEX.WATER_SHALLOW || idx === TILE_INDEX.POND_DEEP || idx === TILE_INDEX.POND_EDGE) return 'water';
+    return 'grass';
+  };
+  for (const seed of [0, 1, 123, 777, 424242]) {
+    const map = generateWorld(seed);
+    const g = map.ground.data;
+    for (let ty = 1; ty < map.h - 1; ty++) {
+      for (let tx2 = 1; tx2 < map.w - 1; tx2++) {
+        if (!GRASS.has(g[ty * map.w + tx2])) continue;
+        for (const target of ['path', 'water']) {
+          const n = cls(g[(ty - 1) * map.w + tx2]) === target;
+          const s = cls(g[(ty + 1) * map.w + tx2]) === target;
+          const ww = cls(g[ty * map.w + tx2 - 1]) === target;
+          const e = cls(g[ty * map.w + tx2 + 1]) === target;
+          // Single edge or outer corner → should have been blended (not plain grass).
+          const singleEdge = (n && !s) || (s && !n) || (e && !ww) || (ww && !e);
+          const outerCorner = (n && e) || (n && ww) || (s && e) || (s && ww);
+          assert.ok(
+            !(singleEdge || outerCorner),
+            `seed ${seed}: plain grass at (${tx2},${ty}) borders ${target} on a single edge/corner — blend missed it`,
+          );
+        }
+      }
     }
   }
 });

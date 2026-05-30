@@ -4,6 +4,29 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.34: **Map overhaul Phase B — entrance gatehouse plaza + tile-style accuracy
+  (`shared/src/world.ts`).** The bare 1-tile east gate becomes a believable main entrance, and
+  the long-unused blend tiles feather every grass↔path / grass↔water seam. `WORLD_GEN_VERSION`
+  5 → 6; hashes re-pinned. Reuse-only — no new tiles, no renderer change.
+  - **Gatehouse plaza (`stampEntrancePlaza`, replaces `stampPerimeter`):** a roofed gatehouse
+    hall (a species-less `Building`, so the renderer's fade-on-enter roof reads as walking
+    through the entrance and the coverage test still counts exactly one home per species) over a
+    cobble forecourt, framed with a sign arrow, banner, lamp posts, a bench, a bin and planting.
+    The perimeter wall is opened at **exactly one tile** — the single escape gate
+    (`gate = tileCenter(w-1, gateTy)`, byte-stable for `checkEscape`) — so the chokepoint the
+    game relies on is preserved. The plaza owns the east band and hands the layout its forecourt
+    spine anchor + a reserved rect, so the organic zones stay clear of the entrance.
+  - **Autotiled edges (`blendGroundEdges`/`classOf`/`pickBlendTile`):** a pure, row-major,
+    8-neighbour pass that rewrites a grass cell bordering a path/water region into the matching
+    `PATH_EDGE_*`/`WATER_EDGE_*` blend tile (25–48) — feathering the seams that used to be hard
+    edges. Path wins over water on a shoreline-path cell; ambiguous slivers (region on opposite
+    sides) stay base grass. All blend tiles are non-solid and solid water/walls are never
+    rewritten, so **collision is unchanged** (no rebuild). Runs after the reachability carve so
+    fallback corridors blend too.
+  - **Tests:** new `world.test.mjs` invariants — the gatehouse exists, is species-less, and has a
+    reachable non-solid door; and every single-edge/outer-corner grass border was blended (proving
+    the pass total over its claimed cases + idempotent). 17/17 green.
+
 - 0.2.33: **Map overhaul Phase A — organic layout + biome zones + water feature
   (`shared/src/world.ts`).** The rigid 3×3 PAVED avenue grid and uniform rectangular plots
   are replaced by an organic, real-zoo layout while keeping the generator pure + deterministic

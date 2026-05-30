@@ -21,7 +21,7 @@ import { SPECIES_KEYS } from './species.js';
 import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
 
 /** Bump whenever generateWorld's OUTPUT changes, so client/server parity is asserted. */
-export const WORLD_GEN_VERSION = 5;
+export const WORLD_GEN_VERSION = 6;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -220,13 +220,8 @@ function scatterGrassVariants(ground: TileGrid, rng: () => number): void {
   }
 }
 
-/** Stamp the perimeter wall ring (deco) and clear a single gate gap on the east edge. */
-function stampPerimeter(
-  deco: TileGrid,
-  w: number,
-  h: number,
-  rng: () => number,
-): { gateTx: number; gateTy: number } {
+/** Stamp the solid perimeter wall ring (deco), no openings. */
+function stampPerimeterRing(deco: TileGrid, w: number, h: number): void {
   for (let x = 0; x < w; x++) {
     setTile(deco, x, 0, TILE_INDEX.WALL_EXT_MID);
     setTile(deco, x, h - 1, TILE_INDEX.WALL_EXT_MID);
@@ -235,11 +230,134 @@ function stampPerimeter(
     setTile(deco, 0, y, TILE_INDEX.WALL_EXT_MID);
     setTile(deco, w - 1, y, TILE_INDEX.WALL_EXT_MID);
   }
-  // Gate near the east-edge vertical center, with small deterministic jitter.
+}
+
+/** What stampEntrancePlaza produces for generateWorld to wire up. */
+interface EntrancePlaza {
+  gateTx: number;
+  gateTy: number;
+  /** The forecourt root tile the spine connects to (just west of the gatehouse). */
+  forecourt: Junction;
+  /** The gatehouse structure (a species-less Building → fade-on-enter roof). */
+  gatehouse: Building;
+  /** Tile rect [x0,y0,x1,y1] the plaza owns; the layout reserves it. */
+  reservedRect: { x0: number; y0: number; x1: number; y1: number };
+}
+
+/**
+ * Upgrade the bare east gate into a believable MAIN GATEHOUSE + paved forecourt.
+ *
+ * Geometry (east edge, vertical center with the same single jitter draw the old
+ * stampPerimeter used, so the rng stream's draw count is preserved):
+ *   - ONE gate gap in the perimeter wall (the escape point — checkEscape targets
+ *     `gate = tileCenter(w-1, gateTy)`, kept byte-stable). The gatehouse straddles
+ *     the wall just inside it.
+ *   - A roofed gatehouse hall (a Building: wall ring + floor + a south/north door,
+ *     DOOR_OPEN threshold) — the fade-on-enter roof reads as walking through the
+ *     entrance. The east wall stays SOLID except the one gate tile, so the hall
+ *     has exactly one way OUT of the zoo (single chokepoint).
+ *   - A COBBLE forecourt west of the hall (the open plaza), framed with signage
+ *     (SIGN_ARROW pointing in), a BANNER over the arch, LAMP_POSTs, a BENCH, a
+ *     TRASH_BIN, trimmed bushes + a flower bed for dressing.
+ *
+ * Returns the forecourt root (spine anchor), the gatehouse Building, and the
+ * reserved rect so the organic layout keeps its zones out of the entrance band.
+ */
+function stampEntrancePlaza(
+  ground: TileGrid,
+  deco: TileGrid,
+  roof: TileGrid,
+  w: number,
+  h: number,
+  rng: () => number,
+): EntrancePlaza {
+  // Same single jitter draw as the old gate placement (preserve draw count).
   const gateTy = Math.floor(h / 2) + randInt(rng, -6, 6);
   const gateTx = w - 1;
-  setTile(deco, gateTx, gateTy, 0); // open the wall so the gate is a real gap
-  return { gateTx, gateTy };
+  // Open exactly ONE tile in the east wall — the escape gate.
+  setTile(deco, gateTx, gateTy, TILE_INDEX.DOOR_OPEN);
+
+  // Gatehouse hall: a 6-wide × 7-tall roofed block whose EAST wall sits one tile
+  // inside the perimeter, centered on the gate row. Floors are tile; the roof
+  // fades on enter (it's a Building). The hall's east side aligns with the gate so
+  // you pass gate → hall → forecourt.
+  const hw = 6;
+  const hh = 7;
+  const hx = w - 1 - hw; // east wall of the hall one tile inside the perimeter
+  const hy = clampInt(gateTy - Math.floor(hh / 2), 2, h - 3 - hh);
+
+  for (let dy = 0; dy < hh; dy++) {
+    for (let dx = 0; dx < hw; dx++) {
+      const tx = hx + dx;
+      const ty = hy + dy;
+      const edge = dx === 0 || dy === 0 || dx === hw - 1 || dy === hh - 1;
+      if (edge) {
+        setTile(deco, tx, ty, TILE_INDEX.WALL_EXT_MID);
+      } else {
+        setTile(ground, tx, ty, TILE_INDEX.FLOOR_TILE);
+        setTile(roof, tx, ty, TILE_INDEX.ROOF_RED_MID);
+      }
+    }
+  }
+  // East passage: align the hall's east wall opening with the gate row so the gate
+  // → hall threshold is continuous and walkable (2-wide for the collision AABB).
+  const eGateRow = clampInt(gateTy, hy + 1, hy + hh - 2);
+  setTile(deco, hx + hw - 1, eGateRow, TILE_INDEX.DOOR_OPEN);
+  setTile(roof, hx + hw - 1, eGateRow, 0);
+  // West door (out of the hall onto the forecourt), 2-wide, walkable.
+  const wDoorTy = hy + hh - 2;
+  setTile(deco, hx, wDoorTy, TILE_INDEX.DOOR_OPEN);
+  setTile(deco, hx, wDoorTy - 1, TILE_INDEX.DOOR_OPEN);
+  setTile(roof, hx, wDoorTy, 0);
+  setTile(roof, hx, wDoorTy - 1, 0);
+
+  // Forecourt: a cobble plaza west of the hall. Keep it clear of the perimeter and
+  // a tile shy of the hall. Width scales the entrance band but stays modest.
+  const fcW = 12;
+  const fcx0 = hx - fcW;
+  const fcy0 = clampInt(gateTy - 5, 2, h - 12);
+  const fcy1 = clampInt(gateTy + 5, fcy0 + 6, h - 3);
+  for (let ty = fcy0; ty <= fcy1; ty++) {
+    for (let tx = fcx0; tx < hx; tx++) {
+      // Subtle 2-tone cobble checker so the plaza isn't a flat slab (no rng — a
+      // fixed parity pattern keeps it deterministic).
+      const worn = (tx + ty) % 5 === 0;
+      setTile(ground, tx, ty, worn ? TILE_INDEX.COBBLE_WORN : TILE_INDEX.COBBLE);
+    }
+  }
+
+  // Dressing (all non-blocking visual flavor except posts/signs which are solid —
+  // kept off the central walk lane at gateTy so the path through stays clear).
+  const lane = wDoorTy; // the walkable lane out of the west door
+  setTile(deco, fcx0, fcy0, TILE_INDEX.LAMP_POST);
+  setTile(deco, fcx0, fcy1, TILE_INDEX.LAMP_POST);
+  setTile(deco, hx - 1, fcy0, TILE_INDEX.SIGN_ARROW);
+  setTile(deco, hx - 1, fcy1, TILE_INDEX.BANNER);
+  if (fcy1 - 1 !== lane) setTile(deco, fcx0 + 2, fcy1 - 1, TILE_INDEX.BENCH);
+  if (fcy0 + 1 !== lane) setTile(deco, fcx0 + 2, fcy0 + 1, TILE_INDEX.TRASH_BIN);
+  if (fcy0 !== lane) setTile(deco, fcx0 + 4, fcy0, TILE_INDEX.BUSH_TRIMMED);
+  if (fcy1 !== lane) setTile(deco, fcx0 + 4, fcy1, TILE_INDEX.FLOWER_BED);
+
+  // The gatehouse Building: rx/ry/rw/rh is the ROOFED HALL only (not the open
+  // forecourt) so the renderer's roof-fade rect covers just the hall. species
+  // omitted → excluded from the coverage test's home counts. door = the west door.
+  const gatehouse: Building = {
+    id: 'gatehouse',
+    rx: hx,
+    ry: hy,
+    rw: hw,
+    rh: hh,
+    doorTx: hx,
+    doorTy: wDoorTy,
+  };
+
+  return {
+    gateTx,
+    gateTy,
+    forecourt: { tx: clampInt(fcx0 + 1, 2, w - 3), ty: lane },
+    gatehouse,
+    reservedRect: { x0: fcx0 - 1, y0: Math.min(fcy0, hy) - 1, x1: w - 1, y1: Math.max(fcy1, hy + hh) + 1 },
+  };
 }
 
 /** Integer clamp (the float `clamp` from step.ts isn't imported to keep deps tight). */
@@ -568,6 +686,110 @@ function bridgeRiverCrossings(ground: TileGrid, riverDeep: Set<number>): void {
     if (ew || ns) {
       setTile(ground, tx, ty, road);
       riverDeep.delete(i);
+    }
+  }
+}
+
+// --- Tile-style accuracy: autotiled edges (the unused blend tiles 25-48) ------
+//
+// The blend tiles PATH_EDGE_*/CORNER/ICORNER (25-36) and WATER_EDGE_*/… (37-48)
+// were defined but never written by world-gen, so grass met path/water with a
+// hard seam. blendGroundEdges feathers those seams: it rewrites a GRASS cell that
+// borders a path/water region into the matching edge/corner tile, chosen by an
+// 8-neighbour mask. Pure (no rng), row-major, first-match priority → deterministic.
+// All blend tiles are non-solid, and the pass never rewrites a solid water/wall
+// tile, so collision is UNCHANGED (verified: tiles 25-48 carry no solid flag).
+
+type EdgeClass = 'grass' | 'path' | 'water';
+
+/** Classify a ground tile index for the edge-blend pass. */
+function classOf(idx: number): EdgeClass {
+  if (
+    idx === TILE_INDEX.PAVED ||
+    idx === TILE_INDEX.PAVED_CRACK ||
+    idx === TILE_INDEX.COBBLE ||
+    idx === TILE_INDEX.COBBLE_WORN
+  )
+    return 'path';
+  if (
+    idx === TILE_INDEX.WATER_DEEP ||
+    idx === TILE_INDEX.WATER_SHALLOW ||
+    idx === TILE_INDEX.POND_DEEP ||
+    idx === TILE_INDEX.POND_EDGE
+  )
+    return 'water';
+  return 'grass';
+}
+
+/** Whether a ground index is a plain grass variant (the only cells we feather). */
+function isGrassIndex(idx: number): boolean {
+  return (
+    idx === TILE_INDEX.GRASS_A ||
+    idx === TILE_INDEX.GRASS_B ||
+    idx === TILE_INDEX.GRASS_C ||
+    idx === TILE_INDEX.GRASS_FLOWERS ||
+    idx === TILE_INDEX.GRASS_PATCHY
+  );
+}
+
+/**
+ * Pick the blend tile for a grass cell given which of its 4 orthogonal neighbours
+ * are of `target` class. Outer corner (two adjacent edges) > straight edge > inner
+ * corner (diagonal only). Returns 0 to leave the cell unchanged (e.g. opposite
+ * edges N+S, or all-four — those read fine as base grass).
+ */
+function pickBlendTile(target: 'path' | 'water', n: boolean, e: boolean, s: boolean, ww: boolean): number {
+  const P = TILE_INDEX;
+  const E = target === 'path'
+    ? { N: P.PATH_EDGE_N, E: P.PATH_EDGE_E, S: P.PATH_EDGE_S, W: P.PATH_EDGE_W,
+        CNE: P.PATH_CORNER_NE, CNW: P.PATH_CORNER_NW, CSE: P.PATH_CORNER_SE, CSW: P.PATH_CORNER_SW }
+    : { N: P.WATER_EDGE_N, E: P.WATER_EDGE_E, S: P.WATER_EDGE_S, W: P.WATER_EDGE_W,
+        CNE: P.WATER_CORNER_NE, CNW: P.WATER_CORNER_NW, CSE: P.WATER_CORNER_SE, CSW: P.WATER_CORNER_SW };
+  // Outer corners: two orthogonally-adjacent edges of the target.
+  if (n && e) return E.CNE;
+  if (n && ww) return E.CNW;
+  if (s && e) return E.CSE;
+  if (s && ww) return E.CSW;
+  // Straight edges (exactly one side, or opposite sides → pick the first).
+  if (n && !s) return E.N;
+  if (s && !n) return E.S;
+  if (e && !ww) return E.E;
+  if (ww && !e) return E.W;
+  return 0; // opposite pair or none → leave as grass
+}
+
+/**
+ * Feather every grass cell that borders a path or water region into the matching
+ * blend tile. Path takes priority over water on a cell touching both (shoreline
+ * paths are rare and one must win deterministically). Idempotent: a second run
+ * finds no plain-grass borders left to change, so it's a no-op (asserted in test).
+ */
+function blendGroundEdges(ground: TileGrid): void {
+  const { w, h, data } = ground;
+  const at = (tx: number, ty: number): EdgeClass => {
+    if (tx < 0 || ty < 0 || tx >= w || ty >= h) return 'grass';
+    return classOf(data[ty * w + tx]);
+  };
+  // Snapshot the grass cells first so reads see the ORIGINAL field (writing blend
+  // tiles must not cascade — a freshly-written edge is not grass, so it wouldn't
+  // re-trigger anyway, but snapshotting makes the pass order-independent + truly
+  // idempotent).
+  for (let ty = 1; ty < h - 1; ty++) {
+    for (let tx = 1; tx < w - 1; tx++) {
+      const idx = data[ty * w + tx];
+      if (!isGrassIndex(idx)) continue;
+      for (const target of ['path', 'water'] as const) {
+        const n = at(tx, ty - 1) === target;
+        const e = at(tx + 1, ty) === target;
+        const s = at(tx, ty + 1) === target;
+        const ww = at(tx - 1, ty) === target;
+        if (!n && !e && !s && !ww) continue;
+        const blend = pickBlendTile(target, n, e, s, ww);
+        if (blend) {
+          data[ty * w + tx] = blend;
+          break; // path wins; don't also water-blend this cell
+        }
+      }
     }
   }
 }
@@ -945,16 +1167,17 @@ export function generateWorld(seed: number): WorldMap {
 
   scatterGrassVariants(ground, rng);
 
-  // 2. Perimeter wall + gate.
-  const { gateTx, gateTy } = stampPerimeter(deco, w, h, rng);
+  // 2. Perimeter wall ring + the gatehouse entrance plaza. The plaza OWNS the east
+  //    band: it opens the single escape gate, stamps the roofed gatehouse hall +
+  //    cobble forecourt, and hands back the forecourt root (spine anchor) + the
+  //    reserved rect so the organic zones stay clear of the entrance.
+  stampPerimeterRing(deco, w, h);
+  const plaza = stampEntrancePlaza(ground, deco, roof, w, h, rng);
+  const { gateTx, gateTy, forecourt } = plaza;
   const gate = { x: tileCenter(gateTx, tile), y: tileCenter(gateTy, tile) };
 
-  // The entrance band (east strip) is reserved for the forecourt + spawns so the
-  // organic zones don't crowd the gate. Phase B fills it with the gatehouse plaza;
-  // for now it's a forecourt root the spine connects to.
-  const ENTRANCE_BAND = 22; // tiles of clear east strip (≈ spawn inset + breathing room)
-  const eastLimit = w - ENTRANCE_BAND;
-  const forecourt: Junction = { tx: clampInt(gateTx - 6, 2, w - 3), ty: gateTy };
+  // The zones live west of the entrance band the plaza reserved.
+  const eastLimit = plaza.reservedRect.x0;
 
   // 3. Biome zones (replaces the rigid avenue grid).
   const zones = partitionZones(h, eastLimit, rng);
@@ -971,12 +1194,22 @@ export function generateWorld(seed: number): WorldMap {
   //    while still varying per seed.
   const speciesOrder = shuffle(rng, [...SPECIES_KEYS]);
 
-  const buildings: Building[] = [];
+  const buildings: Building[] = [plaza.gatehouse]; // gatehouse first (species-less)
   const housing: Housing[] = [];
   const reserved = new Set<number>(); // tiles nature must avoid (homes + halos)
   const claimed = new Set<number>(); // tiles already taken by a home (placement)
+  // Reserve the plaza footprint so enclosure placement + nature stay out of it.
+  for (let ty = plaza.reservedRect.y0; ty <= plaza.reservedRect.y1; ty++) {
+    for (let tx = plaza.reservedRect.x0; tx <= plaza.reservedRect.x1; tx++) {
+      claimed.add(tileIndex(w, tx, ty));
+      reserved.add(tileIndex(w, tx, ty));
+    }
+  }
   const reachTargets: { tx: number; ty: number }[] = [];
   const questPos = new Map<string, { tx: number; ty: number }>();
+  // The gatehouse door must be reachable (the reachability test iterates every
+  // building). Its west door opens onto the forecourt → the gate.
+  reachTargets.push({ tx: plaza.gatehouse.doorTx, ty: plaza.gatehouse.doorTy });
 
   for (let i = 0; i < speciesOrder.length; i++) {
     const species = speciesOrder[i];
@@ -1211,6 +1444,11 @@ export function generateWorld(seed: number): WorldMap {
       );
     }
   }
+
+  // 9. Tile-style accuracy: feather grass↔path and grass↔water seams with the
+  //    blend tiles (25-48). Runs AFTER the carve so fallback corridors blend too.
+  //    Non-solid blend tiles only → collision is unchanged (no rebuild needed).
+  blendGroundEdges(ground);
 
   return {
     version: WORLD_GEN_VERSION,
