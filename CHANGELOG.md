@@ -4,6 +4,34 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.48: **NPC movement refactor — Phase 5: follower chain + grace + drift-home.** Followers now
+  form a trailing LINE and, when their feed timer lapses, drift back to their enclosure instead of
+  snapping to a generic wander.
+  - **Chain/line formation** (`follow.stepFollowers`): each owner's followers are ordered
+    deterministically (oldest fed = front, tie-broken by id hash) and stepped front-to-back —
+    link 0 trails the player, link *i* trails link *i-1*'s already-updated position (player → f1 →
+    f2 → …), spaced by `FOLLOW.GAP`. Movement routes through `chainFollowStep` + `steerAround` +
+    `locomotionStep` (so a tortoise link crawls, a kangaroo lurches). Deterministic anti-stuck
+    ladder: if a link makes ~no progress while beyond the gap → retry toward the owner (proven
+    reachable), then a per-(id,tick) jitter, else hold — no permanent conga-line deadlock.
+  - **Grace window** (user decision): on a lapsed timer the animal keeps lagging in the chain for
+    `FOLLOW.GRACE_SECS`; a re-feed snaps it back (clears grace + return-home); only once grace
+    elapses with no re-feed does it detach.
+  - **Drift home** (`releaseToHome` + `stepIdleAnimals` return-home branch): a detached follower
+    wanders biased toward its enclosure center (`homeBiasedWanderStep`), gait-applied, and is
+    considered "home" once within a proximity radius of the pen (the gate is too small to thread
+    with local steering — the home center can even sit in a corner of the bounds, so the radius is
+    measured center-to-farthest-corner + slack); then it resumes a normal contained wander. A
+    species with no home (transient fox decoy) falls back to a plain release.
+  - **Idle wander now gait-aware** (`stepIdleAnimals`): ambient drift runs at the per-species gait
+    speed (`gaitSpeed`), so wandering tortoises crawl and kangaroos lurch (bringing forward part of
+    Phase 6's wiring; the client-side bird bob remains for Phase 6).
+  - New: `world.getHomeCentersBySpecies`; config `FOLLOW.GAP` / `FOLLOW.GRACE_SECS`. The existing
+    feed/steal/score path is unchanged (verified). Verified by sims: a 3-link chain trails in order
+    (maxGap 56u), grace enters + re-feed snaps back + lapse detaches, and fox/tortoise/bird/
+    kangaroo/elephant all drift home and clear the flag (38–72s) — all deterministic. Server boots
+    clean; shared 50/50.
+
 - 0.2.47: **NPC movement refactor — Phase 4: robot patrol + investigate FSM.** Idle robots no
   longer drift aimlessly — they now patrol the generated path loop and break off to investigate.
   - `server/game/behaviors.js` (new): the robot behavior FSM (`patrol` ↔ `investigate` ↔ resume),

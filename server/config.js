@@ -145,6 +145,14 @@ module.exports = {
     // Don't close inside this distance (units) — the follower trails, it doesn't
     // jitter on top of the owner.
     STOP_DIST: parseFloat(process.env.FOLLOW_STOP_DIST) || 40,
+    // Chain spacing (units): each link trails this far behind the PREVIOUS link
+    // (player → f1 → f2 → …) so the herd reads as a line, not a pile. Mirrors
+    // STOP_DIST (the head-of-chain's own trail distance to the player).
+    GAP: parseFloat(process.env.FOLLOW_GAP) || 40,
+    // Grace window (seconds) after a follow timer lapses: the animal keeps lagging
+    // in the chain, and a quick re-feed snaps it back. Only once grace elapses with
+    // no re-feed does it detach and drift home. A short "it's losing interest" beat.
+    GRACE_SECS: parseFloat(process.env.FOLLOW_GRACE_SECS) || 2,
     // Scoring at the gate: your own animal, each WILD follower, each STOLEN
     // follower (worth more — the competitive theft payoff).
     SCORE_OWN: parseFloat(process.env.SCORE_OWN) || 100,

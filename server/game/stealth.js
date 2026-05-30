@@ -487,36 +487,105 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
  * @param {number} currentTick
  */
 function stepIdleAnimals(dt, roomName, currentTick) {
-  if (!shared || !movement) return;
+  if (!shared || !movement || !locomotion) return;
   const rm = world.getRoomMap(roomName);
   const mapB = mapBounds(rm);
   const homeBySpecies = homeBoundsForRoom(roomName);
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
-    // An animal currently FOLLOWING a player is moved by follow.stepFollowers this
-    // tick (which runs right after this) — skip it here so it isn't both drifted by
-    // wander AND pulled toward its owner in the same tick (a double-move).
-    if (follow.isFollower(e, currentTick)) continue;
+    // An animal still LEASHED to a player (active follower OR in its grace window)
+    // is moved by follow.stepFollowers this tick (which runs right after this) —
+    // skip it here so it isn't both drifted AND pulled along the chain (double-move).
+    if (follow.isLeashed(e, currentTick)) continue;
+
+    const species = penSpeciesOf(e.id);
+
+    // RETURN HOME: a follower whose leash lapsed drifts back to its enclosure
+    // (home-biased wander) rather than snapping to a generic wander. The enclosure
+    // GATE is a needle to thread with local steering, so "home" is a PROXIMITY check:
+    // once the animal is within homeArrivalRadius of its home center we clear the flag
+    // and hand it back to the normal contained wander (whose soft inward bias then
+    // settles it into the pen). Keyed by e.species (how releaseToHome set homeX/Y),
+    // with the id-parsed species as a fallback so a pen animal still matches.
+    if (e.returningHome) {
+      const homeBounds = homeBySpecies.get(e.species) || (species && homeBySpecies.get(species));
+      const home = { x: e.homeX || 0, y: e.homeY || 0 };
+      // Arrival radius: the distance from the home CENTER to the farthest pen
+      // corner, plus a couple of tiles of slack — so the animal counts as home once
+      // it reaches the pen's vicinity (even pressed against the outside of the far
+      // fence), since the gate is too small to thread reliably with local steering.
+      // (The home center can sit in a corner of the bounds, not the middle, so we
+      // measure to the farthest corner rather than assume half-diagonal.)
+      const arrive = homeArrivalRadius(home, homeBounds, rm.tile);
+      if (!homeBounds || shared.dist2(e, home) <= arrive * arrive) {
+        e.returningHome = false;
+        e.homeX = undefined;
+        e.homeY = undefined;
+        // fall through to the normal contained wander below this tick.
+      } else {
+        // Drift home across the WHOLE map (it starts outside its pen), gait-applied,
+        // collision-aware. homeBiasedWanderStep gives the biased heading; locomotionStep
+        // commits it (sliding along any fence in the way) with the species gait — a
+        // returning tortoise still crawls home at ½ speed.
+        const next = shared.homeBiasedWanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED, mapB, home);
+        const ddx = next.x - e.x;
+        const ddy = next.y - e.y;
+        const len = Math.hypot(ddx, ddy) || 1;
+        const bx = e.x;
+        const by = e.y;
+        locomotion.locomotionStep(
+          e, ddx / len, ddy / len, currentTick, dt, config.WANDER_ANIMAL_SPEED,
+          rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS,
+        );
+        e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
+        continue;
+      }
+    }
+
     // CONTAINMENT (Phase C): a pen animal (id `pen-${species}` / `pen-${species}-n`)
     // that is NOT following wanders ONLY within its enclosure interior rect. The soft
     // inward bias inside wanderAvoid turns it away from the fence before it reaches
     // the gate row; the collision grid is the hard backstop. Non-pen animals (the fox
     // lure `decoy-N`, any future free animal) have no entry → mapB → roam (unchanged).
-    const species = penSpeciesOf(e.id);
     const bounds = (species && homeBySpecies.get(species)) || mapB;
     // wanderAvoid SLIDES off walls (deterministic probe-and-rotate) instead of pinning
-    // flush to them until the heading re-rolls — the same deterministic wander heading
-    // + edge bias as before, but it rounds the obstacle and commits via
-    // moveWithCollision (which also slides). Mutates e.{x,y} in place.
+    // flush to them until the heading re-rolls. The species gait is applied by feeding
+    // it the gait-adjusted speed for this tick (gaitWanderSpeed) — so a wandering
+    // tortoise crawls at ½ speed and a kangaroo's drift lurches in hop bursts (speed 0
+    // on a pause tick → it holds, exactly like locomotionStep).
     const bx = e.x;
     const by = e.y;
     movement.wanderAvoid(
-      e, currentTick, dt, config.WANDER_ANIMAL_SPEED,
+      e, currentTick, dt, gaitWanderSpeed(e, currentTick),
       rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, bounds,
     );
     // Face the actual drift direction (zero delta on a boxed-in tick holds facing).
     e.facing = shared.facingFromVec(e.x - bx, e.y - by, e.facing || 's');
   }
+}
+
+/** The gait-adjusted wander speed for an idle animal this tick (so wanderAvoid moves
+ *  a tortoise at ½ speed, a kangaroo in hop bursts, etc. — the species gait applied
+ *  to ambient drift, deterministically via the shared locomotion registry). */
+function gaitWanderSpeed(entity, currentTick) {
+  return locomotion.gaitSpeed(entity.species, entity.id, currentTick, config.WANDER_ANIMAL_SPEED);
+}
+
+/** The "you're home" proximity radius for a returning animal: the distance from
+ *  the home CENTER to the farthest pen corner (the center can sit in a corner of
+ *  the bounds, not the middle), plus two tiles of slack so being pressed against
+ *  the outside of the far fence still counts as home — the gate is too small to
+ *  thread reliably with local steering. Falls back to two tiles if no bounds. */
+function homeArrivalRadius(home, bounds, tile) {
+  const slack = 2 * (tile || 32);
+  if (!bounds) return slack;
+  const corners = [
+    Math.hypot(bounds.minX - home.x, bounds.minY - home.y),
+    Math.hypot(bounds.maxX - home.x, bounds.minY - home.y),
+    Math.hypot(bounds.minX - home.x, bounds.maxY - home.y),
+    Math.hypot(bounds.maxX - home.x, bounds.maxY - home.y),
+  ];
+  return Math.max(...corners) + slack;
 }
 
 /** The species owning a pen-anchor id (`pen-fox` / `pen-fox-2` → 'fox'), else null. */

@@ -147,6 +147,14 @@ function feedNearbyAnimal(player, roomName, currentTick) {
   const liked = world.foodForSpecies(target.species).key;
   player.inventory[liked] -= 1; // consume one unit
 
+  // A re-feed (within grace, or of an animal that had detached to drift home)
+  // re-leashes it: clear the grace + return-home state so it snaps back into the
+  // chain instead of lagging out or wandering off.
+  target.graceUntilTick = 0;
+  target.returningHome = false;
+  target.homeX = undefined;
+  target.homeY = undefined;
+
   const grant = secsToTicks(config.FOLLOW.GRANT_SECS);
   const cap = secsToTicks(config.FOLLOW.CAP_SECS);
   const prevOwner = target.followerOf || null;
@@ -178,63 +186,142 @@ function feedNearbyAnimal(player, roomName, currentTick) {
 
 // --- per-tick follower movement --------------------------------------------
 
-/** True if an animal entity is an ACTIVE follower at `tick` (used by
- *  stepIdleAnimals to skip it so it isn't both drifted and pulled). */
+/** True if an animal entity is an ACTIVE follower at `tick` (its follow timer is
+ *  still live — not counting the grace window). */
 function isFollower(entity, tick) {
   return !!entity.followerOf && (entity.followUntilTick || 0) > tick;
 }
 
+/** True if an animal is still LEASHED to its owner at `tick`: an active follower,
+ *  OR a lapsed one still inside its grace window (it lags in the chain a beat,
+ *  and a re-feed snaps it back). stepIdleAnimals skips a leashed animal so it
+ *  isn't both drifted by wander AND pulled along the chain in the same tick. */
+function isLeashed(entity, tick) {
+  return !!entity.followerOf && (
+    (entity.followUntilTick || 0) > tick || (entity.graceUntilTick || 0) > tick
+  );
+}
+
 /**
- * Move every active follower one step toward its owner (collision-aware, shared
- * integrator) and release any whose timer lapsed or whose owner vanished. Runs in
- * engine.stepNpcs AFTER stepIdleAnimals (which skips followers) and BEFORE
- * stepRobots (so robots perceive followers at this tick's positions). Deterministic:
- * integer-tick comparisons, Map insertion order, shared math, dt passed in.
+ * Move every leashed follower one step along its owner's CHAIN this tick, and
+ * transition any whose timer/grace lapsed (drift home) or whose owner vanished.
+ * Followers form a line: the oldest-fed link trails the player, the next link
+ * trails it, and so on (player → f1 → f2 → …). Runs in engine.stepNpcs AFTER
+ * stepIdleAnimals (which skips leashed animals) and BEFORE stepRobots (so robots
+ * perceive followers at this tick's positions). Deterministic: integer-tick
+ * comparisons, a stable sort, shared math, dt passed in.
  * @param {number} dt
  * @param {string} roomName
  * @param {number} currentTick
  */
 function stepFollowers(dt, roomName, currentTick) {
-  if (!shared) return;
+  if (!shared || !movement || !locomotion) return;
   const rm = world.getRoomMap(roomName);
-  const speed = config.FOLLOW.SPEED;
-  const stop2 = config.FOLLOW.STOP_DIST * config.FOLLOW.STOP_DIST;
   const radius = config.RECT_SIZE * 0.4;
 
-  for (const e of world.getWorldEntities(roomName)) {
+  const entities = world.getWorldEntities(roomName);
+
+  // 1) Lifecycle pass: expire (→ grace, then drift home) / owner-gone, BEFORE the
+  //    chain is built so a detached link isn't part of this tick's line.
+  for (const e of entities) {
     if (e.kind !== 'animal' || !e.followerOf) continue;
 
-    // EXPIRE: the follow lapsed → release to idle drift (stepIdleAnimals owns it
-    // again next tick).
-    if ((e.followUntilTick || 0) <= currentTick) {
-      releaseFollower(e);
-      continue;
-    }
-
-    // OWNER GONE: disconnected / no longer in this room → release. (Disconnect /
-    // catch / escape free followers at their own chokepoints; this is the per-tick
-    // backstop so a follower never chases a ghost.)
+    // OWNER GONE: disconnected / no longer in this room / escaped → drift home.
     const owner = findPlayerById(connectedPlayers, rooms, roomName, e.followerOf);
     if (!owner || owner.escaped) {
-      releaseFollower(e);
+      releaseToHome(e, roomName);
       continue;
     }
 
-    // Move toward the owner with the shared sliding integrator (same call shape as
-    // stealth.movePlayerWithCollision / the robot trial). Stop within STOP_DIST so
-    // it trails rather than jittering on top of the owner.
-    if (shared.dist2(e, owner) > stop2) {
-      const dx = owner.x - e.x;
-      const dy = owner.y - e.y;
-      const len = Math.hypot(dx, dy) || 1;
-      shared.moveWithCollision(
-        e, dx / len, dy / len, dt, speed,
-        rm.collision, rm.w, rm.h, rm.tile, radius,
-      );
-      e.facing = shared.facingFromVec(dx / len, dy / len, e.facing || 's');
+    // TIMER LAPSED → enter the grace window (once), keep lagging in the chain.
+    if ((e.followUntilTick || 0) <= currentTick) {
+      if (!e.graceUntilTick) e.graceUntilTick = currentTick + secsToTicks(config.FOLLOW.GRACE_SECS);
+      // GRACE ELAPSED with no re-feed → detach and drift home.
+      if ((e.graceUntilTick || 0) <= currentTick) {
+        releaseToHome(e, roomName);
+        continue;
+      }
+    }
+  }
+
+  // 2) Chain pass: group the still-leashed followers by owner, order each owner's
+  //    chain (oldest fed first = closest to the player), and step front-to-back so
+  //    each link chases its predecessor's ALREADY-UPDATED position this tick.
+  const byOwner = new Map(); // ownerId -> follower entities
+  for (const e of entities) {
+    if (e.kind === 'animal' && isLeashed(e, currentTick)) {
+      const list = byOwner.get(e.followerOf) || [];
+      list.push(e);
+      byOwner.set(e.followerOf, list);
+    }
+  }
+
+  const gap = config.FOLLOW.GAP;
+  const speed = config.FOLLOW.SPEED;
+  for (const [ownerId, chain] of byOwner) {
+    const owner = findPlayerById(connectedPlayers, rooms, roomName, ownerId);
+    if (!owner) continue; // handled in the lifecycle pass; defensive
+    // Stable chain order: oldest follow first (front), tie-broken by id hash so a
+    // same-tick double-feed is deterministic regardless of Map iteration order.
+    chain.sort((a, b) => (a.followSince - b.followSince) || (shared.hash32(a.id) - shared.hash32(b.id)));
+
+    let prev = { x: owner.x, y: owner.y }; // link 0 trails the player
+    for (let i = 0; i < chain.length; i++) {
+      const e = chain[i];
+      e.chainIndex = i; // client-cosmetic cache; recomputed every tick
+      stepChainLink(e, prev, owner, gap, speed, dt, currentTick, rm, radius);
+      prev = { x: e.x, y: e.y }; // next link trails THIS link's now-updated position
     }
   }
 }
+
+/**
+ * Move one chain link one step toward `leader` (the player for link 0, else the
+ * predecessor link), trailing by `gap`. Applies the species gait (locomotionStep)
+ * and obstacle-aware steering. Deterministic anti-stuck ladder: if a step makes
+ * ~no progress while still beyond the gap, retry steering toward the OWNER (the
+ * proven-reachable anchor — the conga-line corner-snag fix); if still jammed, a
+ * deterministic per-(id,tick) jitter; else hold this tick.
+ */
+function stepChainLink(e, leader, owner, gap, speed, dt, currentTick, rm, radius) {
+  const link = movement.chainFollowStep(e, leader, gap);
+  if (!link.moving) {
+    // Within the gap: trail in place, but still face the leader so the line reads.
+    e.facing = shared.facingFromVec(leader.x - e.x, leader.y - e.y, e.facing || 's');
+    return;
+  }
+
+  const tryStep = (desX, desY) => {
+    const heading = movement.steerAround(e, desX, desY, dt, speed, rm.collision, rm.w, rm.h, rm.tile, radius);
+    if (heading.dirX === 0 && heading.dirY === 0) return false;
+    const bx = e.x;
+    const by = e.y;
+    locomotion.locomotionStep(e, heading.dirX, heading.dirY, currentTick, dt, speed, rm.collision, rm.w, rm.h, rm.tile, radius);
+    e.facing = shared.facingFromVec(heading.dirX, heading.dirY, e.facing || 's');
+    // Progress = real displacement; a hop-pause tick legitimately makes none.
+    return (e.x - bx) * (e.x - bx) + (e.y - by) * (e.y - by) > STUCK_EPS2;
+  };
+
+  // 1) Aim at the immediate leader (predecessor).
+  if (tryStep(link.dirX, link.dirY)) return;
+  // 2) Stuck: aim at the owner (reachable anchor) — cut the corner toward the head.
+  const odx = owner.x - e.x;
+  const ody = owner.y - e.y;
+  const olen = Math.hypot(odx, ody) || 1;
+  if (tryStep(odx / olen, ody / olen)) return;
+  // 3) Still jammed: a deterministic jitter heading so it doesn't pin dead-still.
+  const j = (shared.hash32(e.id) ^ Math.floor(currentTick / JITTER_BUCKET_TICKS)) % 8;
+  const ja = (j / 8) * Math.PI * 2;
+  tryStep(Math.cos(ja), Math.sin(ja));
+  // (If even the jitter is blocked the link holds this tick; the leader keeps
+  //  moving so the geometry changes next tick — no permanent deadlock.)
+}
+
+/** Squared min-progress threshold for the chain anti-stuck check (a fraction of a
+ *  full step at FOLLOW.SPEED; below this the slide is considered jammed). */
+const STUCK_EPS2 = 1; // ~1 world unit of progress
+/** Re-roll window (ticks) for the deterministic anti-stuck jitter heading. */
+const JITTER_BUCKET_TICKS = 10;
 
 // --- scoring + release ------------------------------------------------------
 
@@ -278,13 +365,38 @@ function scoreEscape(player, roomName, currentTick) {
   player.scoreTotal = (player.scoreTotal || 0) + points;
 }
 
-/** Clear all follow state on an animal → it reverts to an idle decoy. */
+/** Clear all follow state on an animal → it reverts to an idle decoy. The HARD
+ *  reset (gate score, disconnect, catch, respawn) — no drift-home; the animal
+ *  just goes back to wandering its pen wherever it stands. */
 function releaseFollower(entity) {
   if (!entity) return;
   entity.followerOf = null;
   entity.followUntilTick = 0;
   entity.followSince = 0;
   entity.stolen = false;
+  entity.graceUntilTick = 0;
+  entity.chainIndex = undefined;
+}
+
+/**
+ * SOFT release on a natural lapse (timer + grace elapsed, or owner vanished): the
+ * animal detaches and DRIFTS HOME — wanders biased toward its enclosure center
+ * over time (stealth.stepIdleAnimals runs the home-biased drift; once back inside
+ * its home bounds it clears the flag and resumes a contained wander). If the
+ * species has no home center (a transient fox decoy, an unlisted species) we fall
+ * back to the plain hard reset → it just wanders where it stands.
+ * @param {object} entity
+ * @param {string} roomName
+ */
+function releaseToHome(entity, roomName) {
+  if (!entity) return;
+  const home = world.getHomeCentersBySpecies(roomName).get(entity.species);
+  releaseFollower(entity); // clear the follow state first (also clears grace/chainIndex)
+  if (home) {
+    entity.returningHome = true;
+    entity.homeX = home.x;
+    entity.homeY = home.y;
+  }
 }
 
 /** Release every follower owned by `playerId` in a room (disconnect/catch/respawn). */
@@ -312,9 +424,11 @@ module.exports = {
   collectNearbyFood,
   feedNearbyAnimal,
   isFollower,
+  isLeashed,
   stepFollowers,
   gatherFollowersOf,
   scoreEscape,
   releaseFollower,
+  releaseToHome,
   releaseFollowersOf,
 };

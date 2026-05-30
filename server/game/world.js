@@ -276,6 +276,30 @@ function getHomeBoundsBySpecies(roomName) {
 }
 
 /**
+ * Per-species home CENTER in world units, for a released follower's drift-home
+ * target (NPC movement refactor). Housing stores a world-unit center (cx,cy)
+ * directly; buildings only have a tile rect, so the center is derived from it.
+ * The gatehouse (species == null) is skipped. Computed once per map; the caller
+ * keys it by species (penSpeciesOf(id) / entity.species). An animal whose species
+ * isn't here (e.g. a transient fox decoy) gets no entry → no return-home target.
+ *
+ * @param {string} roomName
+ * @returns {Map<string, {x:number, y:number}>}
+ */
+function getHomeCentersBySpecies(roomName) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tile = map.tile;
+  const centers = new Map();
+  for (const h of map.housing) {
+    if (h.species) centers.set(h.species, { x: h.cx, y: h.cy });
+  }
+  for (const b of map.buildings) {
+    if (b.species) centers.set(b.species, { x: (b.rx + b.rw / 2) * tile, y: (b.ry + b.rh / 2) * tile });
+  }
+  return centers;
+}
+
+/**
  * The `map` event payload meta for a room: everything a client needs to
  * regenerate the tilemap deterministically. Creates the room on demand.
  * @param {string} roomName
@@ -412,6 +436,7 @@ module.exports = {
   getRoomMap,
   getPatrolRoute,
   getHomeBoundsBySpecies,
+  getHomeCentersBySpecies,
   getMapMeta,
   isSolidAtRoom,
   getWorldEntities,
