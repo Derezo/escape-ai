@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.77: **Robot footstep foley.** Robots now make a `robot_footstep` sound as they
+  walk, with the cadence gait-locked to their movement (quickening into a chase). Rather
+  than a new server event + net-contract field (which would touch the deterministic core
+  and risk parity), this is derived client-side in `main.ts` from each robot's own position
+  delta — the same motion the renderer already animates the walk cycle on — so it needs no
+  shared/server change and stays purely cosmetic local audio, distance-attenuated like the
+  other spatial SFX. A step ticks every ~26 world-units travelled (≈ half a tile), with a
+  sub-pixel jitter gate so a parked robot is silent, and per-robot accumulators are pruned
+  when a robot leaves the snapshot. Plays its `thud.wav` placeholder until the `.mp3` is
+  generated. Client typechecks + builds.
+
 - 0.2.76: **Looping SFX subsystem — ambient room-tone + robot pursuit motif.**
   `playSfx()` is one-shot; two manifest SFX are marked `soundLoop` and need to run
   continuously. Added a small loop API to `client/src/audio.ts` (`startLoop`/`stopLoop`/

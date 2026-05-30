@@ -45,6 +45,12 @@ const PREDICT_RADIUS = 32 * 0.4;
 /** How often (ms) we sample input and send it to the server. */
 const INPUT_SEND_MS = 50; // 20 Hz, matching the server tick
 
+/** World-units a robot must travel per footstep foley (≈ half a 32px tile, so a
+ *  ~60u/s patrol is ~2.3 steps/s and a faster chase quickens naturally). */
+const ROBOT_STRIDE = 26;
+/** Ignore sub-pixel per-frame jitter so a parked robot never ticks a footstep. */
+const ROBOT_STEP_MIN_FRAME = 0.5;
+
 async function main(): Promise<void> {
   // --- Renderer (default = Phaser 2D) ---
   const renderer: IRenderer = new PhaserRenderer();
@@ -189,6 +195,11 @@ async function main(): Promise<void> {
   let prevPanicHigh = false;
   // Per-robot mode seen last frame, so entering 'pursue' fires robot_alert once.
   const robotModeSeen = new Map<string, string>();
+  // Per-robot footstep accumulator: last seen position + distance walked since the
+  // last step sound, so we emit robot_footstep every STRIDE world-units of motion.
+  // Cosmetic local foley derived from the robot's own movement — no server event,
+  // gait-locked to the same position deltas the renderer animates the walk cycle on.
+  const robotStep = new Map<string, { x: number; y: number; acc: number }>();
   // Quest-complete edge: fire quest_complete once when the quest first reads done.
   let prevQuestComplete = false;
   // Quest-progress edge: fire quest_progress once each time an 'activate' quest's
@@ -585,8 +596,10 @@ async function main(): Promise<void> {
     // enters 'pursue', and run the looping robot_pursuit motif for as long as at
     // least one robot is chasing (it stops when the last pursuer breaks off). ---
     let anyPursuing = false;
+    const liveRobots = new Set<string>();
     for (const e of list) {
       if (e.kind !== 'robot') continue;
+      liveRobots.add(e.id);
       const modeNow = typeof e.mode === 'string' ? e.mode : '';
       const modePrev = robotModeSeen.get(e.id) ?? '';
       if (modePrev !== 'pursue' && modeNow === 'pursue') {
@@ -594,11 +607,43 @@ async function main(): Promise<void> {
       }
       if (modeNow === 'pursue') anyPursuing = true;
       robotModeSeen.set(e.id, modeNow);
+
+      // Footstep foley: accumulate how far this robot has walked and tick a step
+      // sound every ROBOT_STRIDE units. Derived from the robot's own position
+      // delta (the same motion the renderer animates its walk cycle on), so the
+      // cadence is gait-locked and quickens during a chase — no server event.
+      if (typeof e.x === 'number' && typeof e.y === 'number') {
+        const prev = robotStep.get(e.id);
+        if (!prev) {
+          robotStep.set(e.id, { x: e.x, y: e.y, acc: 0 });
+        } else {
+          const d = Math.hypot(e.x - prev.x, e.y - prev.y);
+          prev.x = e.x;
+          prev.y = e.y;
+          if (d >= ROBOT_STEP_MIN_FRAME) {
+            prev.acc += d;
+            if (prev.acc >= ROBOT_STRIDE) {
+              prev.acc %= ROBOT_STRIDE; // keep the leftover so cadence stays even
+              let vol = 0.45;
+              if (meEnt && typeof meEnt.x === 'number') {
+                const dist = Math.hypot(e.x - (meEnt.x as number), e.y - (meEnt.y as number));
+                vol = Math.max(0.05, 0.45 * (1 - Math.min(1, dist / 400)));
+              }
+              playSfx('robot_footstep', vol);
+            }
+          }
+        }
+      }
     }
     // Idempotent start/stop (self-dedupes), so driving it from the per-frame
     // aggregate is safe and needs no separate edge state.
     if (anyPursuing) startLoop('robot_pursuit', 0.6);
     else stopLoop('robot_pursuit');
+    // Drop step accumulators for robots that left the snapshot, so the map can't
+    // grow without bound across a long session (mirrors why we track liveRobots).
+    if (robotStep.size > liveRobots.size) {
+      for (const id of robotStep.keys()) if (!liveRobots.has(id)) robotStep.delete(id);
+    }
 
     // --- Music state machine: select and crossfade the appropriate track. ---
     playMusicState(selectMusic());
