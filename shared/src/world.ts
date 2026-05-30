@@ -26,7 +26,7 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  v5→7) and the animal-collection food sources (one `foodSource` spec per species,
  *  co-located with the quest tile). The merged output differs from both, so this is
  *  a fresh bump, not max(7,5). */
-export const WORLD_GEN_VERSION = 8;
+export const WORLD_GEN_VERSION = 9;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -108,6 +108,16 @@ export interface WorldMap {
   gate: { x: number; y: number };
   /** Gameplay entities the server materializes. */
   entitySpecs: WorldEntitySpec[];
+  /**
+   * Robot patrol loop in WORLD UNITS: the path-network junctions (forecourt root
+   * first, then zone centers in fixed carve order). Consecutive points are
+   * connected by the carved spine, so a robot walking them in order patrols the
+   * paved avenues. Additive + derived from the junctions carveOrganicPaths already
+   * computes — never serialized (the client regenerates it from the seed), so it
+   * costs zero wire bytes. May be empty on a degenerate seed (caller falls back to
+   * ambient wander).
+   */
+  patrolRoute: { x: number; y: number }[];
 }
 
 // --- Helpers (used by collision, rendering, and the generator) ----------------
@@ -1392,6 +1402,11 @@ export function generateWorld(seed: number): WorldMap {
   //    span the river where a path meets both banks. `junctions` (forecourt + zone
   //    centers) anchor the terminals + robot spawns (replacing the old avenues).
   const { junctions } = carveOrganicPaths(ground, zones, forecourt, gateTx, riverDeep, rng);
+  // The robot patrol loop in world units: the junctions in carve order. Robots are
+  // anchored at these exact junctions (see robotSpawn specs below), so each spawns
+  // on its route; walking them in order traces the carved spine. tileCenter matches
+  // the transform used to place the robots/terminals, so the route lands on pavement.
+  const patrolRoute = junctions.map((j) => ({ x: tileCenter(j.tx, tile), y: tileCenter(j.ty, tile) }));
   // Spur each home's gate/door reach target to the spine (deterministic; draws rng
   // inside carveWindingPath). reachTargets[0] of each home is its gate/door tile.
   for (const rt of reachTargets) {
@@ -1585,5 +1600,6 @@ export function generateWorld(seed: number): WorldMap {
     spawns,
     gate,
     entitySpecs,
+    patrolRoute,
   };
 }

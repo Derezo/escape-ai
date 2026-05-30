@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.45: **NPC movement refactor — Phase 2: expose `patrolRoute` on `WorldMap`.** Surface the
+  path-network junctions (which `carveOrganicPaths` already computes, in carve order) as a new
+  `WorldMap.patrolRoute: {x,y}[]` (world units) so robots can patrol the carved spine instead of
+  drifting aimlessly. Additive + seed-derived → **zero wire bytes** (the client regenerates it).
+  `WORLD_GEN_VERSION` bumped 8→9 as a deliberate cache-bust (old clients fail loud on the version
+  assert rather than silently lacking the field); the two pinned parity hashes are **unchanged**
+  (patrolRoute touches neither `collision` nor `entitySpecs` — verified). Added
+  `server/game/world.js#getPatrolRoute(roomName)` (reads the cached map) and world-test assertions
+  for the version + a non-empty, in-bounds, walkable, deterministic patrol loop. Verified: shared
+  **50/50** (+2), client build clean.
+
 - 0.2.44: **NPC movement refactor — Phase 1: shared movement base + locomotion registry.**
   First phase of the layered NPC-movement overhaul (shared pure primitives → server behavior
   strategies → per-species modifiers). No behavior change yet — this lays the deterministic core:

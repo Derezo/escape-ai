@@ -14,7 +14,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { generateWorld, worldToTile, tileSolid } from '../dist/world.js';
+import { generateWorld, worldToTile, tileSolid, WORLD_GEN_VERSION } from '../dist/world.js';
 import { hash32 } from '../dist/step.js';
 import { SPECIES_KEYS } from '../dist/species.js';
 import { TILE_INDEX } from '../dist/tiles.js';
@@ -87,6 +87,35 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
     PINNED_ENTITYSPEC_HASH,
     'entitySpecs drifted — re-pin + bump WORLD_GEN_VERSION on purpose',
   );
+});
+
+test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
+  // v9: added the additive `patrolRoute` field (robot patrol loop) to WorldMap.
+  // The two pinned hashes above are unchanged (patrolRoute touches neither
+  // collision nor entitySpecs) — the bump is a deliberate cache-bust so old
+  // clients (which assert msg.version === WORLD_GEN_VERSION) fail loud rather
+  // than silently lack the new field.
+  assert.equal(WORLD_GEN_VERSION, 9, 'version pinned at 9');
+  assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
+});
+
+test('patrolRoute: a non-empty robot patrol loop in world units, derived from junctions', () => {
+  const map = generateWorld(PIN_SEED);
+  assert.ok(Array.isArray(map.patrolRoute), 'patrolRoute is an array');
+  assert.ok(map.patrolRoute.length >= 2, `has at least a forecourt + one zone (len=${map.patrolRoute.length})`);
+  // Every waypoint is a finite world-unit point inside the map bounds and on a
+  // non-solid tile (junctions are force-paved by carveOrganicPaths).
+  const worldMax = map.w * map.tile;
+  for (const wp of map.patrolRoute) {
+    assert.ok(Number.isFinite(wp.x) && Number.isFinite(wp.y), 'waypoint is finite');
+    assert.ok(wp.x >= 0 && wp.x < worldMax && wp.y >= 0 && wp.y < worldMax, 'waypoint within bounds');
+    assert.ok(
+      !tileSolid(map.collision, map.w, map.h, tx(map, wp.x), tx(map, wp.y)),
+      `waypoint (${wp.x},${wp.y}) sits on a walkable tile`,
+    );
+  }
+  // Regenerated identically (it's seed-derived → free on the wire).
+  assert.deepEqual(map.patrolRoute, generateWorld(PIN_SEED).patrolRoute, 'patrolRoute is deterministic');
 });
 
 test('coverage: every species has exactly one home and exactly one quest object', () => {

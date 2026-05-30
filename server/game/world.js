@@ -227,6 +227,19 @@ function getRoomMap(roomName) {
 }
 
 /**
+ * The room's robot patrol loop in world units (the path-network junctions in
+ * carve order — see WorldMap.patrolRoute). Robots walk these waypoints in order
+ * to patrol the paved avenues. Seed-derived (free on the wire) and cached per
+ * room via getOrCreateRoomWorld. May be empty on a degenerate seed; callers fall
+ * back to ambient wander. Creates the room on demand.
+ * @param {string} roomName
+ * @returns {{x:number,y:number}[]}
+ */
+function getPatrolRoute(roomName) {
+  return getOrCreateRoomWorld(roomName).map.patrolRoute || [];
+}
+
+/**
  * Per-species home CONTAINMENT bounds in world units, for keeping a pen's idle
  * NPC animals inside their enclosure (Phase C). For each housing/building, the
  * bounds are the interior wall-ring inset by one tile, so the ambient wander clamp
@@ -394,6 +407,7 @@ module.exports = {
   loadSharedWorld,
   getOrCreateRoomWorld,
   getRoomMap,
+  getPatrolRoute,
   getHomeBoundsBySpecies,
   getMapMeta,
   isSolidAtRoom,
