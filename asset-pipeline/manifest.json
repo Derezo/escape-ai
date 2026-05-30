@@ -1,0 +1,296 @@
+{
+  "_README": "SINGLE SOURCE OF TRUTH for every generated audio asset. Consumed by the Python generator (scripts/sunoapi/) AND the Node codegen (scripts/audio/gen-bindings.js → client/src/audio.generated.ts). Never hand-edit audio.generated.ts; edit here and run `npm run audio`. `descriptor` is the UNIQUE per-asset prompt fragment combined with theme.json palettes — not the whole prompt. `output` is repo-relative; the client loads it at './'+(output without leading 'assets/'). `placeholder` (sfx) names an existing synth WAV in assets/sfx/ to fall back to until the .mp3 is generated. `priority`: 'must' = first generation batch (--only must), 'nice' = later. See docs/AUDIO_PIPELINE.md.",
+  "version": 1,
+
+  "music": [
+    {
+      "key": "title_theme",
+      "kind": "music",
+      "priority": "must",
+      "trigger": "state:menu",
+      "output": "assets/music/title_theme.mp3",
+      "title": "Caves of Steel",
+      "model": "V5",
+      "loop": true,
+      "durationHint": 60,
+      "defaultVolume": 0.5,
+      "descriptor": "slow haunting title theme, a fragile music-box melody over a cold steel-city drone, the calm dread before the escape"
+    },
+    {
+      "key": "explore_loop",
+      "kind": "music",
+      "priority": "must",
+      "trigger": "state:explore",
+      "output": "assets/music/explore_loop.mp3",
+      "title": "Quiet Corridors",
+      "loop": true,
+      "durationHint": 90,
+      "defaultVolume": 0.4,
+      "descriptor": "seamless low-energy exploration loop, sparse pulses and distant machinery, watchful and patient, never resolving"
+    },
+    {
+      "key": "tension_loop",
+      "kind": "music",
+      "priority": "nice",
+      "trigger": "state:tension",
+      "output": "assets/music/tension_loop.mp3",
+      "title": "Something Noticed",
+      "loop": true,
+      "durationHint": 60,
+      "defaultVolume": 0.45,
+      "styleWeight": 0.7,
+      "descriptor": "rising tension loop, pulsing sub bass and ticking detuned bells, a robot is paying attention, dread building"
+    },
+    {
+      "key": "panic_loop",
+      "kind": "music",
+      "priority": "must",
+      "trigger": "state:panic",
+      "output": "assets/music/panic_loop.mp3",
+      "title": "Hunted",
+      "loop": true,
+      "durationHint": 60,
+      "defaultVolume": 0.5,
+      "styleWeight": 0.75,
+      "weirdnessConstraint": 0.45,
+      "descriptor": "high-threat panic loop, driving sub-bass heartbeat and shrieking metallic textures, being actively hunted, claustrophobic"
+    },
+    {
+      "key": "lockdown_loop",
+      "kind": "music",
+      "priority": "must",
+      "trigger": "state:lockdown",
+      "output": "assets/music/lockdown_loop.mp3",
+      "title": "Sealed",
+      "loop": true,
+      "durationHint": 60,
+      "defaultVolume": 0.5,
+      "styleWeight": 0.75,
+      "descriptor": "oppressive lockdown loop, a low droning klaxon-like swell under grinding steel, the room has sealed, inescapable dread"
+    },
+    {
+      "key": "victory_sting",
+      "kind": "music",
+      "priority": "nice",
+      "trigger": "state:escaped",
+      "output": "assets/music/victory_sting.mp3",
+      "title": "Out",
+      "loop": false,
+      "durationHint": 12,
+      "defaultVolume": 0.6,
+      "descriptor": "short bittersweet victory sting, a fragile ascending music-box phrase breaking into cold open air, relief tinged with unease"
+    },
+    {
+      "key": "caught_sting",
+      "kind": "music",
+      "priority": "nice",
+      "trigger": "state:caught",
+      "output": "assets/music/caught_sting.mp3",
+      "title": "Caught",
+      "loop": false,
+      "durationHint": 6,
+      "defaultVolume": 0.6,
+      "descriptor": "short grim defeat sting, a sudden detuned downward swell and a cold mechanical snap, the moment of capture"
+    },
+    {
+      "key": "ambient_bed_music",
+      "kind": "music",
+      "priority": "nice",
+      "trigger": "state:ambient",
+      "output": "assets/music/ambient_bed_music.mp3",
+      "title": "Steel Hum",
+      "loop": true,
+      "durationHint": 120,
+      "defaultVolume": 0.25,
+      "descriptor": "barely-there ambient under-bed, a near-silent steel hum and faraway drips, pure atmosphere, almost subliminal"
+    }
+  ],
+
+  "sfx": [
+    {
+      "key": "robot_alert",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:robot-alert",
+      "output": "assets/sfx/robot_alert.mp3",
+      "placeholder": "error",
+      "defaultVolume": 0.7,
+      "descriptor": "a robot's single rising alert chirp, cold synthetic detection tone, it has noticed something"
+    },
+    {
+      "key": "robot_pursuit",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:robot-pursuit",
+      "output": "assets/sfx/robot_pursuit.mp3",
+      "placeholder": "hit",
+      "soundLoop": true,
+      "defaultVolume": 0.6,
+      "descriptor": "a relentless looping robotic pursuit motif, fast mechanical servo footsteps and a low aggressive hum, closing in"
+    },
+    {
+      "key": "robot_footstep",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:robot-step",
+      "output": "assets/sfx/robot_footstep.mp3",
+      "placeholder": "thud",
+      "soundTempo": 110,
+      "defaultVolume": 0.45,
+      "descriptor": "a single heavy robotic footstep on steel floor, servo whine then a metallic clank"
+    },
+    {
+      "key": "panic_warning",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:panic-warning",
+      "output": "assets/sfx/panic_warning.mp3",
+      "placeholder": "error",
+      "defaultVolume": 0.7,
+      "descriptor": "a tense escalating warning pulse, the panic meter is filling, two quick anxious electronic beeps rising in pitch"
+    },
+    {
+      "key": "lockdown_alarm",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:lockdown-engage",
+      "output": "assets/sfx/lockdown_alarm.mp3",
+      "placeholder": "error",
+      "soundLoop": true,
+      "defaultVolume": 0.7,
+      "descriptor": "a harsh looping facility lockdown klaxon, cold industrial alarm blaring through steel corridors"
+    },
+    {
+      "key": "lockdown_clear",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:lockdown-lift",
+      "output": "assets/sfx/lockdown_clear.mp3",
+      "placeholder": "confirm",
+      "defaultVolume": 0.6,
+      "descriptor": "a descending all-clear chime, the lockdown lifts, three cool synthetic tones settling, cautious relief"
+    },
+    {
+      "key": "door_lock",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:door-lock",
+      "output": "assets/sfx/door_lock.mp3",
+      "placeholder": "error",
+      "defaultVolume": 0.7,
+      "descriptor": "a heavy steel blast door slamming and bolting shut, deep mechanical thud and a final ominous latch clank"
+    },
+    {
+      "key": "gate_open",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:gate-open",
+      "output": "assets/sfx/gate_open.mp3",
+      "placeholder": "confirm",
+      "defaultVolume": 0.65,
+      "descriptor": "a heavy gate unsealing and grinding open, hydraulic hiss and rolling steel, the way out reveals itself"
+    },
+    {
+      "key": "quest_progress",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:quest-progress",
+      "output": "assets/sfx/quest_progress.mp3",
+      "placeholder": "blip",
+      "defaultVolume": 0.55,
+      "descriptor": "a short cool notification chime, one objective step done, a single clean synthetic tick"
+    },
+    {
+      "key": "quest_complete",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:quest-complete",
+      "output": "assets/sfx/quest_complete.mp3",
+      "placeholder": "confirm",
+      "defaultVolume": 0.7,
+      "descriptor": "a satisfying quest-complete flourish, a short rising arpeggio of cold synth bells, objective met"
+    },
+    {
+      "key": "quest_blocked",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:quest-blocked",
+      "output": "assets/sfx/quest_blocked.mp3",
+      "placeholder": "error",
+      "defaultVolume": 0.6,
+      "descriptor": "a denied buzzer, you cannot escape yet, a flat dissonant electronic refusal"
+    },
+    {
+      "key": "food_pickup",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:food-pickup",
+      "output": "assets/sfx/food_pickup.mp3",
+      "placeholder": "pickup",
+      "defaultVolume": 0.55,
+      "descriptor": "a quick light pickup blip, a soft synthetic chirp, something collected"
+    },
+    {
+      "key": "feed_follow",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:feed-follow",
+      "output": "assets/sfx/feed_follow.mp3",
+      "placeholder": "confirm",
+      "defaultVolume": 0.6,
+      "descriptor": "a warm positive confirmation, an animal now follows you, two friendly rounded tones"
+    },
+    {
+      "key": "follower_lost",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:follower-lost",
+      "output": "assets/sfx/follower_lost.mp3",
+      "placeholder": "error",
+      "defaultVolume": 0.55,
+      "descriptor": "a sad fading descending tone, a follower has been lost, the herd shrinks"
+    },
+    {
+      "key": "ambient_bed",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:ambient-loop",
+      "output": "assets/sfx/ambient_bed.mp3",
+      "placeholder": "blip",
+      "soundLoop": true,
+      "defaultVolume": 0.3,
+      "descriptor": "a seamless ambient facility bed, low steel hum, distant servo whines and faint electrical crackle, unsettling room tone"
+    },
+
+    {
+      "key": "hit",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:caught",
+      "output": "assets/sfx/hit.mp3",
+      "placeholder": "hit",
+      "defaultVolume": 0.8,
+      "descriptor": "a sharp cold capture impact, a robotic clamp seizing, metallic snap with a low thud"
+    },
+    {
+      "key": "error",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:error",
+      "output": "assets/sfx/error.mp3",
+      "placeholder": "error",
+      "defaultVolume": 0.7,
+      "descriptor": "a harsh negative error buzz, a cold dissonant electronic rejection"
+    },
+    {
+      "key": "confirm",
+      "kind": "sfx",
+      "priority": "must",
+      "trigger": "event:confirm",
+      "output": "assets/sfx/confirm.mp3",
+      "placeholder": "confirm",
+      "defaultVolume": 0.7,
+      "descriptor": "a clean positive confirmation, two cool rising synthetic tones, action accepted"
+    }
+  ]
+}

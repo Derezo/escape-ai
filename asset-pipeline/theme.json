@@ -1,0 +1,51 @@
+{
+  "_README": "GLOBAL AUDIO IDENTITY for Escape AI. Edit this file to retune ALL generated music and SFX at once. The final Suno prompt for an asset = the shared palette + the per-kind palette (music or sfx) + that asset's unique `descriptor` from manifest.json. Theme: an Asimov 'Caves of Steel' underground robot dystopia — eerie / creepy / horror. Music is LIGHT AND SPOOKY (sparse, haunting, restrained). SFX are PUNCHY AND ENGAGING (sharp, mechanical, cold). See docs/AUDIO_PIPELINE.md for how composition works. SUNOAPI_KEY is read from the system environment, never from a repo file.",
+  "version": 1,
+
+  "callBackUrl": "https://escape-ai.local/suno/callback",
+  "pollIntervalSec": 12,
+  "pollTimeoutSec": 480,
+
+  "shared": {
+    "moodDescriptors": ["eerie", "creepy", "uneasy", "tense", "dread", "claustrophobic"],
+    "settingDescriptors": [
+      "Asimov Caves of Steel",
+      "dystopian underground steel city",
+      "cold robotic facility",
+      "sterile machine corridors"
+    ],
+    "negativeTags": "upbeat, cheerful, happy, major key, vocals, lyrics, singing, distorted, harsh noise, clipping, lo-fi hiss"
+  },
+
+  "music": {
+    "model": "V4_5PLUS",
+    "instrumental": true,
+    "customMode": true,
+    "genreDescriptors": ["dark ambient", "horror synth", "minimal cinematic underscore", "tension drone"],
+    "instruments": [
+      "low drones",
+      "detuned synth pads",
+      "distant metallic clangs",
+      "sparse music-box bells",
+      "sub bass pulses",
+      "reverberant piano",
+      "granular textures"
+    ],
+    "moodDescriptors": ["light and spooky", "haunting", "fragile", "ghostly", "quietly menacing"],
+    "energyDescriptors": ["sparse", "restrained", "slow-building", "atmospheric"],
+    "tempoRange": { "min": 50, "max": 80 },
+    "styleWeight": 0.65,
+    "weirdnessConstraint": 0.35,
+    "negativeTags": "upbeat, cheerful, major key, vocals, drums-heavy, dance, EDM"
+  },
+
+  "sfx": {
+    "model": "V5",
+    "genreDescriptors": ["game sound effect", "sci-fi foley", "mechanical"],
+    "instruments": ["servo motors", "metal impacts", "synth stabs", "electronic alarms", "industrial machinery"],
+    "moodDescriptors": ["punchy", "engaging", "tense", "robotic", "cold"],
+    "energyDescriptors": ["sharp attack", "tight", "impactful"],
+    "soundKey": "Any",
+    "negativeTags": "music, melody, ambient pad, soft, gentle, cheerful, vocals"
+  }
+}

@@ -4,6 +4,21 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.65: **Audio pipeline Phase 0 — contracts (`asset-pipeline/`, new).** The foundation
+  for Suno-generated music + SFX. `asset-pipeline/theme.json` is the single editable global
+  audio identity (eerie/creepy *Caves of Steel* palette, with separate `music` "light and
+  spooky" and `sfx` "punchy and engaging" sub-palettes + a `shared` block). `asset-pipeline/
+  manifest.json` is the **single source of truth** for every audio asset — 8 music tracks
+  (title/explore/tension/panic/lockdown/victory/caught/ambient) and 18 SFX (each with a
+  `placeholder` mapping to an existing synth WAV so the game has sound before generation),
+  each tagged `must`|`nice` for cost-conscious batching. Both files parse in Python and Node
+  (the cross-language seam) and pass an integrity check (unique keys, `assets/`-prefixed
+  outputs, every SFX has a placeholder). `.gitignore` now ignores the regenerable raw-output
+  staging `asset-pipeline/output/` (two samples + provenance JSON per asset, kept outside Vite
+  `publicDir` so it never ships in the bundle/APK) and `assets/{music,sfx}/*.bak` swap backups.
+  Later phases add the Node codegen + drift gate, the Python generation/swap CLIs, and the
+  client music-playback layer.
+
 - 0.2.64: **Project-level Claude Code subagents (`.claude/agents/`, new).** Added a
   focused roster of 7 tech-stack-aware subagents, authored from a parallel survey of
   the real codebase and adversarially reviewed for accuracy against it. They partition
