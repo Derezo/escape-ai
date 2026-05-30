@@ -4,6 +4,35 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.35: **Map overhaul Phase C — per-enclosure NPC animals + containment.** Every enclosure is
+  now inhabited by 2–3 wandering NPC animals of its species, kept inside their pen.
+  `WORLD_GEN_VERSION` 6 → 7; hashes re-pinned. The wire shape of an animal is byte-identical to
+  before (verified) — containment data lives server-side, never on the entity.
+  - **`shared/src/world.ts` — `populateEnclosure`/`animalCountFor`:** each home gets
+    `animalCountFor = clampInt(2 + floor(interiorArea/24), 2, 3)` animals. The canonical
+    `pen-${species}` anchor (home center) is animal 1; `populateEnclosure` shuffles the home's
+    non-solid interior tiles ONCE (one rng draw-set per home, in roster order → stream stays
+    fixed) and emits the remaining animals as extra `pen-${species}-2..N` penAnchors. They
+    reuse the existing `penAnchor` kind, so `spawnFromMap` materializes them with **no new spec
+    kind or server case**, and the coverage test (which counts homes/quests, never penAnchors)
+    stays green at exactly one home + one quest per species.
+  - **`server/game/world.js` — `getHomeBoundsBySpecies`:** derives each species' enclosure
+    interior rect (world units, inset one tile inside the barrier ring) from the map's
+    housing/buildings. The gatehouse (species == null) is skipped.
+  - **`server/game/stealth.js` — containment in `stepIdleAnimals`:** a pen animal
+    (`pen-${species}` / `pen-${species}-n`) now wanders ONLY within its enclosure interior rect
+    (passed as the `shared.wanderStep` bounds), so the clamp turns it inward at the pen edge and
+    it can never drift out the 2-tile non-solid gate. Bounds live in a per-room server-side cache
+    keyed by id — **NOT a field on the entity** (the engine `JSON.stringify`s the whole world
+    entity onto the wire, so a `homeRect` field would leak). The fox lure (`decoy-N`, no `pen-`
+    id) and any future free animal fall back to whole-map bounds and roam, unchanged.
+  - **Verified:** a 2000-tick (~100s) simulation — 42 animals, **0 escaped their pen, 0 frozen**,
+    and the animal wire payload is byte-identical to a v4 animal (no containment field leaked).
+  - **Tests:** new `world.test.mjs` invariants — 2–3 animals per species; every penAnchor on a
+    non-solid tile strictly inside its home interior (off the gate ring → no leak); every home
+    interior ≥6×6 (so the wander bias can't collapse and freeze an animal). 20/20 green; shared
+    build, server boot, client build all green.
+
 - 0.2.34: **Map overhaul Phase B — entrance gatehouse plaza + tile-style accuracy
   (`shared/src/world.ts`).** The bare 1-tile east gate becomes a believable main entrance, and
   the long-unused blend tiles feather every grass↔path / grass↔water seam. `WORLD_GEN_VERSION`

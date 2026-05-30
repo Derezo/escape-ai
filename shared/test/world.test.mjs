@@ -22,8 +22,8 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-const PINNED_COLLISION_HASH = 266388496;
-const PINNED_ENTITYSPEC_HASH = 3934265980;
+const PINNED_COLLISION_HASH = 3073572579;
+const PINNED_ENTITYSPEC_HASH = 3800431151;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -276,6 +276,67 @@ test('tile accuracy: every single-edge/corner grass border gets a blend tile (id
           );
         }
       }
+    }
+  }
+});
+
+// --- Phase C (per-pen NPC animals + containment) invariants ------------------
+
+/** A species' home rect (housing or building), or null (e.g. the gatehouse). */
+function homeRectOf(map, species) {
+  const h = map.housing.find((hh) => hh.species === species);
+  if (h) return { rx: h.rx, ry: h.ry, rw: h.rw, rh: h.rh };
+  const b = map.buildings.find((bb) => bb.species === species);
+  if (b) return { rx: b.rx, ry: b.ry, rw: b.rw, rh: b.rh };
+  return null;
+}
+
+test('animals: every species gets 2–3 pen anchors (NPC animals), scaled', () => {
+  for (const seed of [0, 7, 123, 9999, 424242]) {
+    const map = generateWorld(seed);
+    const counts = new Map();
+    for (const e of map.entitySpecs) {
+      if (e.kind === 'penAnchor') counts.set(e.species, (counts.get(e.species) ?? 0) + 1);
+    }
+    for (const key of SPECIES_KEYS) {
+      const c = counts.get(key) ?? 0;
+      assert.ok(c >= 2 && c <= 3, `seed ${seed}: species ${key} has ${c} animals (want 2..3)`);
+    }
+  }
+});
+
+test('animals: every pen anchor sits on a non-solid INTERIOR tile of its home (contained, off the gate row)', () => {
+  for (const seed of [0, 1, 123, 777, 9999]) {
+    const map = generateWorld(seed);
+    for (const e of map.entitySpecs) {
+      if (e.kind !== 'penAnchor') continue;
+      const gx = tx(map, e.x);
+      const gy = tx(map, e.y);
+      // Non-solid (a robot/animal can stand here).
+      assert.ok(!tileSolid(map.collision, map.w, map.h, gx, gy), `seed ${seed}: animal ${e.id} on a solid tile`);
+      const rect = homeRectOf(map, e.species);
+      assert.ok(rect, `seed ${seed}: ${e.species} has a home rect`);
+      // Strictly INSIDE the wall ring (so the wander clamp keeps it off the gate
+      // ring entirely → it can never drift out the 2-tile enclosure gate).
+      assert.ok(
+        gx > rect.rx && gx < rect.rx + rect.rw - 1 && gy > rect.ry && gy < rect.ry + rect.rh - 1,
+        `seed ${seed}: animal ${e.id} at (${gx},${gy}) is outside its home interior [${rect.rx},${rect.ry},${rect.rw},${rect.rh}]`,
+      );
+    }
+  }
+});
+
+test('animals: home interior is large enough that containment wander cannot freeze (>= 6x6)', () => {
+  // CRIT-2: a home interior smaller than ~2*EDGE_MARGIN collapses the wander bias
+  // zone and an animal pins to a wall / jitters. Every home interior must be >= 6
+  // tiles on both axes (192u > 2*40u margin) so the animal has room to drift.
+  for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
+    const map = generateWorld(seed);
+    for (const key of SPECIES_KEYS) {
+      const rect = homeRectOf(map, key);
+      const iw = rect.rw - 2;
+      const ih = rect.rh - 2;
+      assert.ok(iw >= 6 && ih >= 6, `seed ${seed}: ${key} interior ${iw}x${ih} too small (want >=6x6)`);
     }
   }
 });

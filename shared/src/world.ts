@@ -21,7 +21,7 @@ import { SPECIES_KEYS } from './species.js';
 import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
 
 /** Bump whenever generateWorld's OUTPUT changes, so client/server parity is asserted. */
-export const WORLD_GEN_VERSION = 6;
+export const WORLD_GEN_VERSION = 7;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -989,6 +989,58 @@ function stampHousing(
   };
 }
 
+/** A spawn slot for one NPC animal inside its home (world units). */
+interface AnimalSpot {
+  x: number;
+  y: number;
+}
+
+/**
+ * Choose up to `count` distinct, non-solid interior tiles of a home for NPC animal
+ * spawns, deterministically. Scans the interior (inside the wall/barrier ring),
+ * skips solid tiles (deep-water core, den walls, interior props) and the home's
+ * quest tile, shuffles the candidates ONCE, and returns the first `count` as
+ * world-unit centers. Exactly one rng draw-set (the shuffle) per home, so the
+ * stream stays fixed regardless of interior shape.
+ *
+ * @param rect  the home's tile rect (rx,ry,rw,rh — includes the wall ring)
+ */
+function populateEnclosure(
+  ground: TileGrid,
+  deco: TileGrid,
+  rect: { rx: number; ry: number; rw: number; rh: number },
+  questTx: number,
+  questTy: number,
+  count: number,
+  tile: number,
+  rng: () => number,
+): AnimalSpot[] {
+  const candidates: { tx: number; ty: number }[] = [];
+  for (let dy = 1; dy < rect.rh - 1; dy++) {
+    for (let dx = 1; dx < rect.rw - 1; dx++) {
+      const tx = rect.rx + dx;
+      const ty = rect.ry + dy;
+      if (tx === questTx && ty === questTy) continue; // leave the quest tile clear
+      const i = tileIndex(ground.w, tx, ty);
+      if (isSolidIndex(ground.data[i]) || isSolidIndex(deco.data[i])) continue;
+      candidates.push({ tx, ty });
+    }
+  }
+  // One deterministic shuffle, then take the first `count` (so the animals don't
+  // all clump in the top-left and the choice still varies per seed).
+  shuffle(rng, candidates);
+  const spots: AnimalSpot[] = [];
+  for (let i = 0; i < candidates.length && spots.length < count; i++) {
+    spots.push({ x: tileCenter(candidates[i].tx, tile), y: tileCenter(candidates[i].ty, tile) });
+  }
+  return spots;
+}
+
+/** How many NPC animals a home of interior area `iw*ih` gets: 2..3, scaled. */
+function animalCountFor(iw: number, ih: number): number {
+  return clampInt(2 + Math.floor((iw * ih) / 24), 2, 3);
+}
+
 /** Whether a tile is free grass suitable for scattering nature (no road/structure). */
 function isOpenGrass(ground: TileGrid, deco: TileGrid, tx: number, ty: number): boolean {
   const i = tileIndex(ground.w, tx, ty);
@@ -1207,6 +1259,7 @@ export function generateWorld(seed: number): WorldMap {
   }
   const reachTargets: { tx: number; ty: number }[] = [];
   const questPos = new Map<string, { tx: number; ty: number }>();
+  const animalSpots = new Map<string, AnimalSpot[]>(); // per species: NPC animal slots
   // The gatehouse door must be reachable (the reachability test iterates every
   // building). Its west door opens onto the forecourt → the gate.
   reachTargets.push({ tx: plaza.gatehouse.doorTx, ty: plaza.gatehouse.doorTy });
@@ -1259,6 +1312,21 @@ export function generateWorld(seed: number): WorldMap {
     }
     for (const rt of placed.reachTargets) reachTargets.push(rt);
     questPos.set(species, { tx: placed.questTx, ty: placed.questTy });
+
+    // Phase C: pick this home's NPC-animal spawn slots NOW (interior is fully
+    // stamped, rng is in roster order → one shuffle per home, fixed stream). The
+    // home rect is the housing rect, or the building's interior wall ring.
+    const rect = placed.housing
+      ? { rx: placed.housing.rx, ry: placed.housing.ry, rw: placed.housing.rw, rh: placed.housing.rh }
+      : placed.building
+        ? { rx: placed.building.rx, ry: placed.building.ry, rw: placed.building.rw, rh: placed.building.rh }
+        : null;
+    if (rect) {
+      // Total animals = animalCountFor (2..3); animal 1 is the canonical pen anchor
+      // at the home center, so we need (n-1) EXTRA interior slots here.
+      const n = animalCountFor(rect.rw - 2, rect.rh - 2);
+      animalSpots.set(species, populateEnclosure(ground, deco, rect, placed.questTx, placed.questTy, n - 1, tile, rng));
+    }
   }
 
   // Spawns: a small block inside the gate, set back ~half a viewport from the
@@ -1372,26 +1440,38 @@ export function generateWorld(seed: number): WorldMap {
     const home = housing.find((hh) => hh.species === species);
     const qp = questPos.get(species);
     if (!qp) continue; // species without a placed plot (shouldn't happen with 14 plots)
-    if (home) {
+    // The CANONICAL pen anchor (id `pen-${species}`) stays exactly as before — the
+    // home center for housing, the quest tile for a building. It is the species'
+    // primary decoy animal (the test counts homes/quests, never penAnchors).
+    const kindMeta = home ? home.kind : 'building';
+    const anchorX = home ? home.cx : tileCenter(qp.tx, tile);
+    const anchorY = home ? home.cy : tileCenter(qp.ty, tile);
+    if (home || buildings.find((bb) => bb.species === species)) {
       entitySpecs.push({
         id: `pen-${species}`,
         kind: 'penAnchor',
-        x: home.cx,
-        y: home.cy,
+        x: anchorX,
+        y: anchorY,
         species,
-        meta: { kind: home.kind },
+        meta: { kind: kindMeta },
       });
-    } else {
-      const bld = buildings.find((bb) => bb.species === species);
-      if (bld) {
+      // Phase C: extra NPC animals (pen-${species}-2..N) at the populateEnclosure
+      // slots, so each enclosure reads as inhabited. One penAnchor per slot; the
+      // server materializes each via the SAME penAnchor case (no new spec kind).
+      // animalCountFor already capped the total at 2..3, so we emit (n-1) extras.
+      const spots = animalSpots.get(species) ?? [];
+      let an = 1;
+      for (const spot of spots) {
+        an++;
         entitySpecs.push({
-          id: `pen-${species}`,
+          id: `pen-${species}-${an}`,
           kind: 'penAnchor',
-          x: tileCenter(qp.tx, tile),
-          y: tileCenter(qp.ty, tile),
+          x: spot.x,
+          y: spot.y,
           species,
-          meta: { kind: 'building' },
+          meta: { kind: kindMeta },
         });
+        if (an >= 3) break; // hard cap: at most 3 animals/home (1 canonical + 2)
       }
     }
     entitySpecs.push({

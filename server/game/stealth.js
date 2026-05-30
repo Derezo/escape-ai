@@ -466,18 +466,44 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
  */
 function stepIdleAnimals(dt, roomName, currentTick) {
   if (!shared) return;
-  const bounds = mapBounds(world.getRoomMap(roomName));
+  const mapB = mapBounds(world.getRoomMap(roomName));
+  const homeBySpecies = homeBoundsForRoom(roomName);
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
+    // CONTAINMENT (Phase C): a pen animal (id `pen-${species}` / `pen-${species}-n`)
+    // wanders ONLY within its enclosure interior rect, so it can't drift out the
+    // 2-tile non-solid gate. The clamp inside shared.wanderStep keeps it off the
+    // gate row entirely. Non-pen animals (the fox lure `decoy-N`, any future free
+    // animal) have no entry → mapB → roam the whole map (unchanged behavior).
+    const species = penSpeciesOf(e.id);
+    const bounds = (species && homeBySpecies.get(species)) || mapB;
     const next = shared.wanderStep(e, currentTick, dt, config.WANDER_ANIMAL_SPEED, bounds);
     // Face the drift direction so the decoy's walk animation reads correctly.
     e.facing = shared.facingFromVec(next.x - e.x, next.y - e.y, e.facing || 's');
     // Hold position if the drift would carry the decoy onto a solid tile, so it
-    // doesn't walk through its own enclosure fence.
+    // doesn't walk through its own enclosure fence / a pond's deep core.
     if (world.isSolidAtRoom(roomName, next.x, next.y)) continue;
     e.x = next.x;
     e.y = next.y;
   }
+}
+
+/** The species owning a pen-anchor id (`pen-fox` / `pen-fox-2` → 'fox'), else null. */
+function penSpeciesOf(id) {
+  if (typeof id !== 'string' || !id.startsWith('pen-')) return null;
+  // Strip the 'pen-' prefix and any '-<n>' index suffix.
+  return id.slice(4).replace(/-\d+$/, '');
+}
+
+/** Per-room cache of species → enclosure containment bounds (built once per room). */
+const homeBoundsByRoom = new Map();
+function homeBoundsForRoom(roomName) {
+  let b = homeBoundsByRoom.get(roomName);
+  if (!b) {
+    b = world.getHomeBoundsBySpecies(roomName);
+    homeBoundsByRoom.set(roomName, b);
+  }
+  return b;
 }
 
 /**
