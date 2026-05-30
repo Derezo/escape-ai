@@ -21,7 +21,8 @@
 import Phaser from 'phaser';
 import type { IRenderer, Entity, WorldMap } from '@shared/renderer';
 import type { Dir8 } from '@shared/types';
-import { facingFromVec } from '@shared/step';
+import { facingFromVec, hash32 } from '@shared/step';
+import { locomotionFor } from '@shared/locomotion';
 import { TILE_BY_INDEX } from '@shared/tiles';
 import { foodByKey } from '@shared/food';
 
@@ -528,12 +529,18 @@ class WorldScene extends Phaser.Scene {
   /** Exponentially smooth each view's render position toward its target. */
   private interpolate(dt: number): void {
     const k = 1 - Math.exp(-LERP_RATE * dt);
-    for (const view of this.views.values()) {
+    for (const [id, view] of this.views.entries()) {
       view.renderX += (view.targetX - view.renderX) * k;
       view.renderY += (view.targetY - view.renderY) * k;
       const x = view.renderX;
       const y = view.renderY;
-      view.body.setPosition(x, y);
+      // AIRBORNE FLUTTER: a 'fly' species (bird) gets a small vertical bob applied
+      // to the BODY ONLY — purely cosmetic, off the render clock, so it never
+      // touches the authoritative position, the Y-sort depth (still `y` below), or
+      // the adornments. Per-bird phase via hash32(id) so a flock desyncs. The gait
+      // comes from the shared locomotion registry by species (no wire field needed).
+      const bobY = this.flutterBob(id, view);
+      view.body.setPosition(x, y + bobY);
       view.label?.setPosition(x, y - SPRITE_SIZE * 0.55);
       view.ring?.setPosition(x, y);
       view.halo?.setPosition(x, y);
@@ -557,6 +564,26 @@ class WorldScene extends Phaser.Scene {
         view.halo?.setDepth(y - 1);
       }
     }
+  }
+
+  /**
+   * The cosmetic vertical bob for an airborne ('fly') sprite, in pixels, this
+   * frame. Zero for any non-fly species or shape fallback. A sine wave off the
+   * render clock (this.time.now), phased per-entity by hash32(id) so a flock
+   * desyncs. The gait + bob params come from the shared locomotion registry by
+   * species — no wire field. Render-only: it never touches the entity's true
+   * position, so collision/Y-sort/parity are unaffected (flight stays cosmetic).
+   */
+  private flutterBob(id: string, view: EntityView): number {
+    if (!view.isSprite || !view.species) return 0;
+    const prof = locomotionFor(view.species);
+    if (prof.gait !== 'fly' || !prof.bob) return 0;
+    // periodTicks → ms at the 20Hz sim rate (the bob is decorative, so an exact
+    // tick is unnecessary; the render clock keeps it smooth at any frame rate).
+    const periodMs = prof.bob.periodTicks * 50;
+    const phase = (hash32(id) % 1000) / 1000; // 0..1 per-entity offset
+    const t = this.time.now / periodMs + phase;
+    return Math.sin(t * Math.PI * 2) * prof.bob.ampPx;
   }
 
   /**

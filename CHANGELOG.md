@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *The Caves of Steel* (jam build)
 
+- 0.2.49: **NPC movement refactor — Phase 6: species locomotion (client bob + wiring complete).**
+  Completes the per-species gait system. The server-side gait (tortoise ½-speed, kangaroo
+  hop-pause) was wired into follower + idle-wander movement in Phase 5; this phase finishes it:
+  - **Client airborne flutter** (`client/src/render/phaser.ts`): a `fly` species (bird) now bobs
+    vertically — a sine wave off the render clock, phased per-entity by `hash32(id)` so a flock
+    desyncs, applied to the sprite BODY ONLY (not the Y-sort depth, the label, or the authoritative
+    position). Purely cosmetic, so collision/containment/parity are untouched (flight stays
+    grounded for gameplay, per the design decision). The gait + bob params come from the shared
+    `LOCOMOTION` registry looked up by `e.species` — **no wire field added**; the client already
+    imports `@shared/*`.
+  - **`updateAnimation` is already gait-aware** with the current idle/walk art: the kangaroo's
+    server-side hop cadence start/stops the walk cycle (the "moving" flag tracks the position
+    delta), and the tortoise simply moves at half speed — so hop/crawl read correctly with **no new
+    frames** (future `_hop_`/`_fly_` atlas states would slot into the existing discovery).
+  - **Robots are exempt** (mechanical) — they move via `behaviors.speedFor`, never `locomotionStep`.
+  - Verified by an active-chase sim: tortoise covers exactly **0.50×** a normal walker's distance;
+    kangaroo conserves mean distance (1520 vs 1500) with **124/200 hop-pause ticks** (a real
+    lurch); fox steady with 0 pauses. Client `tsc && vite build` clean; shared 50/50; server boots.
+
 - 0.2.48: **NPC movement refactor — Phase 5: follower chain + grace + drift-home.** Followers now
   form a trailing LINE and, when their feed timer lapses, drift back to their enclosure instead of
   snapping to a generic wander.
