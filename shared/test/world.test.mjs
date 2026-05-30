@@ -22,18 +22,19 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v14: re-pinned for the map-readability overhaul — sparse straight paths (spine
-// avenue + per-zone branch + short pen-gate stubs, replacing the winding per-zone
-// spaghetti), a CONNECTED 2-wide river core wrapped in a 2-tile shallow margin, the
-// water-touches-only-grass margin (paths kept off water, demoted near water, bridges
-// the sole crossing), and the edge blend dropping the inner-corner branch. BOTH
-// hashes drift: the COLLISION grid changes (the wider connected river core changes
-// which water tiles are deep/solid + the path layout moved), and the entitySpecs
-// change because path junctions now relocate out of water (so a wetland zone-center
-// terminal/robot anchor that used to sit on the river bed shifts to dry grass).
-// Recomputed from generateWorld(123).
-const PINNED_COLLISION_HASH = 2182634496;
-const PINNED_ENTITYSPEC_HASH = 3622420766;
+// v15: re-pinned because THE RIVER IS NOW A SOLID BARRIER. ALL water-family tiles are
+// solid (tiles.ts flips WATER_SHALLOW, every WATER_EDGE_*/WATER_CORNER_*/WATER_ICORNER_*
+// shore-blend tile, and POND_EDGE to solid; WATER_DEEP/POND_DEEP were already), and a
+// final collision-reconciliation pass re-solidifies the shore ring that blendGroundEdges
+// paints AFTER the collision grid is built. Only BRIDGE_H/BRIDGE_V still cross water.
+// BOTH hashes drift: the COLLISION grid changes (~270 shore-ring cells per map flip
+// walkable→solid), and the entitySpecs change because pen anchors / food slots / quest
+// objects / one aux guard that used to sit on walkable shallow shore relocate onto dry
+// interior tiles (the placement scans pick non-solid cells, and shallow is now solid).
+// Gate-threshold cells are force-opened after the river pass so every home stays
+// enterable. Recomputed from generateWorld(123).
+const PINNED_COLLISION_HASH = 2912234384;
+const PINNED_ENTITYSPEC_HASH = 2666229100;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -97,12 +98,12 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v14: map-readability overhaul (sparse straight paths, connected river core,
-  // water-touches-only-grass margin, simplified edge blend). The collision hash is
-  // re-pinned (river core + path layout drift); entitySpecs are unchanged. The bump
-  // is the deliberate cache-bust so old clients (which assert msg.version ===
-  // WORLD_GEN_VERSION) fail loud rather than desync.
-  assert.equal(WORLD_GEN_VERSION, 14, 'version pinned at 14');
+  // v15: the river is now a SOLID barrier — every water-family tile (shallow + the
+  // shore-blend edge/corner ring + POND_EDGE) is solid, and only bridges cross water.
+  // BOTH hashes re-pin (collision: the shore ring flips solid; entitySpecs: anchors/
+  // food/quests off the now-solid shallow shore). The bump is the deliberate cache-bust
+  // so old clients (which assert msg.version === WORLD_GEN_VERSION) fail loud not desync.
+  assert.equal(WORLD_GEN_VERSION, 15, 'version pinned at 15');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 
@@ -276,6 +277,53 @@ test('water feature: no reach target sits on or adjacent to deep water', () => {
   }
 });
 
+test('water is a SOLID barrier: every water-family ground tile is solid, every bridge is walkable', () => {
+  // v15 invariant: the river/pond is impassable EXCEPT across bridges. Every
+  // water-family ground tile — the DEEP/SHALLOW/POND cores AND the WATER_EDGE_* /
+  // WATER_CORNER_* / WATER_ICORNER_* shore-blend ring blendGroundEdges paints over
+  // the bank — must have collision === 1, so no robot/player can stand in the water.
+  // The ONLY walkable water-crossing tiles are BRIDGE_H / BRIDGE_V. This is the
+  // durable proof the shore ring (which is painted AFTER buildCollision) gets
+  // re-solidified by the final reconciliation pass. The ONE sanctioned exception:
+  // a gate-THRESHOLD cell directly inside a (south-facing) enclosure gate may be a
+  // solidified shore tile that is force-reopened so the gate still works — those are
+  // whitelisted here (they connect to the home interior, not the open river).
+  const WATER_FAMILY = new Set([
+    TILE_INDEX.WATER_DEEP, TILE_INDEX.WATER_SHALLOW, TILE_INDEX.POND_DEEP, TILE_INDEX.POND_EDGE,
+    TILE_INDEX.WATER_EDGE_N, TILE_INDEX.WATER_EDGE_E, TILE_INDEX.WATER_EDGE_S, TILE_INDEX.WATER_EDGE_W,
+    TILE_INDEX.WATER_CORNER_NE, TILE_INDEX.WATER_CORNER_NW, TILE_INDEX.WATER_CORNER_SE, TILE_INDEX.WATER_CORNER_SW,
+    TILE_INDEX.WATER_ICORNER_NE, TILE_INDEX.WATER_ICORNER_NW, TILE_INDEX.WATER_ICORNER_SE, TILE_INDEX.WATER_ICORNER_SW,
+  ]);
+  const BRIDGE = new Set([TILE_INDEX.BRIDGE_H, TILE_INDEX.BRIDGE_V]);
+  for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
+    const map = generateWorld(seed);
+    // The whitelisted gate-threshold cells: directly inside each home's south gate.
+    const gateInside = new Set();
+    for (const hh of map.housing) {
+      const gx = hh.rx + Math.floor(hh.rw / 2);
+      const gy = hh.ry + hh.rh - 1;
+      gateInside.add((gy - 1) * map.w + gx);
+      gateInside.add((gy - 1) * map.w + (gx - 1));
+    }
+    let waterCells = 0, bridgeCells = 0;
+    for (let i = 0; i < map.collision.length; i++) {
+      const g = map.ground.data[i];
+      if (WATER_FAMILY.has(g)) {
+        waterCells++;
+        if (gateInside.has(i)) continue; // sanctioned gate-threshold reopen
+        assert.equal(map.collision[i], 1, `seed ${seed}: water tile ${g} at index ${i} is walkable (should be solid)`);
+      }
+      if (BRIDGE.has(g)) {
+        bridgeCells++;
+        assert.equal(map.collision[i], 0, `seed ${seed}: bridge tile ${g} at index ${i} is solid (should be walkable)`);
+      }
+    }
+    // Sanity: the map actually HAS water and at least one bridge (so the test bites).
+    assert.ok(waterCells > 50, `seed ${seed}: expected a real river (got ${waterCells} water cells)`);
+    assert.ok(bridgeCells > 0, `seed ${seed}: expected at least one bridge deck (got ${bridgeCells})`);
+  }
+});
+
 // --- Phase B (entrance plaza + tile accuracy) invariants ---------------------
 
 test('entrance plaza: a species-less gatehouse building exists with a reachable, non-solid door', () => {
@@ -360,6 +408,26 @@ test('aux buildings: each has a guard robot spec', () => {
     // Each aux building id is referenced by exactly one guard.
     for (const b of aux) {
       assert.equal(guards.filter((g) => g.meta.buildingId === b.id).length, 1, `seed ${seed}: ${b.id} has one guard robot`);
+    }
+  }
+});
+
+test('robot spawns: every robotSpawn anchor sits on a NON-SOLID tile (top-up guard)', () => {
+  // The robot top-up loop offsets the anchor a few tiles off a junction. With the
+  // river now a solid barrier, that offset could in principle land on water. The
+  // generator falls back to the (always-paved) junction tile; this is the durable
+  // regression guard that NO robot spawns inside a wall across many seeds.
+  for (let i = 0; i < 200; i++) {
+    const map = generateWorld(i);
+    for (const e of map.entitySpecs) {
+      if (e.kind !== 'robotSpawn') continue;
+      const cx = tx(map, e.x);
+      const cy = tx(map, e.y);
+      assert.equal(
+        map.collision[cy * map.w + cx],
+        0,
+        `seed ${i}: ${e.id} on a solid tile (${cx},${cy})`,
+      );
     }
   }
 });

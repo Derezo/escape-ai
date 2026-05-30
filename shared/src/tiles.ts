@@ -77,7 +77,7 @@ export const TILES = {
   MUD: t(14, 'ground'),
   MUD_PUDDLE: t(15, 'ground'),
   WATER_DEEP: t(16, 'ground', true), // solid: can't wade into deep water
-  WATER_SHALLOW: t(17, 'ground'),
+  WATER_SHALLOW: t(17, 'ground', true), // solid: the river is a barrier — cross only by bridge
   FLOOR_WOOD: t(18, 'ground'),
   FLOOR_WOOD_DARK: t(19, 'ground'),
   FLOOR_TILE: t(20, 'ground'),
@@ -100,19 +100,21 @@ export const TILES = {
   PATH_ICORNER_NW: t(34, 'ground'),
   PATH_ICORNER_SE: t(35, 'ground'),
   PATH_ICORNER_SW: t(36, 'ground'),
-  // Land↔water shoreline: same 12-tile pattern.
-  WATER_EDGE_N: t(37, 'ground'),
-  WATER_EDGE_E: t(38, 'ground'),
-  WATER_EDGE_S: t(39, 'ground'),
-  WATER_EDGE_W: t(40, 'ground'),
-  WATER_CORNER_NE: t(41, 'ground'),
-  WATER_CORNER_NW: t(42, 'ground'),
-  WATER_CORNER_SE: t(43, 'ground'),
-  WATER_CORNER_SW: t(44, 'ground'),
-  WATER_ICORNER_NE: t(45, 'ground'),
-  WATER_ICORNER_NW: t(46, 'ground'),
-  WATER_ICORNER_SE: t(47, 'ground'),
-  WATER_ICORNER_SW: t(48, 'ground'),
+  // Land↔water shoreline: same 12-tile pattern. ALL solid — these are the visual
+  // shore ring painted over the river bank by blendGroundEdges; the river is a
+  // barrier, so the shore is solid too (only BRIDGE_H/BRIDGE_V cross water).
+  WATER_EDGE_N: t(37, 'ground', true),
+  WATER_EDGE_E: t(38, 'ground', true),
+  WATER_EDGE_S: t(39, 'ground', true),
+  WATER_EDGE_W: t(40, 'ground', true),
+  WATER_CORNER_NE: t(41, 'ground', true),
+  WATER_CORNER_NW: t(42, 'ground', true),
+  WATER_CORNER_SE: t(43, 'ground', true),
+  WATER_CORNER_SW: t(44, 'ground', true),
+  WATER_ICORNER_NE: t(45, 'ground', true),
+  WATER_ICORNER_NW: t(46, 'ground', true),
+  WATER_ICORNER_SE: t(47, 'ground', true),
+  WATER_ICORNER_SW: t(48, 'ground', true),
 
   // --- Nature (49..74) -------------------------------------------------------
   // Trees are a TRUNK (solid, on deco below mobile) + a CANOPY (ysort:'behind',
@@ -198,7 +200,7 @@ export const TILES = {
   ENCLOSURE_GLASS: t(120, 'deco', true),
   MOAT_EDGE: t(121, 'deco', true),
   POND_DEEP: t(122, 'ground', true),
-  POND_EDGE: t(123, 'ground'),
+  POND_EDGE: t(123, 'ground', true), // solid: pond shore is a barrier like the river shore
   AVIARY_MESH: t(124, 'deco', true),
   AVIARY_FRAME: t(125, 'deco', true),
   ROCKY_DEN_MOUTH: t(126, 'deco', true),

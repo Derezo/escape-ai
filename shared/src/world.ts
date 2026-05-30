@@ -54,8 +54,18 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  crossing. (4) The edge blend drops the ICORNER (inner-corner) branch so isolated
  *  jogs stay grass instead of becoming busy corner tiles ("grass holes"). collision +
  *  entitySpecs both drift (path junctions now relocate OUT of water, so a wetland
- *  zone-center terminal/robot anchor shifts off the river bed) → both hashes re-pinned. */
-export const WORLD_GEN_VERSION = 14;
+ *  zone-center terminal/robot anchor shifts off the river bed) → both hashes re-pinned.
+ *  v15: the RIVER is now a SOLID barrier. ALL water-family tiles are solid (WATER_DEEP
+ *  was already; WATER_SHALLOW, every WATER_EDGE / WATER_CORNER / WATER_ICORNER shore-
+ *  blend tile, and POND_EDGE flip to solid in tiles.ts), and a final reconciliation pass
+ *  re-solidifies the shore ring that blendGroundEdges paints AFTER collision is built.
+ *  Only BRIDGE_H/BRIDGE_V cross water now. The collision hash re-pins (the ~270-cell
+ *  shore ring per map flips walkable→solid). entitySpecs ALSO re-pin: a handful of
+ *  pen anchors / food slots / quest objects / one aux guard that previously sat on the
+ *  now-solid shallow shore relocate onto dry interior (the deterministic junction +
+ *  spawn relocation walks them off solid water). Every spec is proven off-solid by the
+ *  no-spec-on-solid + reachability tests, so both hashes are re-pinned on purpose. */
+export const WORLD_GEN_VERSION = 15;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -1059,6 +1069,35 @@ function isWaterIndex(idx: number): boolean {
   );
 }
 
+/**
+ * Whether a ground tile index is ANY water-family tile — the DEEP/SHALLOW/POND
+ * cores covered by isWaterIndex PLUS the WATER_EDGE / WATER_CORNER / WATER_ICORNER
+ * shore-blend tiles that blendGroundEdges paints over the river/pond bank. Used by
+ * the FINAL collision-reconciliation pass to make the whole river a solid barrier.
+ * Kept SEPARATE from isWaterIndex on purpose: the cohesion / water-margin / blend
+ * passes run BEFORE the shore blend (so the EDGE/CORNER tiles don't exist yet) and
+ * must keep classifying water as exactly the four cores — widening isWaterIndex
+ * would not change their behavior today, but a separate predicate makes the intent
+ * explicit and immune to future call-site reordering.
+ */
+function isWaterFamilyIndex(idx: number): boolean {
+  return (
+    isWaterIndex(idx) ||
+    idx === TILE_INDEX.WATER_EDGE_N ||
+    idx === TILE_INDEX.WATER_EDGE_E ||
+    idx === TILE_INDEX.WATER_EDGE_S ||
+    idx === TILE_INDEX.WATER_EDGE_W ||
+    idx === TILE_INDEX.WATER_CORNER_NE ||
+    idx === TILE_INDEX.WATER_CORNER_NW ||
+    idx === TILE_INDEX.WATER_CORNER_SE ||
+    idx === TILE_INDEX.WATER_CORNER_SW ||
+    idx === TILE_INDEX.WATER_ICORNER_NE ||
+    idx === TILE_INDEX.WATER_ICORNER_NW ||
+    idx === TILE_INDEX.WATER_ICORNER_SE ||
+    idx === TILE_INDEX.WATER_ICORNER_SW
+  );
+}
+
 /** Whether a ground tile index is DEEP (solid) water. */
 function isDeepWaterIndex(idx: number): boolean {
   return idx === TILE_INDEX.WATER_DEEP || idx === TILE_INDEX.POND_DEEP;
@@ -1220,6 +1259,15 @@ interface PlacedHome {
    * cell non-solid + reachable. Empty for homes whose gate is never a carve cell.
    */
   gateStamps: GateStamp[];
+  /**
+   * The two cells DIRECTLY INSIDE this enclosure's south gate (the threshold tiles
+   * a walker steps onto entering through the gate). These MUST stay walkable so the
+   * gate actually functions as an entrance. They are force-opened after the final
+   * water-solidify pass: a pond/wetland home's interior shore can leave a gate-inside
+   * cell as a now-solid water-blend tile, which would wall the gate shut — re-opening
+   * the threshold keeps every home enterable while the river itself stays solid.
+   */
+  gateInside: { tx: number; ty: number }[];
 }
 
 /**
@@ -1345,6 +1393,13 @@ function stampBuilding(
     gateStamps: [
       { tx: doorTx, ty: doorTy, tile: TILE_INDEX.DOOR_OPEN },
       { tx: doorTx - 1, ty: doorTy, tile: TILE_INDEX.DOOR_OPEN },
+    ],
+    // Threshold cells inside the south door (kept walkable like the enclosure gates;
+    // species buildings are off the wetland zone, so these are dry, but the field is
+    // populated uniformly so every home's entrance is force-open after the river pass).
+    gateInside: [
+      { tx: doorTx, ty: doorTy - 1 },
+      { tx: doorTx - 1, ty: doorTy - 1 },
     ],
   };
 }
@@ -1550,6 +1605,12 @@ function stampHousing(
     { tx: gateTx, ty: gateTy, tile: barrierGate },
     { tx: gateTx - 1, ty: gateTy, tile: barrierGate },
   ];
+  // The two threshold cells just inside the (south-facing) gate. Force-opened after
+  // the river-solidify pass so a pond home's interior shore can't wall its gate shut.
+  const gateInside: { tx: number; ty: number }[] = [
+    { tx: gateTx, ty: gateTy - 1 },
+    { tx: gateTx - 1, ty: gateTy - 1 },
+  ];
 
   if (kind === 'pond') {
     // A LARGE ROUNDED pond: an elliptical body of water carved into the SAND beach
@@ -1648,6 +1709,7 @@ function stampHousing(
     centerTx: center.tx,
     centerTy: center.ty,
     gateStamps,
+    gateInside,
   };
 }
 
@@ -2027,6 +2089,11 @@ export function generateWorld(seed: number): WorldMap {
   // deco on the cells it touches, which would erase a gate/door glyph). Collected
   // from every home + aux building; replayed after the carve like TROUGH_FOOD.
   const gateStamps: GateStamp[] = [];
+  // Gate-THRESHOLD cells (the tiles just inside each enclosure gate / building door)
+  // that must stay walkable so the gate is a real entrance — force-opened AFTER the
+  // final river-solidify pass, since a pond home's interior shore can leave a gate-
+  // inside cell as a now-solid water-blend tile that would otherwise wall it shut.
+  const gateInsideTiles: { tx: number; ty: number }[] = [];
   /** Mark a stamped home rect [rx,ry,rw,rh] as protected from path paving. */
   const protectRect = (rx: number, ry: number, rw: number, rh: number): void => {
     for (let dy = 0; dy < rh; dy++) {
@@ -2090,6 +2157,7 @@ export function generateWorld(seed: number): WorldMap {
     }
     // Re-stamp the gate/door glyphs after the carve so the corridor can't erase them.
     for (const gs of placed.gateStamps) gateStamps.push(gs);
+    for (const gi of placed.gateInside) gateInsideTiles.push(gi);
     claimPlot(claimed, plot, w);
     // Reserve the whole plot footprint so nature doesn't intrude.
     for (let dy = -1; dy <= plot.th; dy++) {
@@ -2160,6 +2228,10 @@ export function generateWorld(seed: number): WorldMap {
     // Re-stamp the aux door glyph after the carve (same as the species buildings).
     gateStamps.push({ tx: aux.building.doorTx, ty: aux.building.doorTy, tile: TILE_INDEX.DOOR_OPEN });
     gateStamps.push({ tx: aux.building.doorTx - 1, ty: aux.building.doorTy, tile: TILE_INDEX.DOOR_OPEN });
+    // Keep the door threshold walkable after the river-solidify pass (aux buildings
+    // are off the wetland zone, so these are dry interior floor — uniform belt-and-braces).
+    gateInsideTiles.push({ tx: aux.building.doorTx, ty: aux.building.doorTy - 1 });
+    gateInsideTiles.push({ tx: aux.building.doorTx - 1, ty: aux.building.doorTy - 1 });
     claimPlot(claimed, plot, w);
     for (let dy = -1; dy <= plot.th; dy++) {
       for (let dx = -1; dx <= plot.tw; dx++) {
@@ -2343,10 +2415,17 @@ export function generateWorld(seed: number): WorldMap {
     const jp = junctions[j];
     rnum++;
     const off = 3; // a few tiles off the junction along the spine
+    // The offset anchor must never land on a SOLID tile (water is now a barrier).
+    // If the offset tile is solid or water-family, fall back to the bare junction
+    // tile, which carveOrganicPaths force-paves (a 5-tile plus) so it is always
+    // walkable. No-op on current seeds; a determinism-safe guard against drift.
+    const offTx = clampInt(jp.tx + off, 2, w - 3);
+    const offGround = ground.data[tileIndex(w, offTx, jp.ty)];
+    const anchorTx = isSolidIndex(offGround) || isWaterFamilyIndex(offGround) ? jp.tx : offTx;
     entitySpecs.push({
       id: `robot-${rnum}`,
       kind: 'robotSpawn',
-      x: tileCenter(clampInt(jp.tx + off, 2, w - 3), tile),
+      x: tileCenter(anchorTx, tile),
       y: tileCenter(jp.ty, tile),
     });
   }
@@ -2515,6 +2594,36 @@ export function generateWorld(seed: number): WorldMap {
   //     rewrites GRASS ground cells, never the deco TROUGH_FOOD markers or collision,
   //     so the two passes are independent.
   blendGroundEdges(ground);
+
+  // 11. FINAL collision reconciliation — make the whole river a SOLID barrier.
+  //     ORDERING NOTE: buildCollision (step 8) ran BEFORE blendGroundEdges, so the
+  //     shore-blend tiles (WATER_EDGE_*/WATER_CORNER_*/WATER_ICORNER_*) that the
+  //     blend just painted over the river bank are NOT reflected in the collision
+  //     grid — collision is never re-derived, only mutated. Those repainted cells
+  //     were former GRASS (walkable), so without this pass the shore ring stays
+  //     walkable and robots/players stand in the river. Here we re-solidify EVERY
+  //     ground cell whose tile is now a water-family tile (deep, shallow, pond, or
+  //     any shore-blend tile). Keyed strictly off the GROUND TILE being water — a
+  //     PAVED corridor cell is PAVED (not water), so it stays walkable; bridge decks
+  //     are BRIDGE_* (not water), so they stay the only crossings. This runs AFTER
+  //     the food/gate re-stamps (steps 9/9b): those force collision=0 on NON-water
+  //     glyphs (TROUGH_FOOD, gate/door), so this pass never touches them — running
+  //     last is belt-and-suspenders. Only the deep cores were solid before this
+  //     change; the shallow margin + shore ring become solid now.
+  for (let i = 0; i < collision.length; i++) {
+    if (isWaterFamilyIndex(ground.data[i])) collision[i] = 1;
+  }
+
+  // 11b. Re-open every gate THRESHOLD. The river-solidify pass above can solidify a
+  //      gate-inside cell that the shore blend painted into a water tile (a pond
+  //      home's interior shore reaches its own gate row), which would wall the gate
+  //      shut. Force those threshold cells walkable so every enclosure/door stays a
+  //      real entrance. These are interior threshold cells, NOT the open river — each
+  //      sits one tile inside a gate and connects to the (reachable) home interior.
+  for (const gi of gateInsideTiles) {
+    if (gi.tx < 0 || gi.ty < 0 || gi.tx >= w || gi.ty >= h) continue;
+    collision[tileIndex(w, gi.tx, gi.ty)] = 0;
+  }
 
   return {
     version: WORLD_GEN_VERSION,

@@ -6,19 +6,6 @@ the audit trail).
 
 ## Open
 
-### Dead function: `firstSpawn` in stealth.js is never called
-- **Status:** open — pre-existing, out of scope, deferred.
-- **Surfaced:** `/plan-validation-and-review` of the escape→rebirth + session-persistence
-  plan, 2026-05-30 (the plan touched `respawnPlayer` in the same file but not `firstSpawn`).
-- **Detail:** `firstSpawn(rm)` at `server/game/stealth.js:915` has zero call sites — only its
-  definition and one comment mention (`stealth.js:931`). It predates this plan (present at base
-  commit `e1f53df`). Spawn resolution now flows through `world.spawnForSpecies`, so the gate-side
-  `firstSpawn` fallback it described is no longer wired. Harmless (unreachable) but confusing.
-- **Fix:** delete the function (and the stale comment that references it as a fallback), or
-  re-wire it if a gate-side fallback is actually wanted. Confirm no dynamic/string reference first.
-- **Refs:** `server/game/stealth.js:915` (`firstSpawn`), `:931` (comment).
-- **Effort:** XS.
-
 ### Robot PURSUE chase is still reactive (no A* around walls)
 - **Status:** open — deliberately deferred (user decision during the pathfinding plan).
 - **Surfaced:** NPC pathfinding plan (Phases 1–4), 2026-05-30. Phase 4 routed robot

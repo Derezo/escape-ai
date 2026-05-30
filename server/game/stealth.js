@@ -906,21 +906,6 @@ function stepPanic(dt, roomName, robotEvents) {
 }
 
 /**
- * The first spawn point of a room map, or a safe fallback. The map always
- * produces spawn points just inside the gate; the fallback only fires in the
- * impossible case of an empty spawns list (map center, then (50,50)).
- * @param {{ spawns?: {x:number,y:number}[], w?:number, h?:number, tile?:number }} rm  a getRoomMap() result
- * @returns {{ x: number, y: number }}
- */
-function firstSpawn(rm) {
-  if (rm && Array.isArray(rm.spawns) && rm.spawns.length > 0) return rm.spawns[0];
-  if (rm && rm.w && rm.h && rm.tile) {
-    return { x: (rm.w * rm.tile) / 2, y: (rm.h * rm.tile) / 2 };
-  }
-  return { x: 50, y: 50 };
-}
-
-/**
  * The spawn point for a player of `species` in a room: the CENTER of that species'
  * own pen/home (world units), with a small deterministic per-player jitter so two
  * same-species players don't stack exactly. Spawning in the home pen — not the
@@ -928,11 +913,12 @@ function firstSpawn(rm) {
  * entrance, which was the source of the spawn-on-robot infinite catch loop (a
  * post-spawn grace window, stamped by the callers, is the second guard).
  *
- * Falls back to the gate-side firstSpawn when the species has no home (shouldn't
- * happen for a playable species, but keeps the path total). The jitter is bounded
- * to the pen interior bounds so the offset can never push the player into a wall;
- * world-gen proves every pen center is non-solid + reachable, and the interior is
- * >= 6x6 tiles, so a sub-tile jitter stays walkable.
+ * Falls back to the room's first map spawn (gate-side `map.spawns[0]`) when the
+ * species has no home (shouldn't happen for a playable species) — that fallback
+ * lives inside `world.spawnForSpecies`. The jitter is bounded to the pen interior
+ * bounds so the offset can never push the player into a wall; world-gen proves
+ * every pen center is non-solid + reachable, and the interior is >= 6x6 tiles, so
+ * a sub-tile jitter stays walkable.
  *
  * @param {string} roomName
  * @param {string} species

@@ -4,6 +4,47 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.101: **Spawn hardening + dead-code cleanup (spawning audit follow-up).** With the river now
+  solid, hardened the robot "top-up" spawn anchor in `world.ts`: it offset x by 3 off a junction and
+  clamped only to map bounds, so a future seed could have parked it on a now-solid water tile —
+  it now falls back to the (always force-paved) junction tile when the offset lands on solid/water.
+  Deterministic and byte-stable: a no-op on every tested seed, so the pinned hashes are unchanged. A
+  new `world.test.mjs` invariant asserts every `robotSpawn` anchor sits on a non-solid tile across
+  seeds (86 tests total). Also deleted the dead `firstSpawn` function in `server/game/stealth.js`
+  (zero call sites; the live fallback is `world.spawnForSpecies` → `map.spawns[0]`) and the stale
+  comment that referenced it, and removed the matching `FINDINGS_OUTSIDE_SCOPE.md` entry.
+
+- 0.2.100: **Respawn now updates the player sprite to the new species immediately (client bug).** On
+  escape→rebirth the server correctly reassigns the player's species (e.g. rat→elephant), but the
+  client kept rendering the OLD sprite ("Reborn as an Elephant!" while still a rat) until a full view
+  rebuild happened to fire. The Phaser renderer's `upsert()` reused an entity view whenever
+  `view.kind === e.kind` and never compared species, so the cached `view.species` (which keys the
+  animation in `updateAnimation`) stayed stale. Fixed in `client/src/render/phaser.ts`: an `animal`
+  view is now reused only when its species is unchanged (using the same `'ape'` default `createView`
+  uses); otherwise it falls through to the existing leak-free destroy+recreate path — which correctly
+  rebuilds the body (sprite↔shape can flip per species) and re-targets the camera for the local
+  player. Non-animal kinds (robots are `species:'robot'`) never churn. Client build green.
+
+- 0.2.99: **The river is now a SOLID barrier (world-gen, `WORLD_GEN_VERSION` 14→15).** Previously
+  only `WATER_DEEP`/`POND_DEEP` were solid, so the river was mostly walkable (~270 walkable water
+  cells per map) and robots/players stood in it. Now ALL water-family tiles are solid: `tiles.ts`
+  flips `WATER_SHALLOW`, every `WATER_EDGE_*`/`WATER_CORNER_*`/`WATER_ICORNER_*` shore-blend tile,
+  and `POND_EDGE` to `solid:true` (`WATER_DEEP`/`POND_DEEP` were already; `BRIDGE_H`/`BRIDGE_V`
+  stay walkable — the only crossings). Because `blendGroundEdges` paints the shore ring AFTER
+  `buildCollision` (and collision is never re-derived), `world.ts` adds a final collision-
+  reconciliation pass that re-solidifies every cell whose GROUND tile is water-family (new
+  `isWaterFamilyIndex` helper, kept separate from `isWaterIndex` so the cohesion/margin/blend
+  passes are untouched). A follow-up pass force-reopens the two threshold cells directly inside
+  each enclosure's south gate so a pond home (whose interior shore can reach its gate row) stays
+  enterable — 67 such cells across 50 seeds, all inside a home rect and connected to walkable
+  interior, never a hole into the open river. Reachability still converges on every seed.
+  BOTH pinned hashes re-pin: collision (`2182634496`→`2912234384`) as the shore ring flips
+  solid, and entitySpecs (`3622420766`→`2666229100`) as pen anchors / food slots / quest objects
+  / one aux guard that sat on the now-solid shallow shore relocate onto dry interior tiles. New
+  `world.test.mjs` invariant test proves every water-family tile is solid + every bridge walkable
+  across seeds. Shared build + 85-test suite green; 50-seed probe: 4950 target checks, 0
+  spawn/center/quest/food/gate/door/anchor on a solid tile.
+
 - 0.2.98: **Leaderboard validation fix — persist the escape-time JSON maps (real bug).** The
   `/plan-validation-and-review` gate caught (and a clean-DB round-trip confirmed) that the
   committed `server/db.js` `incStats` only merged `escapesBySpecies` — the old single-map
