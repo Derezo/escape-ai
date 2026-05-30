@@ -2,7 +2,19 @@
 
 All notable changes to TINS 2026. Update this file in every commit.
 
-## 0.2 — *The Caves of Steel* (jam build)
+## 0.2 — *Escape AI* (jam build)
+
+- 0.2.61: **Rejuvenation Phase 1 — finish the *Escape AI* title relabel.** Landed the
+  in-flight rename of the game title "The Caves of Steel" → "Escape AI" across docs,
+  shared, server, client and the asset-pipeline script headers (relabels only — no logic
+  touched). Caught the five script headers the rename missed (bare "Caves of Steel" as a
+  project label, not the novel): `scripts/check-facing.js`, `scripts/sprites/template.js`,
+  `scripts/sprites/anim.js`, `scripts/tiles/builders/edges.js`,
+  `scripts/tiles/builders/fences.js`. The Asimov *Caves of Steel* novel / in-world-lore
+  references (`client/src/help.ts`, `docs/ASIMOV_REFERENCE.md`, `shared/src/world.ts`,
+  `scripts/sprites/species/robot.js`, and historical CHANGELOG entries) are deliberately
+  left intact, as is the `game/caves-of-steel` branch name. Verified: `shared` builds
+  green; `grep -rni "caves of steel" scripts/` leaves only the keeper-robot flavor line.
 
 - 0.2.60: **NPC pathfinding — Phase 5 (`/plan-validation-and-review`).**
   Validation pass: requirements trace (6/6 implemented + connected), connectivity audit (zero dead code),
@@ -1353,7 +1365,7 @@ All notable changes to TINS 2026. Update this file in every commit.
     Scale test result: 20/20 synced, 20Hz, 42 entities/full-snapshot, <3ms RTT,
     ~67 KB/s/client — no desync, no bandwidth blowup.
 
-- 0.2.0: Rules dropped; committed to the game design. **The Caves of Steel** — a
+- 0.2.0: Rules dropped; committed to the game design. **Escape AI** — a
   co-op (≤20 player) animal-escape game where Asimov's Three Laws of Robotics are the
   stealth mechanic and a global panic meter catastrophically overflows into lockdown.
   - **Bonus rule #31 (Act of Sutskever) invoked**, replacing the quicksave rule #116

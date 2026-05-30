@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Atlas verifier  (TINS 2026 — The Caves of Steel)
+ * Atlas verifier  (TINS 2026 — Escape AI)
  *
  * The primary headless gate: asserts the packed atlas.json contains EXACTLY the
  * frame keys the contract+registry say it should — every expected key present,

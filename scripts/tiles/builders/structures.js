@@ -2,7 +2,7 @@
 
 /**
  * STRUCTURE builders (indices 75..102): walls, windows, doors, roofs.
- * TINS 2026 — The Caves of Steel.
+ * TINS 2026 — Escape AI.
  *
  * Walls are SOLID DECO: an opaque stucco block filling the cell (a building's
  * footprint reads as a wall). Ends/corners trim the block on the open side(s) so a

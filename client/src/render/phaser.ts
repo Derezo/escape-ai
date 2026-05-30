@@ -3,7 +3,7 @@
  *
  * It knows nothing about netcode or input; the game loop hands it a flat list of
  * entities every frame and it makes the screen match. Each entity is drawn by
- * its `kind` (The Caves of Steel populates the room with pens, robots, animals,
+ * its `kind` (Escape AI populates the room with pens, robots, animals,
  * terminals and a gate). An entity with no `kind` (the bare starter-kit point)
  * is treated as an `animal`.
  *

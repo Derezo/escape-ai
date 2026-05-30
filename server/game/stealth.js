@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The Caves of Steel — Three-Laws stealth core (server authoritative).
+ * Escape AI — Three-Laws stealth core (server authoritative).
  *
  * The DETERMINISTIC math (humanLikeness curve, First-Law freeze, robot decision)
  * lives ONCE in shared/src/step.ts, compiled to shared/dist/step.js (ESM). This

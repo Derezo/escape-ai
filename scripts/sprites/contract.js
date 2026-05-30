@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * THE LOCKED SPRITE CONTRACT  (TINS 2026 — The Caves of Steel)
+ * THE LOCKED SPRITE CONTRACT  (TINS 2026 — Escape AI)
  *
  * Every dimension, name, and frame-key the whole sprite library must agree on
  * lives here, exactly once. The generator (gen-sprites.js), the atlas writer

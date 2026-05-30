@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Central palette for the whole sprite library (TINS 2026 — The Caves of Steel).
+ * Central palette for the whole sprite library (TINS 2026 — Escape AI).
  *
  * Cohesion rule: every fill in every species comes from here — never a hardcoded
  * hex in a species file. Each species declares a 5-slot palette

@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Tileset builder  (TINS 2026 — The Caves of Steel)
+ * Tileset builder  (TINS 2026 — Escape AI)
  *
  * Rasterises the per-tile SVGs (from gen-tiles.js) into ONE packed PNG plus a
  * small JSON manifest, written to assets/tiles/tileset.{png,json}. The Phaser

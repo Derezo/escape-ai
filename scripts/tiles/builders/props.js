@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * PROP builders (indices 133..144) — TINS 2026, The Caves of Steel.
+ * PROP builders (indices 133..144) — TINS 2026, Escape AI.
  *
  * Small set-dressing objects, all DECO on a TRANSPARENT cell (ground shows around
  * them). Centred, top-lit, soft EDGE silhouette. BANNER is ysort:'behind' (it

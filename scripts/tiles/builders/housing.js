@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * ZOO HOUSING builders (indices 119..132) — TINS 2026, The Caves of Steel.
+ * ZOO HOUSING builders (indices 119..132) — TINS 2026, Escape AI.
  *
  * The enclosure vocabulary: low walls, glass panels, moats/ponds, aviary mesh,
  * rocky dens, heat-lamp floor, nests, burrows, a shade cloth (roof) and the keeper

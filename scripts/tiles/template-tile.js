@@ -2,7 +2,7 @@
 
 /**
  * Tile-specific SVG helpers, layered on scripts/sprites/template.js (TINS 2026 —
- * The Caves of Steel).
+ * Escape AI).
  *
  * The sprite primitives (rect/ellipse/circle/polygon/path, n1) are reused; these
  * add the tile idioms:

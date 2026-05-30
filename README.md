@@ -18,7 +18,7 @@ rules dropped at hour 0 we could write *gameplay*, not boilerplate (that hour-0 
 lives in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md)). The rules have now dropped — this is
 the game we are building.
 
-## The game — *The Caves of Steel*
+## The game — *Escape AI*
 
 A **co-op multiplayer animal-escape** game for up to **20 players**. You are animals
 that have escaped your enclosures in a megazoo run by humaniform positronic

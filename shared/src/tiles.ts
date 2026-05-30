@@ -1,5 +1,5 @@
 /**
- * THE TILE-IDENTITY CONTRACT  (TINS 2026 — The Caves of Steel)
+ * THE TILE-IDENTITY CONTRACT  (TINS 2026 — Escape AI)
  *
  * Every semantic tile the zoo is built from is named here exactly once, with a
  * stable numeric index. This is the canonical, TS-first source of truth, the

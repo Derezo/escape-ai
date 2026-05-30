@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Pure animation phase-math for the sprite library (TINS 2026 — Caves of Steel).
+ * Pure animation phase-math for the sprite library (TINS 2026 — Escape AI).
  *
  * Walk/idle motion is fully determined by integer frame indices, so every
  * species' archetype calls these helpers and the whole zoo bobs and swings in

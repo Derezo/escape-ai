@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Tileset verifier  (TINS 2026 — The Caves of Steel)
+ * Tileset verifier  (TINS 2026 — Escape AI)
  *
  * The primary headless gate for the tile-art pipeline. Three checks:
  *

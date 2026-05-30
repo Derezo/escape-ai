@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * FENCE / BARRIER builders (indices 103..118) — TINS 2026, Caves of Steel.
+ * FENCE / BARRIER builders (indices 103..118) — TINS 2026, Escape AI.
  *
  * DECO drawn on a TRANSPARENT cell (ground shows between/under the rails). Two
  * materials: tan fence WOOD (rails + posts) and steel CAGE bars (reuse the robot

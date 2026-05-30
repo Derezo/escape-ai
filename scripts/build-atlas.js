@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Atlas builder  (TINS 2026 — The Caves of Steel)
+ * Atlas builder  (TINS 2026 — Escape AI)
  *
  * Rasterises the per-frame SVGs (from gen-sprites.js) into ONE packed PNG plus a
  * Phaser "JSON Hash" atlas, written to assets/sprites/atlas.{png,json}. The

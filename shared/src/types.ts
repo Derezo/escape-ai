@@ -8,7 +8,7 @@
  */
 
 /**
- * What an entity *is* in The Caves of Steel. Plain string union so it stays
+ * What an entity *is* in Escape AI. Plain string union so it stays
  * serializable; the renderer and the deterministic step() branch on it.
  *   - `animal`   a player-controlled escapee (also covers idle pen animals)
  *   - `robot`    a Three-Laws keeper-robot (server-driven NPC)
@@ -79,7 +79,7 @@ export interface QuestProgress {
 /**
  * The atomic thing the world is made of. The index signature lets gameplay
  * rules bolt on arbitrary fields without breaking serialization; the named
- * optional fields below are the ones The Caves of Steel reads on both sides, so
+ * optional fields below are the ones Escape AI reads on both sides, so
  * they're typed (rather than hidden in the index signature) for safety.
  */
 export interface Entity {

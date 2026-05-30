@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * EDGE / transition tile builders (indices 25..48) — TINS 2026, Caves of Steel.
+ * EDGE / transition tile builders (indices 25..48) — TINS 2026, Escape AI.
  *
  * Two 12-tile sets, both grass-based with a second material banded onto a side or
  * corner:

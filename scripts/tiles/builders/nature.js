@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * NATURE deco builders (indices 49..74) — TINS 2026, The Caves of Steel.
+ * NATURE deco builders (indices 49..74) — TINS 2026, Escape AI.
  *
  * All DECO: drawn on a TRANSPARENT cell so the ground layer shows through. The
  * object is centred (or positioned per its role). Top-lit: highlights toward the

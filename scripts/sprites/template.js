@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * SVG primitive vocabulary for the sprite library (TINS 2026 — Caves of Steel).
+ * SVG primitive vocabulary for the sprite library (TINS 2026 — Escape AI).
  *
  * Every species builder draws with these helpers so all 14 animals share one
  * stroke weight, one shading scheme, one coordinate idiom — the visual cohesion

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * THE TILE-ART CONTRACT  (TINS 2026 — The Caves of Steel)
+ * THE TILE-ART CONTRACT  (TINS 2026 — Escape AI)
  *
  * The CJS mirror of shared/src/tiles.ts `TILES`. The zero-dep tile-art generator
  * can't import the TypeScript source, so this file restates the registry's

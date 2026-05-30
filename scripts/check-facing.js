@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Determinism + correctness check for facingFromVec (TINS 2026 — Caves of Steel).
+ * Determinism + correctness check for facingFromVec (TINS 2026 — Escape AI).
  *
  * No test framework in the repo; this mirrors the project's deterministic-replay
  * discipline (see the wanderStep checks in CHANGELOG 0.2.9) with a plain node

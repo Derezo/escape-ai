@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Sprite frame generator  (TINS 2026 — The Caves of Steel)
+ * Sprite frame generator  (TINS 2026 — Escape AI)
  *
  * Emits one SVG file per (species, state, dir, frame) into assets/sprites/frames/.
  * ZERO dependencies — pure string templates — so it runs on a clean clone with

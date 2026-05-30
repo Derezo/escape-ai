@@ -14,7 +14,7 @@
 import type { Dir8, Entity, WorldState } from './types.js';
 
 // ---------------------------------------------------------------------------
-// The Caves of Steel — Three-Laws stealth math (deterministic, both sides)
+// Escape AI — Three-Laws stealth math (deterministic, both sides)
 //
 // These pure helpers encode the gameplay the server runs each tick and the
 // client can mirror for prediction/feedback. NONE of them read wall-clock time

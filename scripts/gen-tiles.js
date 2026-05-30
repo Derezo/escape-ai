@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * Tile SVG generator  (TINS 2026 — The Caves of Steel)
+ * Tile SVG generator  (TINS 2026 — Escape AI)
  *
  * Emits one 32x32 SVG per registry tile into assets/tiles/svg/<NAME>.svg. ZERO
  * dependencies — pure string templates — so it runs on a clean clone with nothing

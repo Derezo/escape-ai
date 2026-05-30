@@ -1,5 +1,5 @@
 /**
- * SFX — fire-and-forget sound effects for The Caves of Steel.
+ * SFX — fire-and-forget sound effects for Escape AI.
  *
  * Uses the Web Audio API directly (not Phaser audio): the renderer is swappable
  * behind IRenderer, so sound must not depend on it. WAVs are the zero-dependency

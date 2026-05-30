@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * TERRAIN / ground tile builders (indices 1..24) — TINS 2026, The Caves of Steel.
+ * TERRAIN / ground tile builders (indices 1..24) — TINS 2026, Escape AI.
  *
  * All are FULL-BLEED (fillCell) + seamless: the top-lit band is full-width and
  * scatter detail is deterministic (seeded by tile name) and kept off the cell

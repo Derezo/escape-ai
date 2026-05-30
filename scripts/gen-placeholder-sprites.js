@@ -59,7 +59,7 @@ Output: assets/sprites/*.svg
 }
 
 // --- sprite catalogue -------------------------------------------------------
-// The Caves of Steel entities (see shared/src/types.ts EntityKind + animal
+// Escape AI entities (see shared/src/types.ts EntityKind + animal
 // species). Each gets a distinct shape + colour + a short label so they're
 // tellable apart on screen before real art exists. The PhaserRenderer draws
 // these as shapes today (no image load); these SVGs are the committed art

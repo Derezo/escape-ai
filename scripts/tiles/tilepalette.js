@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Environment palette for the tile library (TINS 2026 — The Caves of Steel).
+ * Environment palette for the tile library (TINS 2026 — Escape AI).
  *
  * The tile analogue of scripts/sprites/palette.js: every fill in every tile
  * builder comes from here, so the whole tileset reads as one cohesive zoo. Each
