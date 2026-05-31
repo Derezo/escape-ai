@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.151: **Phase 6 validation cleanups — gate-funnel invariant + doc drift.** Adds a
+  deterministic `world.test.mjs` invariant asserting every pen gate's 2-wide south
+  opening + apron stays walkable (collision 0) across the pinned seed spread, locking in
+  the "obstacles ≥2 tiles from doorways / paths meet the south gate cleanly" guarantee so
+  a future world-gen change can't silently drop a tree into a doorway lane (now 91 shared
+  tests). Fixes a stale `world.ts` comment that still cited the old 2–3 animals-per-pen
+  range (now 5–8). Records the one deferred follow-up (doorway depth is a chevron marker
+  above the roof, not an elevated wall-face render) in `FINDINGS_OUTSIDE_SCOPE.md`. No
+  generator output change — pinned hashes unchanged.
+
 - 0.2.150: **Return-home reliability + robot exit-pen + escape herd despawn/respawn (Phase 5).**
   Three server-authoritative behavior fixes; no client / shared change.
   **5A — return-home watchdog (`stealth.js`).** A returning-home animal now tracks net

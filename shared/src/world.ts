@@ -2235,7 +2235,7 @@ export function generateWorld(seed: number): WorldMap {
         ? { rx: placed.building.rx, ry: placed.building.ry, rw: placed.building.rw, rh: placed.building.rh }
         : null;
     if (rect) {
-      // Total animals = animalCountFor (2..3); animal 1 is the canonical pen anchor
+      // Total animals = animalCountFor (5..8); animal 1 is the canonical pen anchor
       // at the home center, so we need (n-1) EXTRA interior slots here.
       const n = animalCountFor(rect.rw - 2, rect.rh - 2);
       animalSpots.set(species, populateEnclosure(ground, deco, rect, placed.questTx, placed.questTy, n - 1, tile, rng));

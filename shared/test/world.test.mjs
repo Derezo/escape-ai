@@ -595,3 +595,37 @@ test('animals: home interior is large enough that containment wander cannot free
     }
   }
 });
+
+test('paths: every pen gate funnel (2-wide south apron) is clear of deco obstacles + walkable', () => {
+  // v18 carves a 2-wide SOUTH APRON straight down from each pen gate (so the path
+  // meets the south-facing door from below) and reserves a box around it BEFORE
+  // scatterNature, so no tree/bush/prop lands in the pathing funnel (the "tree in
+  // the middle of the path" artifact + animals getting stuck on a gate obstacle).
+  // This locks that in: for every species home, the gate cells and the 2-tile apron
+  // directly south of them must carry NO solid deco and must be WALKABLE (collision
+  // 0) — a clear in/out lane. The gate is south-centred at gateTx = rx+floor(rw/2),
+  // gateTy = ry+rh-1, opening 2 wide (gateTx-1, gateTx); the apron is the 2 rows
+  // below. Deterministic; checked across seeds.
+  for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
+    const map = generateWorld(seed);
+    for (const key of SPECIES_KEYS) {
+      const rect = homeRectOf(map, key);
+      const gateTx = rect.rx + Math.floor(rect.rw / 2);
+      const gateTy = rect.ry + rect.rh - 1;
+      // The 2-wide gate opening + the 2-tile apron directly south of it.
+      for (let dy = 0; dy <= 2; dy++) {
+        for (const cx of [gateTx - 1, gateTx]) {
+          const cy = gateTy + dy;
+          if (cx < 0 || cy < 0 || cx >= map.w || cy >= map.h) continue;
+          const i = cy * map.w + cx;
+          // No SOLID deco squatting in the funnel (non-solid ground detail like a
+          // path edge tile is fine; a tree trunk / bush / prop is not).
+          assert.ok(
+            map.collision[i] === 0,
+            `seed ${seed}: ${key} gate-funnel cell (${cx},${cy}) is blocked (collision=1) — obstacle in the doorway lane`,
+          );
+        }
+      }
+    }
+  }
+});

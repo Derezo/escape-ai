@@ -89,6 +89,28 @@ the audit trail).
   GHSA-67mh-4wv8-2f99.
 - **Effort:** M (major-version upgrade + build re-verification).
 
+### Doorway depth is a marker, not an elevated wall-face render
+- **Status:** open — low priority (cosmetic/robustness), needs a human eyeball call.
+- **Surfaced:** 2026-05-31, Pen/Pathing/Rendering overhaul (Phase 6 visual validation).
+- **Detail:** the "visible doorway above the second layer" requirement ships as a yellow
+  chevron marker drawn above the roof at each building's south gate (`buildDoorwayMarker`,
+  `client/src/render/phaser.ts`). Directional wall tiles (`WALL_EXT_MID/*_END/CORNER_*`)
+  exist in the contract and the generator stamps them; the renderer draws them on the deco
+  layer UNDER the roof. There is no distinct "wall face above the second layer" depth
+  render — when the roof is opaque (player outside) the south wall/door tiles are occluded
+  by the roof, so the chevron is the only above-roof entrance cue. Headless screenshots
+  confirm the chevron is visible and the roof fades on entry, but can't isolate a wall-face
+  depth effect from the roof.
+- **Why deferred:** the user-facing entrance cue works (chevron + roof fade); a true
+  elevated wall-face render is a renderer depth-layering change best judged by a human
+  eyeball, not a headless screenshot.
+- **Suggested approach if picked up:** either (a) accept the chevron as the entrance cue
+  and close this, or (b) add a render assertion/effect so south-wall door tiles read at a
+  depth between the floor and the roof (entrance visible before entry).
+- **Refs:** `client/src/render/phaser.ts` (`buildDoorwayMarker`, `buildRoofTiles`,
+  `updateRoofFade`, `DEPTH_*` constants); `shared/src/tiles.ts` wall defs (75–91).
+- **Effort:** S.
+
 ## Open
 
 ### Unused `world` import in server/game/behaviors.js
