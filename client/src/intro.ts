@@ -37,7 +37,8 @@
  *     thing for reduced-motion users — they still get the story.
  */
 
-import { playSfx, startLoop, stopLoop } from './audio';
+import { playSfx, startLoop, stopLoop, preloadVoice, playVoice, stopVoice } from './audio';
+import { VOICE_META, type VoiceName } from './audio.generated';
 import { playMusicState } from './music';
 
 // --- Asset URLs (Vite publicDir = assets/, base './' → Capacitor-safe) --------
@@ -55,34 +56,99 @@ const SUBTITLES = [
   'Wake up in their skin. Open the gates. Run.',
 ] as const;
 
-// --- Timeline (ms from intro start). Tunable; the whole macro schedule lives here.
+/**
+ * The voice-clip key per subtitle (index-aligned with SUBTITLES). Each names a
+ * `voice` manifest entry; the client reads its baked `durationMs` (via VOICE_META) to
+ * pace the subtitle and plays its clip on the reveal. A clip whose duration isn't
+ * baked yet falls back to FIXED_SUBTITLE_MS and plays silently.
+ */
+const VOICE_ORDER: readonly VoiceName[] = [
+  'intro_vo_1',
+  'intro_vo_2',
+  'intro_vo_3',
+  'intro_vo_4',
+];
+
+// --- Timeline anchors (ms). The SUBTITLE phase is now DYNAMIC — each subtitle holds
+// for its voice clip's baked duration + a buffer (see computeSubtitleSchedule). These
+// constants are the fixed parts: the opening black, the per-subtitle fallback gap when
+// no clip is generated, the buffer after each clip, and the closing flicker/title math.
 const T = {
   /** Black hold before the chamber fades in. */
   POD_FADE_IN: 3000,
   /** When subtitle 0 appears — this also ARMS the skip affordance. */
   FIRST_SUBTITLE: 5000,
-  /** Gap between successive subtitle reveals. */
-  SUBTITLE_GAP: 2200,
-  /** When the on↔off flicker begins (after the last subtitle has had a beat). */
-  FLICKER_START: 13200,
+  /** Hold per subtitle when its voice clip has no baked duration (the clean-clone
+   *  default — matches the original fixed cadence so the un-voiced intro is unchanged). */
+  FIXED_SUBTITLE_MS: 2200,
+  /** Extra time a subtitle stays up AFTER its voice clip ends (the requested buffer). */
+  SUBTITLE_BUFFER_MS: 1500,
+  /** Beat between the last subtitle clearing and the flicker starting. */
+  PRE_FLICKER_BEAT: 600,
   /** One flicker half-cycle (off→on or on→off). */
   FLICKER_STEP: 250,
   /** How many power-on flips (each fires a spark). */
   FLICKER_FLIPS: 5,
-  /** Fade everything to black + stop the hum. */
-  TO_BLACK: 15400,
-  /** Show the lone "ESCAPE AI" title. */
-  TITLE_IN: 16000,
-  /** Natural finish: tear down + resolve. */
-  FINISH: 18800,
-  /** Hard ceiling — a safety net so a no-op phase can never strand the overlay. */
-  CEILING: 21000,
+  /** After the flicker: beat before fading to black. */
+  POST_FLICKER_BEAT: 400,
+  /** Fade-to-black duration before the title shows. */
+  TO_BLACK_HOLD: 600,
+  /** How long the lone "ESCAPE AI" title holds before finish. */
+  TITLE_HOLD: 2800,
+  /** Safety margin added past the computed finish for the hard-ceiling timer. */
+  CEILING_MARGIN: 2200,
 } as const;
 
 /** Loop gain for the power-up hum. */
 const HUM_VOLUME = 0.45;
 /** One-shot gain for each transfer spark. */
 const SPARK_VOLUME = 0.6;
+
+/**
+ * Compute the dynamic subtitle schedule and the downstream phase offsets from the
+ * baked voice durations. When no durations are baked (clean clone) this collapses to
+ * the original fixed cadence, so the un-voiced intro is byte-for-byte the same UX.
+ *
+ * Returns absolute ms offsets from intro start:
+ *  - subtitleAt[i]  — when subtitle i reveals (and its voice clip plays)
+ *  - flickerStart   — when the pod on↔off flicker begins
+ *  - toBlack        — fade everything to black + stop the hum
+ *  - titleIn        — show the lone "ESCAPE AI" title
+ *  - finish         — tear down + resolve
+ *  - ceiling        — hard-ceiling safety net (> finish)
+ */
+function computeTimeline(reduced: boolean): {
+  subtitleAt: number[];
+  flickerStart: number;
+  toBlack: number;
+  titleIn: number;
+  finish: number;
+  ceiling: number;
+} {
+  const firstAt = reduced ? 1200 : T.FIRST_SUBTITLE;
+  const buffer = reduced ? 800 : T.SUBTITLE_BUFFER_MS;
+  const fallbackHold = reduced ? 1600 : T.FIXED_SUBTITLE_MS;
+
+  const subtitleAt: number[] = [];
+  let cursor = firstAt;
+  for (let i = 0; i < SUBTITLES.length; i++) {
+    subtitleAt.push(cursor);
+    // Hold = the clip's baked duration (if any) + buffer; else the fixed fallback hold.
+    const key = VOICE_ORDER[i];
+    const dur = key ? VOICE_META[key]?.durationMs ?? null : null;
+    const hold = dur != null && dur > 0 ? dur + buffer : fallbackHold;
+    cursor += hold;
+  }
+
+  // `cursor` now sits just after the last subtitle's hold ends.
+  const flickerStart = cursor + (reduced ? 0 : T.PRE_FLICKER_BEAT);
+  const flickerSpan = reduced ? 0 : T.FLICKER_FLIPS * 2 * T.FLICKER_STEP;
+  const toBlack = flickerStart + flickerSpan + (reduced ? 0 : T.POST_FLICKER_BEAT);
+  const titleIn = toBlack + T.TO_BLACK_HOLD;
+  const finish = titleIn + T.TITLE_HOLD;
+  const ceiling = finish + T.CEILING_MARGIN;
+  return { subtitleAt, flickerStart, toBlack, titleIn, finish, ceiling };
+}
 
 // --- Preloaded image cache (warmed at boot, read at play time) ----------------
 let offImg: HTMLImageElement | undefined;
@@ -110,8 +176,8 @@ function prefersReducedMotion(): boolean {
  * the player finishes the login screen they're ready. Never throws, never blocks.
  *
  * The intro SFX (`intro_power`/`intro_spark`) are warmed by main.ts's existing
- * `preloadSfx()` boot call (it loads the whole catalogue), so we only handle the
- * images here.
+ * `preloadSfx()` boot call (it loads the whole catalogue). We warm the two heavy PNGs
+ * AND the narration clips here so the cinematic plays without a fetch/decode hitch.
  */
 export function preloadIntroAssets(): void {
   if (!offImg) {
@@ -126,6 +192,8 @@ export function preloadIntroAssets(): void {
     onImg.src = POD_ON_URL;
     void onImg.decode().catch(() => {});
   }
+  // Warm the narration clips (no-op-silent if not generated yet).
+  preloadVoice();
 }
 
 /**
@@ -199,10 +267,16 @@ function runSequence(resolve: () => void): void {
     window.removeEventListener('keydown', onSkip);
     window.removeEventListener('pointerdown', onSkip);
     stopLoop('intro_power');
+    stopVoice(); // cut any in-progress narration on skip/finish
     overlay.remove();
     active = false;
     resolve();
   };
+
+  // --- Dynamic timeline: each subtitle holds for its voice clip's baked duration +
+  // a buffer (or a fixed fallback when no clip is generated). Everything downstream
+  // (flicker, fade, title, finish) chains off the computed end of the last subtitle.
+  const tl = computeTimeline(reduced);
 
   // --- Audio: silence the menu music, start the power-up hum ----------------
   // The menu's title_theme is playing; fade it out so the cold hum owns the
@@ -214,15 +288,17 @@ function runSequence(resolve: () => void): void {
   // --- Phase: chamber fades in ----------------------------------------------
   at(reduced ? 0 : T.POD_FADE_IN, () => stageEl.classList.add('visible'));
 
-  // --- Phase: subtitles reveal one at a time --------------------------------
+  // --- Phase: subtitles reveal one at a time, paced by their voice clip ------
   SUBTITLES.forEach((line, i) => {
-    const when = (reduced ? 1200 : T.FIRST_SUBTITLE) + i * (reduced ? 1600 : T.SUBTITLE_GAP);
-    at(when, () => {
+    at(tl.subtitleAt[i], () => {
       subtitleEl.textContent = line;
       // Re-trigger the fade by toggling the class off→on across a frame.
       subtitleEl.classList.remove('show');
       void subtitleEl.offsetWidth; // force reflow so the re-add animates
       subtitleEl.classList.add('show');
+      // Play the narration clip for this beat (silent no-op if not generated).
+      const key = VOICE_ORDER[i];
+      if (key) playVoice(key, VOICE_META[key]?.volume ?? 0.95);
       // Arm the skip on the FIRST subtitle.
       if (i === 0 && !skipArmed) {
         skipArmed = true;
@@ -238,10 +314,10 @@ function runSequence(resolve: () => void): void {
   // a spark; power-off flips swap it back out silently. Reduced-motion skips the
   // flicker entirely (it's pure motion) — the on-image just shows once, quietly.
   if (reduced) {
-    at(T.FIRST_SUBTITLE + SUBTITLES.length * 1600, () => stageEl.classList.add('powered'));
+    at(tl.flickerStart, () => stageEl.classList.add('powered'));
   } else {
     for (let flip = 0; flip < T.FLICKER_FLIPS; flip++) {
-      const onAt = T.FLICKER_START + flip * 2 * T.FLICKER_STEP;
+      const onAt = tl.flickerStart + flip * 2 * T.FLICKER_STEP;
       const offAt = onAt + T.FLICKER_STEP;
       at(onAt, () => {
         stageEl.classList.add('powered');
@@ -255,18 +331,18 @@ function runSequence(resolve: () => void): void {
   }
 
   // --- Phase: fade to black, stop the hum -----------------------------------
-  at(T.TO_BLACK, () => {
+  at(tl.toBlack, () => {
     overlay.classList.add('to-black');
     stopLoop('intro_power');
   });
 
   // --- Phase: the lone title ------------------------------------------------
-  at(T.TITLE_IN, () => {
+  at(tl.titleIn, () => {
     overlay.classList.add('title-stage');
     titleEl.classList.add('show');
   });
 
   // --- Phase: natural finish + hard-ceiling safety net ----------------------
-  at(T.FINISH, finish);
-  at(T.CEILING, finish); // belt-and-suspenders; finish() is idempotent
+  at(tl.finish, finish);
+  at(tl.ceiling, finish); // belt-and-suspenders; finish() is idempotent
 }

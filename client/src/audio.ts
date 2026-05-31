@@ -11,8 +11,8 @@
  * load and cached, so `play()` is cheap to call from gameplay events.
  */
 
-import { SFX_FILES, SFX_FALLBACK, type SfxName } from './audio.generated';
-export type { SfxName } from './audio.generated';
+import { SFX_FILES, SFX_FALLBACK, VOICE_FILES, type SfxName, type VoiceName } from './audio.generated';
+export type { SfxName, VoiceName } from './audio.generated';
 
 // ---------------------------------------------------------------------------
 // Spatialization — distance attenuation for world-emitted SFX
@@ -121,6 +121,99 @@ async function load(name: SfxName): Promise<void> {
 /** Preload the whole catalogue (call once at boot; failures are non-fatal). */
 export function preloadSfx(): void {
   (Object.keys(SFX_FILES) as SfxName[]).forEach((name) => void load(name));
+}
+
+// ---------------------------------------------------------------------------
+// Voice — cinematic intro narration (one-shot, no fallback, optional)
+// ---------------------------------------------------------------------------
+//
+// Voice clips are separate from SFX: a distinct buffer cache keyed by VoiceName,
+// and NO synth fallback — a clip that isn't generated yet simply stays silent (the
+// intro falls back to fixed subtitle timing). `playVoice` reports whether it actually
+// started a sound so the caller can branch (voice-paced vs. fixed-timing).
+
+const voiceBuffers = new Map<VoiceName, AudioBuffer>();
+const voiceLoading = new Set<VoiceName>();
+/** Names that failed to load (missing/undecodable) — don't retry every play. */
+const voiceMissing = new Set<VoiceName>();
+
+/** Fetch + decode one narration clip into the cache. Safe to call repeatedly. */
+async function loadVoice(name: VoiceName): Promise<void> {
+  if (voiceBuffers.has(name) || voiceLoading.has(name) || voiceMissing.has(name)) return;
+  const context = audioCtx();
+  if (!context) return;
+  voiceLoading.add(name);
+  try {
+    const res = await fetch(VOICE_FILES[name]);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const bytes = await res.arrayBuffer();
+    const buf = await context.decodeAudioData(bytes);
+    voiceBuffers.set(name, buf);
+  } catch {
+    // Not generated yet (or undecodable) — remember so we don't refetch, stay silent.
+    voiceMissing.add(name);
+  } finally {
+    voiceLoading.delete(name);
+  }
+}
+
+/** Preload all narration clips (call at boot; missing clips fail silently). */
+export function preloadVoice(): void {
+  (Object.keys(VOICE_FILES) as VoiceName[]).forEach((name) => void loadVoice(name));
+}
+
+/** True once a clip is decoded and ready to play instantly. */
+export function isVoiceReady(name: VoiceName): boolean {
+  return voiceBuffers.has(name);
+}
+
+/**
+ * The currently-sounding narration source, so a new clip (or a skip/teardown via
+ * stopVoice) cuts the previous one — narration beats never overlap.
+ */
+let voiceSrc: AudioBufferSourceNode | undefined;
+
+/** Stop any sounding narration clip and release it. No-op if nothing is playing. */
+export function stopVoice(): void {
+  if (voiceSrc) {
+    try {
+      voiceSrc.stop();
+    } catch {
+      // already stopped — ignore
+    }
+    voiceSrc.disconnect();
+    voiceSrc = undefined;
+  }
+}
+
+/**
+ * Play a narration clip once. Returns true if a sound was actually started (the clip
+ * was decoded and the context is available), false otherwise — the intro uses this to
+ * decide voice-paced vs. fixed-timing. Cuts any previous narration first so beats don't
+ * overlap. Never throws; a not-yet-loaded clip kicks off its load and returns false.
+ * @param name   voice clip key
+ * @param volume 0..1 gain (default 0.95 so the narration sits above the hum)
+ */
+export function playVoice(name: VoiceName, volume = 0.95): boolean {
+  const context = audioCtx();
+  if (!context) return false;
+  const buf = voiceBuffers.get(name);
+  if (!buf) {
+    void loadVoice(name); // warm it for next time
+    return false;
+  }
+  stopVoice(); // a new beat cuts the previous clip
+  const src = context.createBufferSource();
+  src.buffer = buf;
+  const gain = context.createGain();
+  gain.gain.value = volume;
+  src.connect(gain).connect(context.destination);
+  src.onended = () => {
+    if (voiceSrc === src) voiceSrc = undefined;
+  };
+  src.start();
+  voiceSrc = src;
+  return true;
 }
 
 /**

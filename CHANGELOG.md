@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.124: **Intro voice narration — Phase V4: dynamic subtitle timeline + voice playback.** The cinematic
+  now paces each subtitle by its narration clip. `audio.ts` gains a voice subsystem parallel to SFX — a
+  `VoiceName`-keyed buffer cache, `preloadVoice()`, `isVoiceReady()`, `playVoice()` (one-shot, cuts the
+  previous beat so narration never overlaps, returns whether it actually sounded), and `stopVoice()`;
+  voice clips have NO synth fallback (a missing clip just stays silent). `intro.ts` replaces the fixed
+  subtitle constants with `computeTimeline()`: subtitle *i* holds for `VOICE_META[key].durationMs + 1500ms`
+  (the requested buffer), and the flicker → fade → title → finish phases chain off the computed end of the
+  last subtitle. When no durations are baked (the clean-clone default) it collapses to the ORIGINAL fixed
+  cadence (subtitles at 5000/7200/9400/11600ms), so the un-voiced intro is unchanged. Each subtitle reveal
+  plays its clip (silent no-op if not generated); the single guarded `finish()` now also `stopVoice()`s on
+  skip/teardown. `preloadIntroAssets()` warms the clips too. Verified: timeline math (no-voice == original
+  cadence; voiced == clip+1500ms holds; reduced-motion compressed) + a headless e2e of the no-voice
+  fallback path (8/8 — intro plays, refined VO copy shows, subtitles advance on fixed fallback timing,
+  flicker, teardown, no voice errors). Client build clean. Touched `client/src/audio.ts`,
+  `client/src/intro.ts`.
+
 - 0.2.123: **Intro voice narration — Phase V3: codegen + drift gate for voice.** The Node audio codegen
   (`scripts/audio/gen-bindings.js`) now emits a third block into `client/src/audio.generated.ts`:
   `VOICE_FILES` (key → `./voice/<key>.mp3`), the `VoiceName` type, and `VOICE_META` (per clip: `text` —
