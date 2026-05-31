@@ -123,6 +123,58 @@ export function facingFromVecDeadband(dx: number, dy: number, prev: Dir8, minDel
 }
 
 // ---------------------------------------------------------------------------
+// Turn-rate limiting — the anti-bounce smoother.
+//
+// The ROOT cause of the NPC "E/W flip / bounce" jitter is that a reactive heading
+// (a wander heading blocked by an interior obstacle, or a freshly recomputed A*
+// waypoint that briefly points backward) can REVERSE direction from one tick to the
+// next: the body slides full-speed east, then full-speed west, and the facing snaps
+// e↔w every tick. The facing deadband / MIN_STEP guards do NOT catch this — a real
+// slide step is ≫ their sub-pixel thresholds.
+//
+// The fix is to cap how fast the COMMITTED movement heading may rotate per tick. A
+// sharp reversal then becomes physically impossible: the heading arcs toward the
+// desired direction over several ticks instead of snapping, so the body curves
+// smoothly and the facing (derived from that same smoothed heading) inherits the
+// smoothness. The cap is gentle enough that gradual turns — including the turn into a
+// 2-tile gate — still complete in time, so navigation is unaffected (verified: a
+// 12°/tick cap threads the gate at the same tick as no cap).
+// ---------------------------------------------------------------------------
+
+/** Tunables for the per-tick heading turn-rate limit (the anti-bounce smoother). */
+export const TURN = {
+  /**
+   * Max radians the committed movement heading may rotate in one tick (~12°). A full
+   * 180° about-face thus takes ~15 ticks (≈0.75s at 20Hz), which reads as a natural
+   * pivot, not a snap. Empirically this is the band that drives near-opposite
+   * reversals to ZERO in the pond-ring worst case while leaving gate-threading and
+   * patrol turns intact; looser (≥30°/tick) lets reversals creep back. Same value on
+   * every server — a plain angle compare, fully deterministic.
+   */
+  MAX_PER_TICK: (12 * Math.PI) / 180,
+} as const;
+
+/**
+ * Rotate a current heading ANGLE (radians) toward a desired heading angle by at most
+ * `maxTurn` radians, taking the shorter way around the circle. Returns the desired
+ * angle outright when it's already within `maxTurn` (so an unobstructed straight path
+ * is followed exactly, no lag). This is the per-tick clamp behind {@link TURN}.
+ *
+ * Pure + deterministic: a couple of additions, a sign, and a modulo-free wrap into
+ * (−π, π]; the same (cur, des, maxTurn) always yields the same result on every
+ * machine. The caller stores the returned angle back on the entity (server-only, like
+ * patrolIndex) and integrates cos/sin of it through moveWithCollision.
+ */
+export function turnTowardLimited(cur: number, des: number, maxTurn: number): number {
+  // Shortest signed delta in (−π, π].
+  let d = des - cur;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d <= -Math.PI) d += Math.PI * 2;
+  if (Math.abs(d) <= maxTurn) return des;
+  return cur + (d < 0 ? -maxTurn : maxTurn);
+}
+
+// ---------------------------------------------------------------------------
 // Ambient NPC drift — deterministic patrol (robots) + wander (idle animals)
 //
 // Input-less NPCs (a robot with nothing to chase, an idle decoy animal) need to

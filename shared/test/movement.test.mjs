@@ -18,6 +18,7 @@ import {
   chainFollowStep,
   speedBoost,
   wanderAvoid,
+  smoothHeading,
   BOOST,
 } from '../dist/movement.js';
 import {
@@ -30,7 +31,9 @@ import {
   homeBiasedWanderStep,
   facingFromVec,
   facingFromVecDeadband,
+  turnTowardLimited,
   WANDER,
+  TURN,
 } from '../dist/step.js';
 
 const TILE = 32;
@@ -344,4 +347,100 @@ test('facingFromVecDeadband: a corner grind never flips facing, then a real step
   // Now it breaks free with a real westward step — facing finally turns.
   facing = facingFromVecDeadband(-(WANDER.FACING_DEADBAND * 3), 0, facing, WANDER.FACING_DEADBAND);
   assert.equal(facing, 'w', 'a real step past the deadband turns the animal');
+});
+
+// --- turnTowardLimited / smoothHeading (the anti-bounce turn-rate limiter) ----
+
+const TWO_PI = Math.PI * 2;
+/** Normalize an angle into (−π, π] for comparison. */
+function wrapPi(a) {
+  let d = a;
+  while (d > Math.PI) d -= TWO_PI;
+  while (d <= -Math.PI) d += TWO_PI;
+  return d;
+}
+
+test('turnTowardLimited: within the cap snaps to the desired angle (no lag)', () => {
+  const cap = TURN.MAX_PER_TICK;
+  // A desired heading half a cap away is reached exactly this tick.
+  assert.equal(turnTowardLimited(0, cap * 0.5, cap), cap * 0.5);
+  // Exactly at the cap is also reached (inclusive boundary).
+  assert.equal(turnTowardLimited(0, cap, cap), cap);
+});
+
+test('turnTowardLimited: beyond the cap rotates by exactly the cap, shorter way', () => {
+  const cap = TURN.MAX_PER_TICK;
+  // Desired far to the +side → rotate +cap.
+  assert.ok(Math.abs(turnTowardLimited(0, Math.PI / 2, cap) - cap) < 1e-12);
+  // A near-180° reversal must take the SHORTER way, not snap across. From 0 toward
+  // just under +π we rotate +cap; toward just over −π (≈ +π the other way) we rotate
+  // the way the shortest signed delta points — never more than cap in magnitude.
+  const stepped = turnTowardLimited(0, Math.PI - 0.001, cap);
+  assert.ok(Math.abs(wrapPi(stepped)) <= cap + 1e-9, 'never rotates more than the cap');
+});
+
+test('turnTowardLimited: a 180° reversal takes many ticks (cannot flip in one)', () => {
+  const cap = TURN.MAX_PER_TICK;
+  // Heading east (0); desired west (π). Drive the limiter and assert it NEVER jumps
+  // to the opposite hemisphere in a single tick (the core anti-bounce property).
+  let cur = 0;
+  const des = Math.PI;
+  let ticks = 0;
+  let prev = cur;
+  while (Math.abs(wrapPi(des - cur)) > 1e-6 && ticks < 100) {
+    cur = turnTowardLimited(cur, des, cap);
+    const step = Math.abs(wrapPi(cur - prev));
+    assert.ok(step <= cap + 1e-9, `tick ${ticks}: rotated ${step} > cap ${cap}`);
+    prev = cur;
+    ticks++;
+  }
+  // ~π / cap ticks to complete the about-face — a smooth pivot, not a snap.
+  assert.ok(ticks >= Math.floor(Math.PI / cap) - 1, 'a half-turn takes ~π/cap ticks');
+  assert.ok(ticks <= Math.ceil(Math.PI / cap) + 1, 'and no more');
+});
+
+test('turnTowardLimited: deterministic — same inputs, same output twice', () => {
+  const a = turnTowardLimited(0.3, -2.1, TURN.MAX_PER_TICK);
+  const b = turnTowardLimited(0.3, -2.1, TURN.MAX_PER_TICK);
+  assert.equal(a, b);
+});
+
+test('smoothHeading: first move (no prevAngle) takes the desired heading verbatim', () => {
+  // On spawn there is no stored angle — the body must head exactly where it wants
+  // (no turn-in lag), and seed that angle for next tick.
+  const r = smoothHeading(0, 1, undefined); // due south
+  assert.ok(Math.abs(r.dirX) < 1e-12 && Math.abs(r.dirY - 1) < 1e-12, 'heads due south');
+  assert.ok(Math.abs(wrapPi(r.angle - Math.PI / 2)) < 1e-12, 'angle seeded to south');
+});
+
+test('smoothHeading: zero desired heading holds the angle and emits a zero vector', () => {
+  const r = smoothHeading(0, 0, 1.0);
+  assert.equal(r.dirX, 0);
+  assert.equal(r.dirY, 0);
+  assert.equal(r.angle, 1.0, 'holds the prior angle');
+});
+
+test('smoothHeading: a reversal cannot flip the heading in one tick', () => {
+  // Heading east; desired west. The emitted heading must NOT be ~west this tick — it
+  // can only have rotated by the cap. This is the property that kills the E/W bounce.
+  const prev = 0; // east
+  const r = smoothHeading(-1, 0, prev); // desired west
+  const ang = Math.atan2(r.dirY, r.dirX);
+  assert.ok(Math.abs(wrapPi(ang)) <= TURN.MAX_PER_TICK + 1e-9, 'rotated at most the cap');
+  assert.ok(Math.cos(ang) > 0, 'still pointing generally east, not flipped to west');
+});
+
+test('smoothHeading: deterministic across two identical runs', () => {
+  const seq = [[1, 0], [-1, 0.2], [0, -1], [0.5, 0.5], [-1, -1]];
+  const run = () => {
+    let angle;
+    const out = [];
+    for (const [dx, dy] of seq) {
+      const r = smoothHeading(dx, dy, angle);
+      angle = r.angle;
+      out.push([r.dirX, r.dirY, r.angle]);
+    }
+    return out;
+  };
+  assert.deepEqual(run(), run());
 });

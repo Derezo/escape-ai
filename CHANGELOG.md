@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.153: **NPC anti-bounce, Phase 1 — shared turn-rate limiter.** Root-caused the
+  recurring NPC "E/W flip / bounce" jitter (clearest on a tortoise circling its pond
+  pen): `steerAround`'s tangential slide is not temporally stable when a held wander
+  heading points INTO an interior obstacle (a pond's solid deep-water core, a fence
+  corner), so the body slides full-speed east one tick and west the next and the facing
+  snaps e↔w every tick. The existing `FACING_DEADBAND` / `MIN_STEP` guards miss it
+  entirely — a real slide step (~2 units/tick) is far above their sub-pixel thresholds.
+  Empirically a penned tortoise flips 120–183× / 400 ticks with net displacement ~10
+  (bouncing in place). This phase adds the deterministic SMOOTHER the later phases wire
+  in: `turnTowardLimited(cur, des, maxTurn)` + the `TURN` tunable (`MAX_PER_TICK` ≈
+  12°/tick) in `shared/src/step.ts`, and `smoothHeading(desX, desY, prevAngle)` in
+  `shared/src/movement.ts`, which turn-rate-limits a desired heading against the
+  entity's last committed heading angle so the heading can't reverse in one tick (a
+  sharp about-face now arcs over ~15 ticks ≈ 0.75s). Pure + deterministic (a single
+  atan2 + angle clamp, no RNG/clock); the stored angle is server-only scratch (never
+  serialized), so it adds nothing to the wire and can't desync the client (which doesn't
+  predict NPC movement). Verified a 12°/tick cap drives near-opposite reversals to ZERO
+  in the pond-ring worst case while still threading a 2-wide gate at the same tick as no
+  cap. Adds 8 shared tests (clamp boundary, shortest-way wrap, the no-one-tick-reversal
+  property, spawn-seed + zero-input behavior, determinism). 99 shared tests green;
+  `check-facing.js` green. No consumer wired yet — zero behavior change this commit.
+
 - 0.2.152: **Click-gate + title-music continuity (client only).** Adds a
   `#clickgate` overlay (`menu.ts` + `style.css`) that appears BEFORE the splash
   as the very first screen: one pulsing centered line "Click or press any key to

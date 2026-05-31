@@ -20,7 +20,9 @@ import {
   boxHitsSolid,
   moveWithCollision,
   wanderVec,
+  turnTowardLimited,
   WANDER,
+  TURN,
   WORLD,
   type Bounds,
 } from './step.js';
@@ -173,6 +175,51 @@ export function steerAround(
     }
   }
   return { dirX: 0, dirY: 0 }; // boxed in on every probe — caller holds/jitters
+}
+
+/** A smoothed heading plus the angle to carry over to the next tick. */
+export interface SmoothHeading {
+  /** Unit heading actually taken this tick (turn-rate-limited toward the desired one). */
+  dirX: number;
+  dirY: number;
+  /** The committed heading ANGLE (radians) — the caller writes this back onto the entity. */
+  angle: number;
+}
+
+/**
+ * Turn-rate-limit a DESIRED unit heading against the entity's last committed heading
+ * angle, so the heading can't reverse from one tick to the next (the anti-bounce
+ * smoother — see {@link turnTowardLimited} / {@link TURN}). Returns the smoothed unit
+ * heading to integrate this tick AND the new committed angle to store back on the
+ * entity for next tick.
+ *
+ * `prevAngle` is the entity's stored heading angle (radians) or `undefined` on the
+ * first move — when undefined (or a zero desired heading) the desired heading is taken
+ * verbatim and simply seeded as the committed angle (no lag on spawn). The cap is
+ * {@link TURN.MAX_PER_TICK} by default; pass a wider/narrower cap for a faster/slower
+ * turner. Pure + deterministic: a single atan2 + the angle clamp, no RNG/clock; the
+ * angle the caller stores is server-only state (never serialized), exactly like a
+ * patrolIndex, so it adds nothing to the wire and cannot desync the client.
+ *
+ * NOTE this only SHAPES the heading; the caller still commits the move through
+ * moveWithCollision / locomotionStep, so collision/sliding is unchanged and a smoothed
+ * heading can never tunnel a wall.
+ */
+export function smoothHeading(
+  desX: number,
+  desY: number,
+  prevAngle: number | undefined,
+  maxTurn: number = TURN.MAX_PER_TICK,
+): SmoothHeading {
+  if (desX === 0 && desY === 0) {
+    // No desired motion: hold the previous angle (or 0) and emit a zero heading.
+    const a = prevAngle ?? 0;
+    return { dirX: 0, dirY: 0, angle: a };
+  }
+  const des = Math.atan2(desY, desX);
+  // First move (no stored angle): take the desired heading exactly, seed the angle.
+  const angle = prevAngle === undefined ? des : turnTowardLimited(prevAngle, des, maxTurn);
+  return { dirX: Math.cos(angle), dirY: Math.sin(angle), angle };
 }
 
 /** A single point on a patrol route (world units). */
