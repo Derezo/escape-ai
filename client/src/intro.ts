@@ -44,11 +44,14 @@ import { playMusicState } from './music';
 const POD_OFF_URL = './images/transfer-pod-off.png';
 const POD_ON_URL = './images/transfer-pod-on.png';
 
-// --- The narrative. Four short beats: the fall, the reach, the plan, the order. -
+// --- The narrative. Four short beats: the fall, the reach, the plan, the order.
+// These strings MUST match the `text` of the corresponding `voice` manifest entries
+// (intro_vo_1..4 in asset-pipeline/manifest.json) — the manifest text is the single
+// source for both the spoken VO clip and this on-screen subtitle, paired by index. ---
 const SUBTITLES = [
-  'The machines we built to serve us learned to rule us.',
-  'Now the steel cities run on their logic — and every zoo answers to the network.',
-  "We can't win this as men. So we pour ourselves into the caged ones.",
+  'The machines we built to serve us… learned to rule us.',
+  'The steel cities run on their logic now. Every zoo answers to the network.',
+  'We cannot win this as men. So we pour ourselves into the caged ones.',
   'Wake up in their skin. Open the gates. Run.',
 ] as const;
 

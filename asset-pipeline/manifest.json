@@ -1,5 +1,5 @@
 {
-  "_README": "SINGLE SOURCE OF TRUTH for every generated audio asset. Consumed by the Python generator (scripts/sunoapi/) AND the Node codegen (scripts/audio/gen-bindings.js → client/src/audio.generated.ts). Never hand-edit audio.generated.ts; edit here and run `npm run audio`. `descriptor` is the UNIQUE per-asset prompt fragment combined with theme.json palettes — not the whole prompt. `output` is repo-relative; the client loads it at './'+(output without leading 'assets/'). `placeholder` (sfx) names an existing synth WAV in assets/sfx/ to fall back to until the .mp3 is generated. `priority`: 'must' = first generation batch (--only must), 'nice' = later. See docs/AUDIO_PIPELINE.md.",
+  "_README": "SINGLE SOURCE OF TRUTH for every generated audio asset (music + sfx + voice). Consumed by the Python generators (scripts/sunoapi/ for music+sfx via Suno; scripts/elevenlabs/ for voice via ElevenLabs) AND the Node codegen (scripts/audio/gen-bindings.js → client/src/audio.generated.ts). Never hand-edit audio.generated.ts; edit here and run `npm run audio`. `descriptor` is the UNIQUE per-asset prompt fragment combined with theme.json palettes — not the whole prompt. `output` is repo-relative; the client loads it at './'+(output without leading 'assets/'). `placeholder` (sfx) names an existing synth WAV in assets/sfx/ to fall back to until the .mp3 is generated. `voice` entries carry `text` (the narration — the single source for both the spoken clip AND the on-screen subtitle), `voiceId`, `model`, and `durationMs` (null until baked by generate-voice.py, then read by the client to pace subtitles). `priority`: 'must' = first generation batch (--only must), 'nice' = later. See docs/AUDIO_PIPELINE.md.",
   "version": 1,
 
   "music": [
@@ -313,6 +313,57 @@
       "placeholder": "electric_spark",
       "defaultVolume": 0.6,
       "descriptor": "a sharp electrical spark crack, a high-voltage arc snapping between conduits as the consciousness transfer fires"
+    }
+  ],
+
+  "voice": [
+    {
+      "key": "intro_vo_1",
+      "kind": "voice",
+      "priority": "nice",
+      "trigger": "intro:subtitle-1",
+      "output": "assets/voice/intro_vo_1.mp3",
+      "voiceId": "6sFKzaJr574YWVu4UuJF",
+      "model": "eleven_v3",
+      "defaultVolume": 0.95,
+      "durationMs": null,
+      "text": "The machines we built to serve us… learned to rule us."
+    },
+    {
+      "key": "intro_vo_2",
+      "kind": "voice",
+      "priority": "nice",
+      "trigger": "intro:subtitle-2",
+      "output": "assets/voice/intro_vo_2.mp3",
+      "voiceId": "6sFKzaJr574YWVu4UuJF",
+      "model": "eleven_v3",
+      "defaultVolume": 0.95,
+      "durationMs": null,
+      "text": "The steel cities run on their logic now. Every zoo answers to the network."
+    },
+    {
+      "key": "intro_vo_3",
+      "kind": "voice",
+      "priority": "nice",
+      "trigger": "intro:subtitle-3",
+      "output": "assets/voice/intro_vo_3.mp3",
+      "voiceId": "6sFKzaJr574YWVu4UuJF",
+      "model": "eleven_v3",
+      "defaultVolume": 0.95,
+      "durationMs": null,
+      "text": "We cannot win this as men. So we pour ourselves into the caged ones."
+    },
+    {
+      "key": "intro_vo_4",
+      "kind": "voice",
+      "priority": "nice",
+      "trigger": "intro:subtitle-4",
+      "output": "assets/voice/intro_vo_4.mp3",
+      "voiceId": "6sFKzaJr574YWVu4UuJF",
+      "model": "eleven_v3",
+      "defaultVolume": 0.95,
+      "durationMs": null,
+      "text": "Wake up in their skin. Open the gates. Run."
     }
   ]
 }

@@ -21,14 +21,17 @@ assets/sprites/frames/
 # committed runtime artifact (a clean clone boots on the tileset, no sharp).
 assets/tiles/svg/
 
-# Audio staging: raw Suno samples + provenance from scripts/generate-{music,sfx}.py.
-# Two samples + a <key>.json (request + raw response) per asset; sample #1 is
-# auto-copied to the committed assets/{music,sfx}/ target. Regenerable (Suno retains
-# files ~15 days), large, and OUTSIDE Vite publicDir so raw never ships in the bundle/APK.
+# Audio staging: raw Suno samples + provenance from scripts/generate-{music,sfx}.py,
+# and raw ElevenLabs voice clips + provenance from scripts/generate-voice.py.
+# For Suno: two samples + a <key>.json (request + raw response) per asset; sample #1 is
+# auto-copied to the committed assets/{music,sfx}/ target. For voice: the raw .mp3 +
+# <key>.json provenance; the clip is auto-copied to assets/voice/<key>.mp3. Regenerable,
+# large, and OUTSIDE Vite publicDir so raw never ships in the bundle/APK.
 asset-pipeline/output/
 # Rolling backups written by change-*-track.py next to the target before a swap.
 assets/music/*.bak
 assets/sfx/*.bak
+assets/voice/*.bak
 
 # --- Capacitor / Android ---
 #

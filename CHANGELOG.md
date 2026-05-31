@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.121: **Intro voice narration — Phase V1: `voice[]` manifest section + VO-refined copy.** Groundwork
+  for ElevenLabs-narrated intro subtitles. `asset-pipeline/manifest.json` gains a third audio kind, a
+  `voice` array of 4 entries (`intro_vo_1..4`), each carrying `text` (the narration — the SINGLE source
+  for both the spoken clip and the on-screen subtitle), `voiceId` (default `6sFKzaJr574YWVu4UuJF`),
+  `model` (`eleven_v3`), `defaultVolume`, and `durationMs: null` (baked later by the generator, then read
+  by the client to pace each subtitle). The four `intro.ts` `SUBTITLES` are refined for spoken delivery
+  (ellipsis/period pause points, "cannot" over the contraction) and kept byte-identical to the manifest
+  `text`. `.gitignore` adds `assets/voice/*.bak`; raw staging rides the existing `asset-pipeline/output/`
+  ignore. New committed `assets/voice/` dir (clips land here once generated). Client typechecks clean.
+  Touched `asset-pipeline/manifest.json`, `client/src/intro.ts`, `.gitignore`, `assets/voice/.gitkeep`.
+
 - 0.2.120: **Cinematic intro — validation remediation: re-entrancy guard on `playIntro()`.** The
   `/plan-validation-and-review` code-comprehension pass flagged that `playIntro()` (`client/src/intro.ts`)
   had no guard against an accidental double-call: a second concurrent invocation would build a second
