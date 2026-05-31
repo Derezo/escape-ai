@@ -4,6 +4,21 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.118: **Cinematic new-character intro — Phase 4: wire it into the join flow.** main.ts now plays the
+  cinematic for brand-new characters. `preloadIntroAssets()` runs at boot next to `preloadSfx()` so the
+  pod PNGs are decoded before auth completes. After `net.join(...)`, a new character triggers
+  `void playIntro()` — deliberately NOT awaited: `playIntro()` builds its opaque z-60 overlay
+  synchronously (screen goes black on join instantly), then the rest of main() — the net handlers
+  (`onMap`/`onLobbyState`/`onSnapshot`) and the frame loop — wires up and runs *behind* the curtain. This
+  is the key ordering fix: those handlers register after this point, so awaiting here would have built the
+  world only *after* the cinematic; firing-and-forgetting lets `onMap → generateWorld + the per-tile
+  tilemap` run DURING the intro, so the world is ready the instant the overlay tears down — the
+  ~70–150ms join-build hitch is hidden. The frame-loop music line is now
+  `playMusicState(isIntroActive() ? null : selectMusic())`, holding gameplay music silent under the
+  intro (we joined first, so `myId` is set and `selectMusic()` would otherwise crossfade `explore_loop`
+  in beneath it) and crossfading the correct track in the frame after teardown. Returning players
+  resuming a run skip the intro. Build clean (strict TS, Vite OK). Touched `client/src/main.ts`.
+
 - 0.2.117: **Cinematic new-character intro — Phase 3: the `intro.ts` module + CSS.** New self-contained,
   renderer-agnostic DOM/CSS overlay (mirrors the splash/login pattern in menu.ts) implementing the full
   "ESCAPE AI" transfer-pod cinematic: black + electrical hum → the empty chamber (`transfer-pod-off.png`)

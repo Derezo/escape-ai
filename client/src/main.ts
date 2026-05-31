@@ -37,6 +37,7 @@ import { createHelp } from './help';
 import { createInventory } from './inventory';
 import { createLeaderboard } from './leaderboard';
 import { runMenu } from './menu';
+import { playIntro, preloadIntroAssets, isIntroActive } from './intro';
 
 // Client prediction uses the SAME collision-aware integration as the server
 // (shared moveWithCollision against the regenerated map's grid), so prediction
@@ -148,6 +149,12 @@ async function main(): Promise<void> {
   preloadSfx();
   initMusic();
 
+  // --- Cinematic intro assets. Warm the two heavy transfer-pod PNGs now (decode
+  // is fire-and-forget) so the first-run intro — played for brand-new characters
+  // after they authenticate — fades in without a loading hitch. The intro SFX ride
+  // the preloadSfx() catalogue load above. Cheap no-op for returning players. ---
+  preloadIntroAssets();
+
   // --- Net: connect, then run the splash → login flow. We do NOT join until the
   // player has authenticated. runMenu resolves with the authoritative username
   // (and chosen species) once auth:result returns ok. ---
@@ -162,11 +169,24 @@ async function main(): Promise<void> {
   const leaderboard = createLeaderboard((sort) => net.requestLeaderboard({ sort, limit: 100 }));
   net.onLeaderboard((msg) => leaderboard.render(msg));
 
-  const { username, species } = await runMenu(net);
+  const { username, species, isNewCharacter } = await runMenu(net);
   // Identity: the authenticated username. The server assigns the authoritative
   // entity id; we match "our" entity by this name (roster match below).
   const myName = username;
   net.join(DEFAULT_ROOM, myName, species);
+
+  // --- First-run cinematic: a brand-new character gets the "ESCAPE AI" transfer-pod
+  // intro once. We DON'T await it here — playIntro() builds its opaque overlay (z-60)
+  // synchronously, so the screen goes black immediately on join, and we let the rest
+  // of main() (net handlers + the frame loop, wired below) run behind it. The world
+  // therefore builds (onMap → generateWorld + the per-tile tilemap) DURING the
+  // cinematic, behind the curtain, so it's ready the moment the intro tears itself
+  // down — the join-build hitch is hidden. The frame loop's music guard
+  // (isIntroActive()) keeps gameplay music silent until then. Returning players
+  // resuming a run skip it. playIntro() never rejects. ---
+  if (isNewCharacter) {
+    void playIntro();
+  }
 
   // --- Authoritative-ish world state, keyed by entity id ---
   // Snapshots are DELTAS (only changed entities) but lobby:state is the full
@@ -729,8 +749,12 @@ async function main(): Promise<void> {
       for (const id of robotStep.keys()) if (!liveRobots.has(id)) robotStep.delete(id);
     }
 
-    // --- Music state machine: select and crossfade the appropriate track. ---
-    playMusicState(selectMusic());
+    // --- Music state machine: select and crossfade the appropriate track. While
+    // the first-run cinematic is up, hold music silent so its electrical hum owns
+    // the soundscape — we joined before the intro, so `myId` is already set and
+    // selectMusic() would otherwise crossfade a gameplay track in under the intro.
+    // The frame after the overlay tears down, the right track fades in normally. ---
+    playMusicState(isIntroActive() ? null : selectMusic());
 
     requestAnimationFrame(frame);
   }
