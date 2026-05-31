@@ -682,6 +682,9 @@ function stepIdleAnimals(dt, roomName, currentTick) {
           let dy = waypoint.y - e.y;
           let len = Math.hypot(dx, dy) || 1;
           dx /= len; dy /= len;
+          // Mirror of the radius-aware near-wall test in behaviors.moveTowardPoint —
+          // keep the bandPx + boxHitsSolid detection in sync (the branch below differs
+          // intentionally: here `if (nearWall)`, there `if (onPath && nearWall)`).
           const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
           const nearWall = shared.boxHitsSolid(e.x, e.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile);
           if (nearWall) {
@@ -772,53 +775,42 @@ function penSpeciesOf(id) {
   return id.slice(4).replace(/-\d+$/, '');
 }
 
-/** Per-room cache of species → enclosure containment bounds (built once per room). */
-const homeBoundsByRoom = new Map();
-function homeBoundsForRoom(roomName) {
-  let b = homeBoundsByRoom.get(roomName);
-  if (!b) {
-    b = world.getHomeBoundsBySpecies(roomName);
-    homeBoundsByRoom.set(roomName, b);
-  }
-  return b;
+/**
+ * Build a per-room lazy cache wrapper around a world.js getter that takes ONLY
+ * roomName. The returned function does get-or-build-and-store keyed by roomName,
+ * so the underlying (deterministic, map-derived) getter runs once per room and
+ * the result survives the room's lifetime. The getters all return a freshly-built
+ * Map/array (always truthy), so an absent key is the only `undefined` the cache
+ * lookup can yield — exactly the build trigger. Used for the four single-arg
+ * room caches below (NOT pathScratchForRoom, which takes an extra `rm` arg).
+ */
+function perRoomCache(getter) {
+  const byRoom = new Map();
+  return (roomName) => {
+    let v = byRoom.get(roomName);
+    if (v === undefined) {
+      v = getter(roomName);
+      byRoom.set(roomName, v);
+    }
+    return v;
+  };
 }
+
+/** Per-room cache of species → enclosure containment bounds (built once per room). */
+const homeBoundsForRoom = perRoomCache(world.getHomeBoundsBySpecies);
 
 /** Per-room cache of guard-robot id → aux-building containment bounds (built once
  *  per room). A guard robot wanders only inside these bounds; see behaviors.js. */
-const guardBoundsByRoom = new Map();
-function guardBoundsForRoom(roomName) {
-  let b = guardBoundsByRoom.get(roomName);
-  if (!b) {
-    b = world.getGuardBoundsByRobotId(roomName);
-    guardBoundsByRoom.set(roomName, b);
-  }
-  return b;
-}
+const guardBoundsForRoom = perRoomCache(world.getGuardBoundsByRobotId);
 
 /** Per-room cache of the aux-building INTERIOR rects (built once per room). Used by
  *  the awareness filter to treat any animal inside an aux interior as contained
  *  (invisible to robots), the same rule as a pen animal inside its enclosure. */
-const auxInteriorRectsByRoom = new Map();
-function auxInteriorRectsForRoom(roomName) {
-  let r = auxInteriorRectsByRoom.get(roomName);
-  if (!r) {
-    r = world.getAuxInteriorRects(roomName);
-    auxInteriorRectsByRoom.set(roomName, r);
-  }
-  return r;
-}
+const auxInteriorRectsForRoom = perRoomCache(world.getAuxInteriorRects);
 
 /** Per-room cache of species → home gate-INSIDE goal tile (the return-home A*
  *  target — one tile inside the enclosure gate / building door). Built once per room. */
-const homeGateByRoom = new Map();
-function homeGateForRoom(roomName) {
-  let g = homeGateByRoom.get(roomName);
-  if (!g) {
-    g = world.getHomeGateInsideBySpecies(roomName);
-    homeGateByRoom.set(roomName, g);
-  }
-  return g;
-}
+const homeGateForRoom = perRoomCache(world.getHomeGateInsideBySpecies);
 
 /** Per-room reusable A* scratch buffer (sized to the room's grid). One per room,
  *  reused across every findPath call there so a search allocates nothing per call.

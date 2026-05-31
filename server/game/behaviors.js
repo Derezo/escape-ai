@@ -173,6 +173,9 @@ function moveTowardPoint(robot, tx, ty, dt, speed, rm, worldEntities, entersHaza
   // oscillate the body against a fence corner — the same "stuck by the gate" failure
   // the animal return-home path hit. In the OPEN, or with no path, keep steerAround for
   // reactive avoidance. The hazard veto (Third Law) applies in both branches.
+  // Mirror of the radius-aware near-wall test in stealth.stepIdleAnimals —
+  // keep the bandPx + boxHitsSolid detection in sync (the branch below differs
+  // intentionally: here `if (onPath && nearWall)`, there `if (nearWall)`).
   const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
   const nearWall = shared.boxHitsSolid(robot.x, robot.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile);
 

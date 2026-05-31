@@ -40,6 +40,24 @@ let sharedWorld = null;
 const roomWorlds = new Map();
 
 /**
+ * Interior wall-ring inset bounds for a tile rect, in world units. The barrier
+ * ring is the rect's outer edge, so the walkable interior is inset by one tile.
+ * World-gen guarantees rw>=8/rh>=8 (interior >=6x6) so the inset never inverts;
+ * Math.max clamps defensively so a degenerate rect can't hand back an inverted
+ * bound (which would pin/freeze an animal) — keep min<=max. Pure; shared by
+ * getHomeBoundsBySpecies, getGuardBoundsByRobotId and getAuxInteriorRects so the
+ * inset math lives in exactly one place.
+ * @returns {{minX:number,minY:number,maxX:number,maxY:number}}
+ */
+function interiorInsetBounds(rx, ry, rw, rh, tile) {
+  const minX = (rx + 1) * tile;
+  const minY = (ry + 1) * tile;
+  const maxX = Math.max((rx + rw - 1) * tile, minX);
+  const maxY = Math.max((ry + rh - 1) * tile, minY);
+  return { minX, minY, maxX, maxY };
+}
+
+/**
  * Load + cache the shared world generator (shared/dist/world.js) and seed helper
  * (shared/dist/rng.js). Call once during engine.init(), before the tick loop and
  * before any room is created, so generateWorld is available synchronously.
@@ -275,15 +293,7 @@ function getHomeBoundsBySpecies(roomName) {
   const bounds = new Map();
   const add = (species, rx, ry, rw, rh) => {
     if (!species) return; // gatehouse has no species → no animals
-    // Interior wall ring inset by one tile (the barrier ring is the outer edge).
-    // World-gen guarantees rw>=8/rh>=8 (interior >=6x6), so the inset never
-    // inverts; clamp defensively anyway so a degenerate rect can't hand wanderStep
-    // an inverted bound (which would pin/freeze an animal) — keep min<=max.
-    const minX = (rx + 1) * tile;
-    const minY = (ry + 1) * tile;
-    const maxX = Math.max((rx + rw - 1) * tile, minX);
-    const maxY = Math.max((ry + rh - 1) * tile, minY);
-    bounds.set(species, { minX, minY, maxX, maxY });
+    bounds.set(species, interiorInsetBounds(rx, ry, rw, rh, tile));
   };
   for (const h of map.housing) add(h.species, h.rx, h.ry, h.rw, h.rh);
   for (const b of map.buildings) add(b.species, b.rx, b.ry, b.rw, b.rh);
@@ -405,12 +415,7 @@ function getGuardBoundsByRobotId(roomName) {
   const tile = map.tile;
   const bounds = new Map();
   for (const b of map.buildings.filter((bb) => bb.auxKind)) {
-    // Interior wall ring inset by one tile (the barrier ring is the outer edge).
-    const minX = (b.rx + 1) * tile;
-    const minY = (b.ry + 1) * tile;
-    const maxX = Math.max((b.rx + b.rw - 1) * tile, minX);
-    const maxY = Math.max((b.ry + b.rh - 1) * tile, minY);
-    bounds.set(`robot-guard-${b.auxKind}`, { minX, minY, maxX, maxY });
+    bounds.set(`robot-guard-${b.auxKind}`, interiorInsetBounds(b.rx, b.ry, b.rw, b.rh, tile));
   }
   return bounds;
 }
@@ -429,11 +434,7 @@ function getAuxInteriorRects(roomName) {
   const tile = map.tile;
   const rects = [];
   for (const b of map.buildings.filter((bb) => bb.auxKind)) {
-    const minX = (b.rx + 1) * tile;
-    const minY = (b.ry + 1) * tile;
-    const maxX = Math.max((b.rx + b.rw - 1) * tile, minX);
-    const maxY = Math.max((b.ry + b.rh - 1) * tile, minY);
-    rects.push({ minX, minY, maxX, maxY });
+    rects.push(interiorInsetBounds(b.rx, b.ry, b.rw, b.rh, tile));
   }
   return rects;
 }
