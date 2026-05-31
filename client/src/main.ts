@@ -209,6 +209,12 @@ async function main(): Promise<void> {
   // Our humanLikeness last frame, to detect a "caught" event: a catch resets it
   // to 0 server-side, so a sharp high→~0 drop fires the hit SFX once.
   let prevHumanLike = 0;
+  // Capture has no held server flag (unlike `escaped`), only the humanLikeness-crash
+  // EDGE. To let the music machine play the one-shot `caught_sting` (a non-looping
+  // track), we stamp a brief window here on that edge; selectMusic() returns the sting
+  // while `now < caughtUntil`, so the frame-driven crossfade has a held state to lock
+  // onto for the sting's duration instead of being overridden the very next frame.
+  let caughtUntil = 0;
   // Whether the victory banner is currently shown. Tracks the server's `escaped`
   // edges: set true on escape, back to false when the server respawns us.
   let shownWin = false;
@@ -567,11 +573,15 @@ async function main(): Promise<void> {
     if (lockedNow !== prevLockdown) {
       lockdownOverlay.classList.toggle('active', lockedNow);
       if (lockedNow) {
-        // false -> true: panic overflowed, the room seals — sound the klaxon.
-        playSfx('lockdown_alarm');
+        // false -> true: panic overflowed, the room seals. The klaxon is a SUSTAINED
+        // loop (manifest soundLoop:true) — start it so it blares for the whole sealed
+        // window, not a single one-shot chirp; the door-slam is a one-shot punctuation.
+        startLoop('lockdown_alarm', 0.7);
         playSfx('door_lock');
       } else {
-        // true -> false: panic drained below the hysteresis floor — the all-clear.
+        // true -> false: panic drained below the hysteresis floor — kill the klaxon
+        // loop and sound the all-clear.
+        stopLoop('lockdown_alarm');
         playSfx('lockdown_clear');
       }
       prevLockdown = lockedNow;
@@ -628,7 +638,14 @@ async function main(): Promise<void> {
     // Caught: the server zeroes humanLikeness on capture, so a sharp drop from a
     // meaningful level to ~0 means a robot just grabbed us — play the hit once.
     if (hl !== undefined) {
-      if (prevHumanLike > 0.25 && hl <= 0.02) playSfx('hit', 0.8);
+      if (prevHumanLike > 0.25 && hl <= 0.02) {
+        playSfx('hit', 0.8);
+        // Open the caught-music window so selectMusic() crossfades the one-shot
+        // `caught_sting` in over the current loop. ~6s ≈ the sting's durationHint
+        // (manifest caught_sting). When it lapses the loop the state machine wants
+        // (explore/tension/…) fades back in normally.
+        caughtUntil = performance.now() + 6000;
+      }
       prevHumanLike = hl;
     }
     // Human-likeness: a 5-cell bar + percent, with the ~60% freeze-threshold hint.
@@ -799,6 +816,10 @@ async function main(): Promise<void> {
     if (!myId) return 'title_theme'; // pre-join / menu
     const localMe = myId ? entities.get(myId) : undefined;
     if (localMe?.escaped === true) return 'victory_sting';
+    // Caught: a one-shot defeat sting over the held window stamped on the capture
+    // edge (see caughtUntil). Below escape (you can't be both), above the loops so
+    // the sting actually plays through instead of the next loop overriding it.
+    if (performance.now() < caughtUntil) return 'caught_sting';
     if (world?.lockdown === true) return 'lockdown_loop';
     const panicFrac =
       world && world.panicCapacity > 0 ? world.panic / world.panicCapacity : 0;

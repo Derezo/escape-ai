@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.134: **Audio audit — wire dead cues + fix lockdown loop, drop redundant ambient SFX.**
+  Follow-up to the audit's usage findings. (1) `lockdown_alarm` is declared `soundLoop:true` but
+  was played one-shot — switched to `startLoop('lockdown_alarm')` on the seal edge / `stopLoop` on
+  the lift edge so the klaxon sustains for the sealed window (`client/src/main.ts`). (2) `caught_sting`
+  music was never selected — the capture EDGE (humanLikeness crash, same edge that fires the `hit`
+  SFX) now stamps a ~6s `caughtUntil` window and `selectMusic()` returns the one-shot defeat sting
+  during it, above the gameplay loops so it plays through. (3) `error` SFX had no trigger — now plays
+  on auth-login failure (`client/src/menu.ts`), audible feedback alongside the inline reason. (4) The
+  `ambient_bed` SFX was redundant with the `ambient_bed_music` music bed — removed its manifest entry
+  and regenerated `audio.generated.ts` (22 manifest SFX now); the `assets/sfx/ambient_bed.mp3` file is
+  kept on disk. Client build clean, tsc green, audio drift gate green. Touched
+  `asset-pipeline/manifest.json`, `client/src/audio.generated.ts`, `client/src/main.ts`,
+  `client/src/menu.ts`.
+
 - 0.2.133: **Audio audit — commit untracked renders + codegen count.** A full SFX/music/voice audit
   (manifest ↔ `audio.generated.ts` ↔ disk ↔ git, plus every call site, adversarially verified)
   found five generated `.mp3` renders present on disk but never `git add`ed — so a clean clone / CI /

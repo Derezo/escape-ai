@@ -251,18 +251,6 @@
       "descriptor": "a sad soft descending tone fading out, a gentle downward two-note fall, wistful"
     },
     {
-      "key": "ambient_bed",
-      "kind": "sfx",
-      "priority": "nice",
-      "trigger": "event:ambient-loop",
-      "output": "assets/sfx/ambient_bed.mp3",
-      "placeholder": "blip",
-      "soundLoop": true,
-      "defaultVolume": 0.3,
-      "descriptor": "a seamless ambient facility bed, low steel hum, distant servo whines and faint electrical crackle, unsettling room tone"
-    },
-
-    {
       "key": "hit",
       "kind": "sfx",
       "priority": "must",

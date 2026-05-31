@@ -7,7 +7,7 @@
 
 /**
  * All SFX keys → their asset URL.
- * Manifest SFX (23) use .mp3 paths; synth-only sounds (8) keep their .wav paths.
+ * Manifest SFX (22) use .mp3 paths; synth-only sounds (8) keep their .wav paths.
  * Synth-only keys: blip, select, pickup, jump, whoosh, thud, sparkle2, dazzle.
  */
 export const SFX_FILES = {
@@ -25,7 +25,6 @@ export const SFX_FILES = {
   food_pickup: './sfx/food_pickup.mp3',
   feed_follow: './sfx/feed_follow.mp3',
   follower_lost: './sfx/follower_lost.mp3',
-  ambient_bed: './sfx/ambient_bed.mp3',
   hit: './sfx/hit.mp3',
   error: './sfx/error.mp3',
   confirm: './sfx/confirm.mp3',
@@ -65,7 +64,6 @@ export const SFX_FALLBACK: Partial<Record<SfxName, string>> = {
   food_pickup: './sfx/pickup.wav',
   feed_follow: './sfx/confirm.wav',
   follower_lost: './sfx/error.wav',
-  ambient_bed: './sfx/blip.wav',
   hit: './sfx/hit.wav',
   error: './sfx/error.wav',
   confirm: './sfx/confirm.wav',
@@ -94,7 +92,6 @@ export const SFX_VOLUME: Record<SfxName, number> = {
   food_pickup: 0.55,
   feed_follow: 0.6,
   follower_lost: 0.55,
-  ambient_bed: 0.3,
   hit: 0.8,
   error: 0.7,
   confirm: 0.7,

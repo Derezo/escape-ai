@@ -27,7 +27,7 @@
 import type { NetClient } from './net/client';
 import type { AuthResult, UserStats } from '@shared/net';
 import { SPECIES } from '@shared/species';
-import { unlockAudio } from './audio';
+import { unlockAudio, playSfx } from './audio';
 import { loadAuth, saveAuth, clearAuth } from './auth';
 import { createSpeciesSprite } from './species-sprite';
 
@@ -192,7 +192,10 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         });
         return;
       }
-      // Failure: surface the reason and keep (or re-open) the manual form.
+      // Failure: a short error buzz (the splash-dismiss / form-submit that triggered
+      // this login was a user gesture, so audio is unlocked) plus the inline reason,
+      // then keep (or re-open) the manual form.
+      playSfx('error');
       switch (msg.reason) {
         case 'name_taken':
           showManualForm();
