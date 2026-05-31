@@ -20,6 +20,9 @@ export const CLIENT_EVENTS = {
   /** Ask the server for the current leaderboard (sent on opening the L panel and
    *  re-sent on a sort change / while the panel is open — see LeaderboardRequest). */
   LEADERBOARD_REQUEST: 'leaderboard:request',
+  /** Send a global-chat message (the body is just the text — see ChatSend). The
+   *  server stamps the authoritative sender identity; the client can't forge it. */
+  CHAT_SEND: 'chat:send',
 } as const;
 
 /** Event names the SERVER emits (client listens for these). */
@@ -31,6 +34,8 @@ export const SERVER_EVENTS = {
   MAP: 'map',
   /** The leaderboard reply to LEADERBOARD_REQUEST (top-N rows + the asker's rank). */
   LEADERBOARD_DATA: 'leaderboard:data',
+  /** A global-chat line, broadcast to everyone in the room (see ChatMessage). */
+  CHAT_MESSAGE: 'chat:message',
 } as const;
 
 export type ClientEvent = (typeof CLIENT_EVENTS)[keyof typeof CLIENT_EVENTS];
@@ -124,6 +129,18 @@ export interface LeaderboardRequest {
   sort?: LeaderboardSort;
   /** How many top rows to return (server-clamped, e.g. 1..200). Default ~100. */
   limit?: number;
+}
+
+/**
+ * Payload for `chat:send` — a player's outgoing global-chat message. The body is
+ * just the text; the SERVER trims it, length-caps it (256 chars), drops it if
+ * empty, and stamps the authoritative sender identity (id/name/species) from the
+ * player's own record. The client never supplies — and can never forge — who sent
+ * a message. The forward-compatible index signature mirrors InputMsg.
+ */
+export interface ChatSend {
+  text: string;
+  [key: string]: unknown;
 }
 
 // --- Server -> client payloads ---------------------------------------------
@@ -291,6 +308,27 @@ export interface LeaderboardMsg {
 }
 
 /**
+ * Payload for `chat:message` — one global-chat line broadcast to everyone in the
+ * room. Every field is SERVER-STAMPED from the sender's player record (set at
+ * lobby:join from the authenticated `state.username` + the assigned species), so a
+ * client can trust who a message is from. `text` is already trimmed + capped. There
+ * is no server-side history: a line is delivered once, live, to whoever is connected
+ * (late joiners start with an empty log).
+ */
+export interface ChatMessage {
+  /** The sender's authoritative entity id (matches the player's snapshot id). */
+  senderId: string;
+  /** The sender's public display name (the account username). */
+  senderName: string;
+  /** The sender's current species key (drives a small avatar in the chat UI). */
+  senderSpecies: string;
+  /** The message body — already trimmed and length-capped server-side. */
+  text: string;
+  /** The server tick at broadcast time, for loose client-side ordering. */
+  tick: number;
+}
+
+/**
  * Optional typed maps for socket.io's generic ServerToClientEvents /
  * ClientToServerEvents. Importing these is not required but documents the wire.
  */
@@ -300,6 +338,7 @@ export interface ClientToServerEvents {
   [CLIENT_EVENTS.INPUT]: (payload: InputMsg) => void;
   [CLIENT_EVENTS.PING]: (payload: Ping) => void;
   [CLIENT_EVENTS.LEADERBOARD_REQUEST]: (payload: LeaderboardRequest) => void;
+  [CLIENT_EVENTS.CHAT_SEND]: (payload: ChatSend) => void;
 }
 
 export interface ServerToClientEvents {
@@ -309,4 +348,5 @@ export interface ServerToClientEvents {
   [SERVER_EVENTS.PONG]: (payload: Pong) => void;
   [SERVER_EVENTS.MAP]: (payload: MapMsg) => void;
   [SERVER_EVENTS.LEADERBOARD_DATA]: (payload: LeaderboardMsg) => void;
+  [SERVER_EVENTS.CHAT_MESSAGE]: (payload: ChatMessage) => void;
 }

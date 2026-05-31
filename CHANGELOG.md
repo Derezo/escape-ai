@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.127: **Global chat — net contract (Phase 1/5).** Added the chat event pair to the shared
+  single-source-of-truth net contract: `chat:send {text}` (client→server) and `chat:message
+  {senderId, senderName, senderSpecies, text, tick}` (server→client, broadcast to the room). The
+  sender identity in `chat:message` is server-stamped from the player's record — the client can
+  never forge who sent a message — and the server trims + 256-char-caps the text. Wired into
+  `CLIENT_EVENTS`/`SERVER_EVENTS`, the `ChatSend`/`ChatMessage` interfaces, and the typed
+  `ClientToServerEvents`/`ServerToClientEvents` maps. Rebuilt `shared/dist`. Touched
+  `shared/src/net.ts`.
+
 - 0.2.126: **Intro voice — validation remediation: drop the unused `isVoiceReady`.** `/plan-validation-and-review`
   found `isVoiceReady()` in `client/src/audio.ts` was defined but never called (speculative API surface) —
   removed it for a lean voice API. Validation otherwise green: all 8 plan requirements traced
