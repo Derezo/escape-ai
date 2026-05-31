@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.123: **Intro voice narration — Phase V3: codegen + drift gate for voice.** The Node audio codegen
+  (`scripts/audio/gen-bindings.js`) now emits a third block into `client/src/audio.generated.ts`:
+  `VOICE_FILES` (key → `./voice/<key>.mp3`), the `VoiceName` type, and `VOICE_META` (per clip: `text` —
+  the narration that's also the subtitle, the baked `durationMs | null`, and `volume`). The drift verifier
+  (`scripts/audio/verify-audio.js`) extends every check to voice: key coverage both directions, URL
+  correctness (`./voice/<key>.mp3`), the byte-for-byte drift gate (already whole-file), and
+  existence-with-tolerance (a missing voice `.mp3` is a WARN — the intro falls back to fixed timing, like
+  music). `npm run audio` is green on a clean clone: 4 voice keys covered, drift OK, the four un-generated
+  clips WARN-only. Client typechecks clean against the new bindings. Touched
+  `scripts/audio/gen-bindings.js`, `scripts/audio/verify-audio.js`, `client/src/audio.generated.ts`.
+
 - 0.2.122: **Intro voice narration — Phase V2: the ElevenLabs generator (stdlib, user-run, gated).** New
   `scripts/generate-voice.py` + `scripts/elevenlabs/` package, mirroring `scripts/sunoapi/`'s conventions
   (stdlib-only — no pip; user-run, spends credits; `--list`/`--dry-run` make ZERO network calls and work

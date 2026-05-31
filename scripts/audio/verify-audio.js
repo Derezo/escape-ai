@@ -21,6 +21,7 @@
  *        - Manifest SFX: .mp3 may be absent IF its placeholder .wav exists
  *          in assets/sfx/ (WARN, not FAIL). If neither exists → FAIL.
  *        - Music files: missing → WARN (incremental generation expected).
+ *        - Voice clips: missing → WARN (the intro falls back to fixed timing).
  *        - Fallback WAVs (SFX_FALLBACK values) must exist → FAIL if missing.
  *
  *   5. FALLBACK INTEGRITY: every SFX_FALLBACK value points at an existing file
@@ -84,6 +85,7 @@ try {
 
 const sfxEntries = manifest.sfx;
 const musicEntries = manifest.music;
+const voiceEntries = manifest.voice || [];
 
 // ---------------------------------------------------------------------------
 // Check 1: Key coverage (both directions)
@@ -106,12 +108,18 @@ function checkKeyCoverage() {
   ]);
   const generatedMusicKeys = new Set(musicEntries.map((e) => e.key));
 
+  const expectedVoiceKeys = new Set(voiceEntries.map((e) => e.key));
+  const generatedVoiceKeys = new Set(voiceEntries.map((e) => e.key));
+
   // Both directions: manifest → generated
   for (const key of expectedSfxKeys) {
     if (!generatedSfxKeys.has(key)) fail(`SFX key '${key}' is in manifest/synth-list but absent from generated SFX_FILES`);
   }
   for (const key of expectedMusicKeys) {
     if (!generatedMusicKeys.has(key)) fail(`music key '${key}' is in manifest but absent from generated MUSIC_FILES`);
+  }
+  for (const key of expectedVoiceKeys) {
+    if (!generatedVoiceKeys.has(key)) fail(`voice key '${key}' is in manifest but absent from generated VOICE_FILES`);
   }
   // generated → manifest (orphan check)
   for (const key of generatedSfxKeys) {
@@ -120,9 +128,12 @@ function checkKeyCoverage() {
   for (const key of generatedMusicKeys) {
     if (!expectedMusicKeys.has(key)) fail(`music key '${key}' is in generated MUSIC_FILES but not in manifest`);
   }
+  for (const key of generatedVoiceKeys) {
+    if (!expectedVoiceKeys.has(key)) fail(`voice key '${key}' is in generated VOICE_FILES but not in manifest`);
+  }
 
   if (!process.exitCode) {
-    console.log(`OK (key coverage): ${expectedSfxKeys.size} SFX keys (${sfxEntries.length} manifest + ${SYNTH_ONLY_KEYS.length} synth-only), ${expectedMusicKeys.size} music keys — no orphans.`);
+    console.log(`OK (key coverage): ${expectedSfxKeys.size} SFX keys (${sfxEntries.length} manifest + ${SYNTH_ONLY_KEYS.length} synth-only), ${expectedMusicKeys.size} music keys, ${expectedVoiceKeys.size} voice keys — no orphans.`);
   }
 }
 
@@ -156,8 +167,16 @@ function checkUrls() {
     }
   }
 
+  // Voice: all should be './voice/<key>.mp3'
+  for (const e of voiceEntries) {
+    const expected = './' + e.output.replace(/^assets\//, '');
+    if (!expected.startsWith('./voice/') || !expected.endsWith('.mp3')) {
+      if (bad++ < 6) fail(`voice '${e.key}': expected URL to start ./voice/ and end .mp3, got '${expected}'`);
+    }
+  }
+
   if (!bad && !process.exitCode) {
-    console.log(`OK (URL correctness): all ${sfxEntries.length} manifest SFX, ${SYNTH_ONLY_KEYS.length} synth-only, and ${musicEntries.length} music URLs match the output formula.`);
+    console.log(`OK (URL correctness): all ${sfxEntries.length} manifest SFX, ${SYNTH_ONLY_KEYS.length} synth-only, ${musicEntries.length} music, and ${voiceEntries.length} voice URLs match the output formula.`);
   }
 }
 
@@ -205,6 +224,18 @@ function checkAssetExistence() {
     const absPath = path.join(REPO_ROOT, e.output);
     if (!fs.existsSync(absPath)) {
       warn(`music '${e.key}' not yet generated: ${e.output} — run generate-music.py --key=${e.key}`);
+      warnings++;
+    } else {
+      ok++;
+    }
+  }
+
+  // Voice: missing → WARN only. The intro falls back to fixed subtitle timing +
+  // silence until the clip is generated (the clean-clone default).
+  for (const e of voiceEntries) {
+    const absPath = path.join(REPO_ROOT, e.output);
+    if (!fs.existsSync(absPath)) {
+      warn(`voice '${e.key}' not yet generated: ${e.output} — run generate-voice.py --key=${e.key}`);
       warnings++;
     } else {
       ok++;

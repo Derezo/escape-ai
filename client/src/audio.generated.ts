@@ -137,3 +137,32 @@ export const MUSIC_META: Record<MusicName, { loop: boolean; volume: number }> = 
   caught_sting: { loop: false, volume: 0.6 },
   ambient_bed_music: { loop: true, volume: 0.25 },
 };
+
+// ---------------------------------------------------------------------------
+// Voice — cinematic intro narration (ElevenLabs)
+// ---------------------------------------------------------------------------
+
+/**
+ * All narration clip keys → their asset URL (./voice/<key>.mp3).
+ */
+export const VOICE_FILES = {
+  intro_vo_1: './voice/intro_vo_1.mp3',
+  intro_vo_2: './voice/intro_vo_2.mp3',
+  intro_vo_3: './voice/intro_vo_3.mp3',
+  intro_vo_4: './voice/intro_vo_4.mp3',
+} as const;
+
+export type VoiceName = keyof typeof VOICE_FILES;
+
+/**
+ * Per-clip metadata. `text` is the narration (also the on-screen subtitle);
+ * `durationMs` is the baked clip length the intro uses to pace each subtitle
+ * (null until generate-voice.py measures it — the client then falls back to
+ * fixed timing); `volume` is the playback gain 0..1.
+ */
+export const VOICE_META: Record<VoiceName, { text: string; durationMs: number | null; volume: number }> = {
+  intro_vo_1: { text: "The machines we built to serve us… learned to rule us.", durationMs: null, volume: 0.95 },
+  intro_vo_2: { text: "The steel cities run on their logic now. Every zoo answers to the network.", durationMs: null, volume: 0.95 },
+  intro_vo_3: { text: "We cannot win this as men. So we pour ourselves into the caged ones.", durationMs: null, volume: 0.95 },
+  intro_vo_4: { text: "Wake up in their skin. Open the gates. Run.", durationMs: null, volume: 0.95 },
+};

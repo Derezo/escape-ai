@@ -54,6 +54,7 @@ const SYNTH_ONLY_KEYS = [
 function render(manifest) {
   const sfxEntries = manifest.sfx;   // 18 manifest SFX entries
   const musicEntries = manifest.music; // 8 manifest music entries
+  const voiceEntries = manifest.voice || []; // narration clips (intro cinematic)
 
   // Build SFX_FILES: manifest sfx (as .mp3) + synth-only (as .wav)
   // Manifest sfx come first (in manifest order), then synth-only.
@@ -100,6 +101,24 @@ function render(manifest) {
     const loop = e.loop === true ? 'true' : 'false';
     const vol = typeof e.defaultVolume === 'number' ? e.defaultVolume : 0.5;
     musicMetaLines.push(`  ${e.key}: { loop: ${loop}, volume: ${vol} },`);
+  }
+
+  // Build VOICE_FILES: each voice entry → './voice/<key>.mp3'
+  const voiceFilesLines = [];
+  for (const e of voiceEntries) {
+    const url = './' + e.output.replace(/^assets\//, '');
+    voiceFilesLines.push(`  ${e.key}: '${url}',`);
+  }
+
+  // Build VOICE_META: the narration text (== the on-screen subtitle), the baked clip
+  // durationMs (null until generate-voice.py measures it), and the default volume.
+  // JSON.stringify the text so embedded quotes/unicode/ellipsis are escaped safely.
+  const voiceMetaLines = [];
+  for (const e of voiceEntries) {
+    const text = JSON.stringify(e.text || '');
+    const dur = typeof e.durationMs === 'number' ? e.durationMs : 'null';
+    const vol = typeof e.defaultVolume === 'number' ? e.defaultVolume : 0.9;
+    voiceMetaLines.push(`  ${e.key}: { text: ${text}, durationMs: ${dur}, volume: ${vol} },`);
   }
 
   // Assemble the file text
@@ -157,6 +176,29 @@ function render(manifest) {
     ...musicMetaLines,
     `};`,
     ``,
+    `// ---------------------------------------------------------------------------`,
+    `// Voice — cinematic intro narration (ElevenLabs)`,
+    `// ---------------------------------------------------------------------------`,
+    ``,
+    `/**`,
+    ` * All narration clip keys → their asset URL (./voice/<key>.mp3).`,
+    ` */`,
+    `export const VOICE_FILES = {`,
+    ...voiceFilesLines,
+    `} as const;`,
+    ``,
+    `export type VoiceName = keyof typeof VOICE_FILES;`,
+    ``,
+    `/**`,
+    ` * Per-clip metadata. \`text\` is the narration (also the on-screen subtitle);`,
+    ` * \`durationMs\` is the baked clip length the intro uses to pace each subtitle`,
+    ` * (null until generate-voice.py measures it — the client then falls back to`,
+    ` * fixed timing); \`volume\` is the playback gain 0..1.`,
+    ` */`,
+    `export const VOICE_META: Record<VoiceName, { text: string; durationMs: number | null; volume: number }> = {`,
+    ...voiceMetaLines,
+    `};`,
+    ``,
   ].join('\n');
 }
 
@@ -195,6 +237,7 @@ if (require.main === module) {
   console.log(`Wrote: client/src/audio.generated.ts`);
   console.log(`  ${manifest.sfx.length} manifest SFX + ${SYNTH_ONLY_KEYS.length} synth-only = ${manifest.sfx.length + SYNTH_ONLY_KEYS.length} total SFX keys`);
   console.log(`  ${manifest.music.length} music tracks`);
+  console.log(`  ${(manifest.voice || []).length} voice clips`);
   console.log(`Verify: node scripts/audio/verify-audio.js`);
 }
 
