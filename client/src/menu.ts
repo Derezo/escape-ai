@@ -192,12 +192,13 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         });
         return;
       }
-      // Failure: a short error buzz (the splash-dismiss / form-submit that triggered
-      // this login was a user gesture, so audio is unlocked) plus the inline reason,
-      // then keep (or re-open) the manual form.
-      playSfx('error');
+      // Failure: a real REJECTION (name taken, dead token) gets a short error buzz —
+      // the splash-dismiss / form-submit that drove this login was a user gesture, so
+      // audio is unlocked. The benign "enter a name" validation hint stays silent (a
+      // buzz on an empty field is too punchy for a first-open nudge).
       switch (msg.reason) {
         case 'name_taken':
+          playSfx('error');
           showManualForm();
           showError('That name is taken — try another.');
           nameInput.focus();
@@ -206,6 +207,7 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         case 'bad_token':
           // The stored token no longer matches — forget it and fall back to
           // manual entry (do NOT auto-login again with the dead credential).
+          playSfx('error');
           clearAuth();
           showManualForm();
           showError('Your saved session expired — sign in again.');

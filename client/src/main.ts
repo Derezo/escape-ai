@@ -572,20 +572,17 @@ async function main(): Promise<void> {
     const lockedNow = world?.lockdown ?? false;
     if (lockedNow !== prevLockdown) {
       lockdownOverlay.classList.toggle('active', lockedNow);
-      if (lockedNow) {
-        // false -> true: panic overflowed, the room seals. The klaxon is a SUSTAINED
-        // loop (manifest soundLoop:true) — start it so it blares for the whole sealed
-        // window, not a single one-shot chirp; the door-slam is a one-shot punctuation.
-        startLoop('lockdown_alarm', 0.7);
-        playSfx('door_lock');
-      } else {
-        // true -> false: panic drained below the hysteresis floor — kill the klaxon
-        // loop and sound the all-clear.
-        stopLoop('lockdown_alarm');
-        playSfx('lockdown_clear');
-      }
+      // Edge-only one-shots: the door-slam on seal, the all-clear chime on lift.
+      playSfx(lockedNow ? 'door_lock' : 'lockdown_clear');
       prevLockdown = lockedNow;
     }
+    // Klaxon loop (manifest soundLoop:true): reconcile EVERY frame, not just on the
+    // edge, so it can't leak if a lockdown edge is ever missed (mirrors robot_pursuit
+    // below). startLoop/stopLoop are idempotent — re-calling while already in the
+    // desired state is a cheap no-op (start updates gain in place; stop on an idle
+    // loop does nothing). This also covers joining straight into a sealed room.
+    if (lockedNow) startLoop('lockdown_alarm', 0.7);
+    else stopLoop('lockdown_alarm');
 
     // First-Law stealth feedback: the server owns our humanLikeness, we just
     // mirror it. A text bar plus a hint of the ~60% freeze threshold tells the

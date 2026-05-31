@@ -67,7 +67,10 @@ export function playMusicState(
   track: MusicName | null,
   opts?: { fadeMs?: number; volume?: number },
 ): void {
-  // Idempotency: same target → do nothing.
+  // Idempotency: same target → do nothing. This is also what keeps a held one-shot
+  // (a caught/victory window where selectMusic returns the same sting every frame)
+  // from restarting after its clip ends — targetTrack stays set, so the repeated
+  // identical request is a no-op until a DIFFERENT track is finally requested.
   if (track === targetTrack) return;
   targetTrack = track;
 
@@ -202,17 +205,16 @@ function startCrossfade(
   const newVoice: Voice = { source: src, gain: gainNode };
   inVoice = newVoice;
 
-  // One-shot tracks (victory_sting / caught_sting): when they end, clear
-  // inVoice so the next frame's playMusicState call can start the next track.
-  // We also reset targetTrack so the idempotency check doesn't block the
-  // underlying loop from being restarted the following frame.
+  // One-shot tracks (victory_sting / caught_sting): when they end, clear inVoice
+  // so a genuinely new track can start. Crucially we do NOT null targetTrack —
+  // when the window driving this sting lapses, selectMusic() returns a DIFFERENT
+  // track, which clears the idempotency check on its own; nulling here instead let
+  // a still-requested one-shot (a held caught/victory window) restart every frame
+  // after it ended. We latch it as consumed so playMusicState refuses to retrigger
+  // it while it's still the target.
   if (!MUSIC_META[track].loop) {
     src.addEventListener('ended', () => {
-      if (inVoice === newVoice) {
-        inVoice = undefined;
-        // Reset target so the next frame's selectMusic() result takes effect.
-        targetTrack = null;
-      }
+      if (inVoice === newVoice) inVoice = undefined;
     });
   }
 }

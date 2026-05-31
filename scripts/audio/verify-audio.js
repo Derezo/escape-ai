@@ -342,6 +342,32 @@ function checkGitTracking() {
   // One `git ls-files` call returns the subset of those paths that ARE tracked;
   // anything present-on-disk but absent from that set is the untracked-render bug.
   let trackedSet;
+  // Only a genuinely absent VCS context is a legitimate skip: the git binary not
+  // installed (ENOENT), or this tree not being a git repo at all (e.g. a source
+  // tarball release). Any OTHER git failure must NOT silently pass green — a broken
+  // repo masking untracked renders is exactly the bug this check exists to catch.
+  const inGitRepo = () => {
+    try {
+      return (
+        execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+          cwd: REPO_ROOT,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim() === 'true'
+      );
+    } catch (e) {
+      if (e.code === 'ENOENT') return null; // git binary not installed
+      return false; // git present but not a work tree
+    }
+  };
+  const repoState = inGitRepo();
+  if (repoState !== true) {
+    warn(
+      `git tracking check skipped (${repoState === null ? 'git not installed' : 'not a git repo'}) — cannot assert renders are committed.`,
+    );
+    return;
+  }
+
   try {
     const out = execFileSync('git', ['ls-files', '-z', '--', ...outputs], {
       cwd: REPO_ROOT,
@@ -349,8 +375,9 @@ function checkGitTracking() {
     });
     trackedSet = new Set(out.split('\0').filter(Boolean));
   } catch (e) {
-    // Not a git repo (e.g. a source tarball) — can't assert tracking; don't fail.
-    warn(`git tracking check skipped (git unavailable: ${e.message.split('\n')[0]}).`);
+    // We've confirmed we're in a git repo, so this is a REAL failure (corrupt repo,
+    // permission, etc.) — fail loudly rather than mask a possible untracked render.
+    fail(`git ls-files failed inside a git repo: ${e.message.split('\n')[0]} — cannot verify render tracking.`);
     return;
   }
 

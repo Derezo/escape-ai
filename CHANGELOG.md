@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.136: **Audio audit — validation-review fixes.** `/plan-validation-and-review` on the audit
+  remediation traced 8/8 requirements implemented + connected and all gates green, and surfaced four
+  correctness/quality findings, now fixed: (1) CRITICAL — a held one-shot music sting (the new
+  `caught_sting` window, also `victory_sting`) restarted every frame after its clip ended, because
+  the `ended` handler nulled `targetTrack` so the still-identical request looked new; `music.ts` now
+  leaves `targetTrack` set (the idempotency check already silences the repeat) and only clears the
+  voice — a different track request still crossfades normally. (2) IMPORTANT — `lockdown_alarm` was
+  stopped only on the lockdown lift EDGE, so a missed edge / mid-lockdown disconnect could leak the
+  klaxon; `main.ts` now reconciles the loop EVERY frame from `lockedNow` (idempotent, mirrors
+  `robot_pursuit`), with the door-slam / all-clear one-shots still edge-fired. (3) MINOR — the auth
+  `error` buzz now fires only on real rejections (`name_taken`, `bad_token`), not the benign
+  "enter a name" hint (`menu.ts`). (4) MINOR — `verify-audio.js` Check 6 now distinguishes "git
+  absent / not a repo" (legitimate WARN-skip) from a real `git ls-files` failure inside a repo
+  (FAIL), so a broken repo can't mask an untracked render. Client build clean, tsc green, shared
+  90/90, drift+tracking gate green. Touched `client/src/music.ts`, `client/src/main.ts`,
+  `client/src/menu.ts`, `scripts/audio/verify-audio.js`.
+
 - 0.2.135: **Audio audit — verify-audio.js git-tracking gate (Check 6).** The drift gate's
   asset-existence checks only stat the working tree, so a generated render present on disk but never
   `git add`ed passed green — yet a clean clone / CI / APK ships only committed files and 404s to the
