@@ -162,11 +162,6 @@ export function preloadVoice(): void {
   (Object.keys(VOICE_FILES) as VoiceName[]).forEach((name) => void loadVoice(name));
 }
 
-/** True once a clip is decoded and ready to play instantly. */
-export function isVoiceReady(name: VoiceName): boolean {
-  return voiceBuffers.has(name);
-}
-
 /**
  * The currently-sounding narration source, so a new clip (or a skip/teardown via
  * stopVoice) cuts the previous one — narration beats never overlap.

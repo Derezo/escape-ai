@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.126: **Intro voice — validation remediation: drop the unused `isVoiceReady`.** `/plan-validation-and-review`
+  found `isVoiceReady()` in `client/src/audio.ts` was defined but never called (speculative API surface) —
+  removed it for a lean voice API. Validation otherwise green: all 8 plan requirements traced
+  IMPLEMENTED + CONNECTED, the manifest `text` matches the subtitles byte-for-byte, no other dead/duplicate
+  code, the ElevenLabs↔Suno parallel structure is justified (different API shape), shared tests 90/90,
+  client build clean, drift gate green, no secrets, no new dependency findings. The voiced path was
+  confirmed end-to-end in a headless browser: subtitle 1 held ~5717ms (≈ its baked 4232ms clip + the 1.5s
+  buffer, not the 2200ms fallback) and a narration clip's `start()` fired on each reveal. Touched
+  `client/src/audio.ts`.
+
 - 0.2.125: **Intro voice narration — generated clips + baked durations.** The four ElevenLabs narration
   clips are generated and committed (`assets/voice/intro_vo_1..4.mp3`, voice `6sFKzaJr574YWVu4UuJF`, model
   `eleven_v3`). `generate-voice.py` measured each clip and baked its `durationMs` into the manifest
