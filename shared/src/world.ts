@@ -69,8 +69,16 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  to INSIDE the first aux building's center (auxPlaced[0].centerTx/centerTy). The ape's
  *  fetch TARGET stays the gate; the PICKUP location moves inside. entitySpecs re-pins
  *  (the 'prop-1' entity moves). The collision grid stays stable (the new location is
- *  interior and was already walkable). */
-export const WORLD_GEN_VERSION = 16;
+ *  interior and was already walkable).
+ *  v17: DEN SPAWN-TRAP FIX. The three ROCKY_DEN_WALL tiles in a 'den' enclosure
+ *  (skunk/mole/fox) move from flanking the spawn-center mound on W/E + N (a 1-tile
+ *  south-only pocket the player AABB wedged into) to a back-row backdrop on the
+ *  (ccy-1) row: (ccx-1,ccy-1),(ccx,ccy-1),(ccx+1,ccy-1). The mound (ccx,ccy) keeps
+ *  open non-solid DIRT on W/E/S so a player-radius body can slide off. This flips a
+ *  handful of deco cells per den home (collision-relevant: ROCKY_DEN_WALL is solid),
+ *  so the collision hash AND entitySpec hash re-pin (den anchors/quest tiles are
+ *  unaffected geometrically but the parity hashes cover the full grid). */
+export const WORLD_GEN_VERSION = 17;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -1671,10 +1679,17 @@ function stampHousing(
     // no-reach-target-beside-deep-water invariant.
     reachTargets[1] = { tx: ix0, ty: iy0 };
   } else if (kind === 'den') {
-    // A rocky den cluster with a walkable mouth at the center.
-    setTile(deco, ccx - 1, ccy, TILE_INDEX.ROCKY_DEN_WALL);
-    setTile(deco, ccx + 1, ccy, TILE_INDEX.ROCKY_DEN_WALL);
+    // A rocky den cluster sitting BEHIND (north of) a walkable burrow mound. The
+    // three ROCKY_DEN_WALL tiles form a back-row backdrop on the (ccy-1) row, so
+    // the spawn-center mound keeps OPEN, non-solid DIRT on its W/E/S — a player's
+    // collision AABB can always slide off the mound. (An earlier layout flanked the
+    // mound with solid rock on W/E + N, leaving a 1-tile south-only pocket the body
+    // wedged into.) The back row stays strictly interior at the smallest den size
+    // (rw,rh = 8,8 → ccy-1 = ry+3, cols rx+3..rx+5, all within interior [1,rw-2]×
+    // [1,rh-2]); never lands on the barrier ring or the spawn center.
+    setTile(deco, ccx - 1, ccy - 1, TILE_INDEX.ROCKY_DEN_WALL);
     setTile(deco, ccx, ccy - 1, TILE_INDEX.ROCKY_DEN_WALL);
+    setTile(deco, ccx + 1, ccy - 1, TILE_INDEX.ROCKY_DEN_WALL);
     setTile(deco, ccx, ccy, TILE_INDEX.BURROW_MOUND); // walkable den mound = reach target
     // A spare burrow mound + a water trough in the den corners (off the reach tile).
     setTile(deco, rx + 1, ry + 1, TILE_INDEX.BURROW_MOUND);

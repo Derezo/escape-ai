@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.105: **Fix: den species (skunk/mole/fox) spawned STUCK in their pen.** The `den`
+  enclosure stamp in `shared/src/world.ts` walled the spawn-center `BURROW_MOUND` on three
+  sides with solid `ROCKY_DEN_WALL` tiles (W, E, N), leaving a 1-tile south-only pocket.
+  The player spawns on the mound (with ±16px jitter); since the collision radius (12.8px) is
+  smaller than a half-tile but a 3-walled 1-tile cell can't be slid out of, the player's AABB
+  wedged and could not move. The three rock tiles now form a back-row backdrop on the
+  `(ccy-1)` row — `(ccx-1,ccy-1)`, `(ccx,ccy-1)`, `(ccx+1,ccy-1)` — leaving the mound's W/E/S
+  open non-solid DIRT so the body can always slide off. Proven in-interior for the smallest
+  den (`rw,rh = 8,8`): the back row sits at `ry+3`, cols `rx+3..rx+5`, all within the interior
+  `[1,rw-2]×[1,rh-2]`, never on the barrier ring or the spawn center. The rocky-den look and
+  the spare mound + water trough are unchanged. This flips per-den collision cells, so
+  `WORLD_GEN_VERSION` bumps **16 → 17** (the client regenerates its tilemap from seed+version,
+  so a stale version would desync the visual map from the server collision grid). Re-pinned
+  `PINNED_COLLISION_HASH`/`PINNED_ENTITYSPEC_HASH` and added a `world.test.mjs` regression
+  asserting every den mound has open W/E/S. shared builds clean; 90/90 shared tests green.
+
 - 0.2.104: **Fix: food collection (and feeding) threw — broken by a circular-require trap.**
   The multi-step quest wiring made `server/game/follow.js` and `server/game/quests.js`
   require each other. In the server's real load order (`engine → stealth → quests →

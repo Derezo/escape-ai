@@ -22,13 +22,15 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v16: THE DISGUISE PROP (Clipboard) RELOCATES from near the gate/spawn (spawnTiles[0])
-// to INSIDE the first aux building's center (auxPlaced[0].centerTx/centerTy). The ape's
-// fetch TARGET stays the gate; the PICKUP location moves inside. entitySpecs re-pins
-// (the 'prop-1' entity moves). The collision grid stays stable (the new location is
-// interior and was already walkable). Recomputed from generateWorld(123).
-const PINNED_COLLISION_HASH = 2912234384;
-const PINNED_ENTITYSPEC_HASH = 1575395877;
+// v17: DEN SPAWN-TRAP FIX. The three ROCKY_DEN_WALL tiles in each 'den' enclosure
+// (skunk/mole/fox) move from flanking the spawn-center mound on W/E + N to a back-row
+// backdrop on the (ccy-1) row, so the mound keeps open non-solid DIRT on W/E/S and a
+// player AABB can slide off (was a 1-tile south-only pocket the body wedged into).
+// ROCKY_DEN_WALL is solid, so the per-den cells that flip walkability move → the
+// collision hash re-pins. The entitySpec hash also re-pins (the full-grid JSON shifts
+// with the relocated deco). Both recomputed from generateWorld(123).
+const PINNED_COLLISION_HASH = 3946684960;
+const PINNED_ENTITYSPEC_HASH = 2090828514;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -92,10 +94,10 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v16: the prop relocates inside the first aux building. entitySpecs hash re-pins.
-  // The bump is the deliberate cache-bust so old clients (which assert
-  // msg.version === WORLD_GEN_VERSION) fail loud not desync.
-  assert.equal(WORLD_GEN_VERSION, 16, 'version pinned at 16');
+  // v17: the den spawn-trap fix relocates each den's ROCKY_DEN_WALL backdrop, which
+  // flips per-den collision cells. The bump is the deliberate cache-bust so old
+  // clients (which assert msg.version === WORLD_GEN_VERSION) fail loud not desync.
+  assert.equal(WORLD_GEN_VERSION, 17, 'version pinned at 17');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 
@@ -137,6 +139,26 @@ test('coverage: every species has exactly one home and exactly one quest object'
   // No stray homes/quests for non-roster keys.
   assert.equal(homeCounts.size, SPECIES_KEYS.length, 'no extra homes beyond the roster');
   assert.equal(questCounts.size, SPECIES_KEYS.length, 'no extra quest objects beyond the roster');
+});
+
+test('den spawn-trap fix: every den mound has open W/E/S so a player AABB can slide off', () => {
+  // Regression for the v17 den fix. A den's spawn-center BURROW_MOUND used to be
+  // flanked by solid ROCKY_DEN_WALL on W/E + N, leaving a 1-tile south-only pocket
+  // that the player's collision AABB wedged into (radius < half-tile, but a 3-walled
+  // 1-tile cell cannot be slid out of). The fix moves the rocks to a back-row
+  // backdrop on the (ccy-1) row, leaving the mound's W/E/S open. The mound itself
+  // must stay walkable (it is reachTargets[1] / quest tile / decoy anchor / spawn).
+  const map = generateWorld(PIN_SEED);
+  const dens = map.housing.filter((hh) => hh.kind === 'den');
+  assert.ok(dens.length >= 1, 'at least one den home exists (skunk/mole/fox)');
+  for (const d of dens) {
+    const cx = tx(map, d.cx);
+    const cy = tx(map, d.cy);
+    assert.ok(!tileSolid(map.collision, map.w, map.h, cx, cy), `${d.species} den mound (center) is walkable`);
+    assert.ok(!tileSolid(map.collision, map.w, map.h, cx - 1, cy), `${d.species} den mound WEST neighbour is open`);
+    assert.ok(!tileSolid(map.collision, map.w, map.h, cx + 1, cy), `${d.species} den mound EAST neighbour is open`);
+    assert.ok(!tileSolid(map.collision, map.w, map.h, cx, cy + 1), `${d.species} den mound SOUTH neighbour is open`);
+  }
 });
 
 test('coverage: every species has exactly one food source, with a foodKey', () => {
