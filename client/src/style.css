@@ -1314,3 +1314,352 @@ body {
   border: 1px solid #232c38;
   font-size: 12px;
 }
+
+/* --- Global chat (toggle / or click the icon). Bottom-left; the icon glows on
+   unread, the panel expands above it, and collapsed messages pop as 3s bubbles. --- */
+
+/* The widget root just hosts the fixed children; it has no box of its own. */
+#chat-widget {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Collapsed icon: a tappable rounded button, bottom-left, on the overlay tier. */
+#chat-icon {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 30;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  color: #cde7ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font: inherit;
+  box-shadow: 0 0 18px rgba(76, 201, 240, 0.1);
+  transition: transform 0.12s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+#chat-icon .chat-icon-glyph {
+  font-size: 22px;
+  line-height: 1;
+}
+#chat-icon:hover {
+  border-color: #4cc9f0;
+  transform: translateY(-1px);
+}
+#chat-icon:active {
+  transform: translateY(0) scale(0.96);
+}
+/* Unread: a brighter border + a pulsing cyan glow. */
+#chat-icon.chat-unread {
+  border-color: #4cc9f0;
+  animation: chat-pulse 1.6s ease-in-out infinite;
+}
+@keyframes chat-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 14px rgba(76, 201, 240, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 34px rgba(76, 201, 240, 0.55);
+  }
+}
+
+/* Unread count badge (capped 99+). */
+#chat-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: #4cc9f0;
+  color: #06121a;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  transform: scale(0);
+  transition: transform 0.16s ease;
+  pointer-events: none;
+}
+#chat-badge.show {
+  transform: scale(1);
+}
+
+/* The collapsed bubble pop-up: one reusable element above the icon. */
+#chat-bubble {
+  position: fixed;
+  left: 14px;
+  bottom: 70px;
+  z-index: 30;
+  max-width: 320px;
+  padding: 8px 11px;
+  border-radius: 10px 10px 10px 2px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  color: #cde7ff;
+  font-size: 13px;
+  line-height: 1.35;
+  box-shadow: 0 0 22px rgba(76, 201, 240, 0.14);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+#chat-bubble.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+.chat-bubble-who {
+  color: #4cc9f0;
+  font-weight: 600;
+}
+
+/* The expanded panel: anchored bottom-left above the icon, fades/slides up on .open. */
+#chat-panel {
+  position: fixed;
+  left: 14px;
+  bottom: 70px;
+  z-index: 30;
+  width: 340px;
+  max-width: calc(100vw - 28px);
+  max-height: 56vh;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 12px 9px;
+  border-radius: 12px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  box-shadow: 0 0 40px rgba(76, 201, 240, 0.14);
+  color: #cde7ff;
+  font-size: 13px;
+  transform-origin: bottom left;
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+#chat-widget.open #chat-panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+/* When the panel is open, hide the collapsed-only affordances. */
+#chat-widget.open #chat-icon,
+#chat-widget.open #chat-bubble {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#chat-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #222a35;
+}
+#chat-panel-head .chat-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #cde7ff;
+  text-shadow: 0 0 8px rgba(76, 201, 240, 0.35);
+}
+#chat-close {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  background: #1a212c;
+  color: #cde7ff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+#chat-close:hover {
+  background: #243040;
+}
+
+#chat-scroll {
+  flex: 1;
+  min-height: 80px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-right: 2px;
+}
+.chat-empty {
+  color: #6c7888;
+  font-style: italic;
+  padding: 8px 2px;
+}
+
+.chat-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.chat-row.mine {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+.chat-row-in {
+  animation: chat-row-in 0.18s ease-out;
+}
+@keyframes chat-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.chat-row.mine.chat-row-in {
+  animation-name: chat-row-in-mine;
+}
+@keyframes chat-row-in-mine {
+  from {
+    opacity: 0;
+    transform: translateX(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.chat-avatar {
+  flex: 0 0 auto;
+  border-radius: 5px;
+  background-color: transparent;
+}
+.chat-row-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.chat-who {
+  font-size: 11px;
+  color: #6c7888;
+}
+.chat-row.mine .chat-who {
+  color: #4cc9f0;
+}
+.chat-text {
+  color: #cde7ff;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.chat-row.mine .chat-text {
+  color: #d7ecff;
+}
+
+#chat-form {
+  display: flex;
+  gap: 7px;
+  margin-top: 9px;
+}
+#chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid #2b3340;
+  background: #0b0e14;
+  color: #cde7ff;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13px;
+}
+#chat-input::placeholder {
+  color: #6c7888;
+}
+#chat-input:focus {
+  outline: none;
+  border-color: #4cc9f0;
+  box-shadow: 0 0 8px rgba(76, 201, 240, 0.25);
+}
+#chat-send {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #2b3340;
+  border-radius: 7px;
+  background: #1a212c;
+  color: #cde7ff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.1s;
+}
+#chat-send:hover {
+  background: #243040;
+  border-color: #4cc9f0;
+}
+#chat-send:active {
+  transform: scale(0.94);
+}
+#chat-send.pressed {
+  animation: chat-send-flash 0.16s ease-out;
+}
+@keyframes chat-send-flash {
+  from {
+    box-shadow: 0 0 0 rgba(76, 201, 240, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(76, 201, 240, 0.5);
+  }
+  to {
+    box-shadow: 0 0 0 rgba(76, 201, 240, 0);
+  }
+}
+.chat-hint {
+  margin: 7px 0 0;
+  font-size: 11px;
+  color: #6c7888;
+  text-align: center;
+}
+
+/* Reduced motion: a static brighter glow (still signals unread), instant
+   transitions. The 3s bubble HOLD is JS-driven and unaffected (story preserved). */
+#chat-widget.reduced-motion #chat-panel,
+#chat-widget.reduced-motion #chat-bubble,
+#chat-widget.reduced-motion #chat-icon,
+#chat-widget.reduced-motion #chat-badge {
+  transition: none;
+}
+#chat-widget.reduced-motion #chat-icon.chat-unread {
+  animation: none;
+  box-shadow: 0 0 30px rgba(76, 201, 240, 0.45);
+}
+#chat-widget.reduced-motion .chat-row-in,
+#chat-widget.reduced-motion #chat-send.pressed {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #chat-panel,
+  #chat-bubble,
+  #chat-icon,
+  #chat-badge {
+    transition: none;
+  }
+  #chat-icon.chat-unread {
+    animation: none;
+    box-shadow: 0 0 30px rgba(76, 201, 240, 0.45);
+  }
+  .chat-row-in,
+  #chat-send.pressed {
+    animation: none;
+  }
+}

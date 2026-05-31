@@ -59,6 +59,7 @@ const CONTROLS_HTML = `
     <li><b>Space</b> — your species ability</li>
     <li><b>I</b> — inventory (food + who it feeds)</li>
     <li><b>L</b> — leaderboard (top players + your score)</li>
+    <li><b>/</b> — chat with everyone in the world</li>
     <li><b>H</b> or <b>?</b> — toggle this help</li>
   </ul>
   <h2>Goal</h2>

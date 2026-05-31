@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.130: **Global chat — client widget + wiring (Phase 4+5/5).** The chat is live end-to-end.
+  `NetClient` gained `sendChat(text)` + `onChat(cb)` and an internal `chat:message` handler
+  (`client/src/net/client.ts`). New `client/src/chat.ts` is a collapsible bottom-left DOM overlay
+  (mirrors the leaderboard idiom): a glowing icon when collapsed, a 340px panel with a scrollable
+  message log + input + Send when expanded. Collapsed, each incoming message pops as a 3s bubble,
+  one at a time, via a single self-rescheduling `setTimeout` chain (no `setInterval` drift); the
+  icon glows + shows an unread count badge until you open it. Opening (click the icon **or** press
+  `/`) clears the glow, cancels the bubble queue, and shows the full log. Subtle SFX:
+  `chat_receive` (others' lines), `chat_send` (your send), `chat_open` (expand). Keyboard contract
+  with `main.ts`: `/` is excluded from the movement key set; while the input is focused the send
+  loop freezes movement and the keydown handler bails (so WASD/space/etc. type as text), and the
+  focus edge clears any held keys so a key held at focus can't "stick". Enter sends, Esc closes.
+  Theme-matched (cyan glow, mono, panel `#11151d`) and reduced-motion aware (static glow, instant
+  transitions; the 3s hold is preserved). Added `/` to the Help → Controls list. Touched
+  `client/src/net/client.ts`, `client/src/chat.ts` (new), `client/src/main.ts`,
+  `client/src/style.css`, `client/src/help.ts`.
+
 - 0.2.129: **Global chat — SFX manifest entries + codegen (Phase 3/5).** Added three subtle chat
   sound effects to `asset-pipeline/manifest.json`: `chat_receive` (soft incoming blip, vol 0.45),
   `chat_send` (light outgoing click, 0.5), `chat_open` (panel-open swell, 0.5). All `priority: nice`

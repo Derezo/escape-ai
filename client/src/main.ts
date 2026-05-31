@@ -36,6 +36,7 @@ import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
 import { createInventory } from './inventory';
 import { createLeaderboard } from './leaderboard';
+import { createChat } from './chat';
 import { runMenu } from './menu';
 import { playIntro, preloadIntroAssets, isIntroActive } from './intro';
 
@@ -334,8 +335,32 @@ async function main(): Promise<void> {
   let queuedAction: PlayerAction | undefined;
   const actionHeld = new Set<string>();
 
+  // --- Global chat widget (toggle `/` or click the icon). A collapsible DOM
+  // overlay (bottom-left) for the room-wide text chat. While its input is focused
+  // the player is TYPING, so movement must freeze + actions must not fire: the
+  // widget reports focus via `chatFocused` (polled in the send loop) AND clears any
+  // held keys on the focus edge (a window `blur` does NOT fire when an in-document
+  // input gains focus, so a movement key held at the moment of focus would otherwise
+  // "stick"). The `/` toggle is owned by the widget; we exclude `/` from the
+  // movement key set below so it never leaks into walking. ---
+  let chatFocused = false;
+  const chat = createChat({
+    send: (text) => net.sendChat(text),
+    onFocusChange: (focused) => {
+      chatFocused = focused;
+      if (focused) {
+        keys.clear();
+        actionHeld.clear();
+        queuedAction = undefined;
+      }
+    },
+  });
+  net.onChat((m) => chat.addMessage({ ...m, mine: !!myId && m.senderId === myId }));
+
   window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
+    // While typing in chat, let the input own every key — no walking, no actions.
+    if (chatFocused) return;
     const action = ACTION_KEYS[key];
     if (action) {
       // Space (and arrows below) would scroll the page; suppress that.
@@ -347,9 +372,9 @@ async function main(): Promise<void> {
       }
       return;
     }
-    // The help (H/?), inventory (I), and leaderboard (L) toggle keys are handled
-    // in their own modules; don't let them leak into the movement key set.
-    if (key === 'h' || key === '?' || key === 'i' || key === 'l') return;
+    // The help (H/?), inventory (I), leaderboard (L), and chat (/) toggle keys are
+    // handled in their own modules; don't let them leak into the movement key set.
+    if (key === 'h' || key === '?' || key === 'i' || key === 'l' || key === '/') return;
     keys.add(key);
   });
   window.addEventListener('keyup', (e) => {
@@ -379,7 +404,11 @@ async function main(): Promise<void> {
   let seq = 0;
   let lastSendTime = performance.now();
   setInterval(() => {
-    const { dx, dy, sprint } = inputVector();
+    // While the chat input is focused the player is typing: freeze movement. The
+    // keydown handler already bails on `chatFocused` (so nothing new enters `keys`
+    // and no action is queued), but a key held across the focus edge is cleared
+    // there too — this zero is the authoritative guarantee we never walk while typing.
+    const { dx, dy, sprint } = chatFocused ? { dx: 0, dy: 0, sprint: false } : inputVector();
     const now = performance.now();
     const dt = (now - lastSendTime) / 1000;
     lastSendTime = now;

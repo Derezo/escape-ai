@@ -24,6 +24,7 @@ import {
   type MapMsg,
   type LeaderboardRequest,
   type LeaderboardMsg,
+  type ChatMessage,
 } from '@shared/net';
 
 /** How often (ms) to send a ping for the latency estimate. */
@@ -40,6 +41,7 @@ export class NetClient {
   private authCb: (msg: AuthResult) => void = () => {};
   private mapCb: (msg: MapMsg) => void = () => {};
   private leaderboardCb: (msg: LeaderboardMsg) => void = () => {};
+  private chatCb: (msg: ChatMessage) => void = () => {};
 
   /** Open the connection. Wires server->client handlers and starts the ping loop. */
   connect(url: string): void {
@@ -74,6 +76,12 @@ export class NetClient {
     // defaults to a no-op until the leaderboard overlay registers via onLeaderboard().
     this.socket.on(SERVER_EVENTS.LEADERBOARD_DATA, (msg: LeaderboardMsg) => {
       this.leaderboardCb(msg);
+    });
+
+    // A global-chat line broadcast to the room. Registered here; the cb defaults to
+    // a no-op until the chat widget registers via onChat().
+    this.socket.on(SERVER_EVENTS.CHAT_MESSAGE, (msg: ChatMessage) => {
+      this.chatCb(msg);
     });
 
     // Latency: server echoes our timestamp back in pong {t}; rtt = now - t.
@@ -144,6 +152,17 @@ export class NetClient {
   /** Register the leaderboard-data handler (the reply to requestLeaderboard). */
   onLeaderboard(cb: (msg: LeaderboardMsg) => void): void {
     this.leaderboardCb = cb;
+  }
+
+  /** Emit chat:send {text}. The server validates/trims/caps it and broadcasts a
+   *  chat:message to everyone in the room (register the handler via onChat). */
+  sendChat(text: string): void {
+    this.socket?.emit(CLIENT_EVENTS.CHAT_SEND, { text });
+  }
+
+  /** Register the chat-message handler (a global-chat line from the server). */
+  onChat(cb: (msg: ChatMessage) => void): void {
+    this.chatCb = cb;
   }
 
   /** Current smoothed latency in ms, or -1 if not yet measured. */
