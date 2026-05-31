@@ -155,6 +155,12 @@ function feedNearbyAnimal(player, roomName, currentTick) {
   for (const e of world.getWorldEntities(roomName)) {
     if (e.kind !== 'animal') continue;
     if (e.expireTick) continue; // skip transient fox-decoy animals
+    // CAPTURED: an animal a robot has grabbed and is hauling home is in the robot's
+    // possession — not feedable. Without this guard a player could re-feed it the same
+    // tick it's captured and yank it back out of the robot's grip (applyAction runs
+    // before stepNpcs), clearing capturedBy and leaving a 1-tick dual-ownership race.
+    // Mirrors the capturedBy skip in stealth.gatherAnimals + stepIdleAnimals.
+    if (e.capturedBy) continue;
     const liked = world.foodForSpecies(e.species).key;
     if (!(player.inventory && player.inventory[liked] > 0)) continue;
     const d2 = shared.dist2(player, e);

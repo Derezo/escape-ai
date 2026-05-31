@@ -88,3 +88,12 @@ the audit trail).
 - **Refs:** `client/package.json` (Vite dev dependency); advisory
   GHSA-67mh-4wv8-2f99.
 - **Effort:** M (major-version upgrade + build re-verification).
+
+## Open
+
+### Unused `world` import in server/game/behaviors.js
+- **Status:** Open
+- **Surfaced:** 2026-05-30 (plan-validation-and-review, robot-capture plan)
+- **Pointer:** `server/game/behaviors.js:21` — `const world = require('./world');` has no `world.*` usage anywhere in the file.
+- **Why deferred:** Pre-existing (present at base commit `5880ea1`, untouched by the robot-capture plan). Out of scope per the validation skill's in-scope/out-of-scope rule — not traceable to the plan's changes.
+- **Effort:** Trivial (delete one line); verify nothing else in the file references it (confirmed none do).

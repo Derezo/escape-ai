@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.108: **Capture consistency fix — a captured NPC can no longer be re-fed/re-leashed out of a
+  robot's grip.** Plan-validation review found `feedNearbyAnimal` (`server/game/follow.js`) lacked
+  the `capturedBy` guard the other two captured-animal consumers already have
+  (`stealth.gatherAnimals` + `stepIdleAnimals`). Because `applyAction` runs before `stepNpcs`, a
+  player standing next to a robot that just grabbed an animal could feed it the same tick and yank
+  it back — clearing `capturedBy` and leaving a 1-tick dual-ownership race (robot-steal defeated for
+  free). `feedNearbyAnimal` now skips any animal with `capturedBy` set: a captured NPC is in the
+  robot's possession and not feedable until it's released inside its pen.
+
 - 0.2.107: **Robot NPC-capture is now LIVE — capture trigger + return dispatch wired into
   `stepRobots` (Phase 3, the payoff).** The plumbing from 0.2.106 is now reachable: a
   keeper-robot that touches a loose non-player animal GRABS it and hauls it home. Two
