@@ -19,6 +19,7 @@
 import type { LeaderboardMsg, LeaderboardRow, LeaderboardSort } from '@shared/net';
 import { SPECIES, speciesByKey } from '@shared/species';
 import { createSpeciesSprite } from './species-sprite';
+import { isTypingInTextField } from './dom';
 
 /** How often (ms) to re-poll the leaderboard while the panel is OPEN. */
 const POLL_INTERVAL_MS = 4000;
@@ -304,10 +305,12 @@ export function createLeaderboard(
   };
 
   // Toggle on L; close on Escape. L is kept out of the movement key set in main.ts
-  // (like H/?/I), so it never leaks into walking.
+  // (like H/?/I), so it never leaks into walking. BAIL on the toggle while the player
+  // is typing in a text field (e.g. chat) so an 'l' in a message doesn't open the
+  // leaderboard; Escape still closes an open panel.
   window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
-    if (key === 'l') {
+    if (key === 'l' && !isTypingInTextField()) {
       handle.toggle();
     } else if (key === 'escape' && visible) {
       handle.hide();

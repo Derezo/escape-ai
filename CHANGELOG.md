@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.139: **Intro narration — resync `intro_vo_3` voice clip.** Completes the 0.2.137
+  follow-up: the rewritten `intro_vo_3` line was re-baked via ElevenLabs, so the spoken VO now
+  matches the on-screen subtitle and `durationMs` was re-measured 5747 → 7340 (the new line is
+  longer, so subtitle pacing for that beat is now correct). Regenerated `client/src/audio.generated.ts`
+  (`VOICE_META`); drift gate green. Resolves and removes the corresponding `FINDINGS_OUTSIDE_SCOPE.md`
+  entry. Touched `asset-pipeline/manifest.json`, `assets/voice/intro_vo_3.mp3`,
+  `client/src/audio.generated.ts`, `FINDINGS_OUTSIDE_SCOPE.md`.
+
+- 0.2.138: **Chat input — stop gameplay shortcuts leaking while typing.** Typing in the chat box
+  fired single-letter overlay toggles — e.g. typing "this" popped Help (`h`) and Inventory (`i`),
+  and an `l` opened the leaderboard. Each overlay (`help.ts`, `inventory.ts`, `leaderboard.ts`) binds
+  its own `window` keydown for its toggle key and didn't check input focus (main.ts's movement
+  handler already bailed on chat focus, but these three were independent). New shared
+  `client/src/dom.ts` (`isEditableTarget` / `isTypingInTextField`) is now consulted by all three so
+  their H/I/L toggles BAIL while any text field is focused; Escape still closes an open panel. Focus
+  release on collapse (Esc/×) and click-away already routed through the input's native blur →
+  `onFocusChange(false)` → movement resumes; verified end-to-end. New headless-Chrome regression
+  `scripts/e2e-chat-focus.js` (+ `client/test/chat-focus-harness.html`) drives real keystrokes via
+  CDP and asserts all of the above (20/20 green). Touched `client/src/dom.ts` (new),
+  `client/src/help.ts`, `client/src/inventory.ts`, `client/src/leaderboard.ts`,
+  `client/test/chat-focus-harness.html` (new), `scripts/e2e-chat-focus.js` (new).
+
 - 0.2.137: **Intro narration — rewrite `intro_vo_3` line.** The third intro subtitle/narration was
   rewritten from "So we pour ourselves into the caged ones." to "We have technology to transfer our
   human souls into the imprisoned creatures now." (clearer transfer-of-consciousness lore). Updated

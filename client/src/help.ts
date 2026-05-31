@@ -23,6 +23,7 @@
 import { SPECIES, speciesByKey } from '@shared/species';
 import { createSpeciesSprite } from './species-sprite';
 import { getLastStats } from './menu';
+import { isTypingInTextField } from './dom';
 
 /** The four tab ids, in display order. Controls is the default active tab. */
 type TabId = 'controls' | 'species' | 'more' | 'stats';
@@ -305,9 +306,12 @@ export function createHelp(): HelpHandle {
 
   // Toggle on H or ?; close on Escape. These keys are not gameplay inputs, so we
   // don't preventDefault — but main.ts already keeps H/? out of the movement set.
+  // BAIL on the toggle keys while the player is typing in a text field (e.g. chat),
+  // so "this" doesn't pop the help panel on its 'h'. Escape still closes an open
+  // panel (it isn't a typed character and closing on Escape is always wanted).
   window.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
-    if (key === 'h' || key === '?') {
+    if ((key === 'h' || key === '?') && !isTypingInTextField()) {
       handle.toggle();
     } else if (key === 'escape' && visible) {
       handle.hide();

@@ -1,0 +1,73 @@
+<!doctype html>
+<!--
+  Headless regression harness for the chat-input focus guard (see scripts/e2e-chat-focus.js).
+
+  Wires the same overlays main.ts builds (help / inventory / leaderboard / chat) but
+  WITHOUT a server or the game loop, so a CDP driver can type into the chat input and
+  assert the single-letter overlay toggles (H / I / L) do NOT fire while typing.
+
+  Served by the Vite dev server (npm run dev) so the `@shared` alias + TS ESM resolve.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>chat focus harness</title>
+  </head>
+  <body>
+    <script type="module">
+      import { createHelp } from '/src/help.ts';
+      import { createInventory } from '/src/inventory.ts';
+      import { createLeaderboard } from '/src/leaderboard.ts';
+      import { createChat } from '/src/chat.ts';
+
+      // Build the overlays exactly as main.ts does (each binds its own window keydown).
+      const help = createHelp();
+      const inventory = createInventory();
+      const leaderboard = createLeaderboard(() => {});
+
+      // Mirror main.ts's chat wiring: track focus, and on the focus edge clear "held
+      // keys" (here just a flag the test can read). send() is a no-op (no server).
+      let chatFocused = false;
+      const chat = createChat({
+        send: () => {},
+        onFocusChange: (focused) => {
+          chatFocused = focused;
+        },
+      });
+
+      // Expose state to the CDP driver via a single global the test polls.
+      window.__harness = {
+        get helpOpen() {
+          return help.visible;
+        },
+        get inventoryOpen() {
+          return inventory.visible;
+        },
+        get leaderboardOpen() {
+          return leaderboard.visible;
+        },
+        get chatExpanded() {
+          return chat.expanded;
+        },
+        get chatInputFocused() {
+          return chat.inputFocused;
+        },
+        get chatFocusedFlag() {
+          return chatFocused;
+        },
+        get chatInputValue() {
+          return document.querySelector('#chat-input')?.value ?? null;
+        },
+        openChat() {
+          chat.open();
+        },
+        focusGameBody() {
+          // Simulate "click away": move focus off the input to a non-editable element.
+          document.body.tabIndex = -1;
+          document.body.focus();
+        },
+      };
+      window.__harnessReady = true;
+    </script>
+  </body>
+</html>
