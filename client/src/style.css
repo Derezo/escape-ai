@@ -506,6 +506,241 @@ body {
   background: rgba(76, 201, 240, 0.3);
 }
 
+/* --- Cinematic intro (#intro): the first-run "ESCAPE AI" transfer-pod sequence.
+   Built + torn down by intro.ts; plays once for a brand-new character, on TOP of
+   the loading world (z-index 60, above splash=40/login=41/help=30/HUD=20/game=10).
+
+   The macro timeline is JS-scheduled in intro.ts (it must be skippable + tear down
+   a running audio loop); these rules are the visual polish it toggles via classes:
+   a black stage, a slow chamber fade-in, staggered subtitle fades, the on↔off pod
+   flicker, a fade-to-black, then the lone glitching title. --- */
+#intro {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: #04060a;
+  user-select: none;
+  overflow: hidden;
+  /* The whole overlay can fade to black between the chamber and the title. */
+  transition: background 0.6s ease;
+}
+
+/* Fade-to-black phase: hide the stage + subtitle, leave only black for the title. */
+#intro.to-black #intro-stage,
+#intro.to-black #intro-subtitle,
+#intro.to-black #intro-skip {
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+/* --- The pod stage: two stacked, pre-decoded images. The "off" chamber sits
+   underneath; the "on" image (mid-transfer) fades over it when `.powered`. The
+   stage itself fades in from black via `.visible`. --- */
+#intro-stage {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 2s ease;
+}
+
+#intro-stage.visible {
+  opacity: 1;
+}
+
+.intro-pod {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* A faint vignette dimming so the subtitles stay legible over the art. */
+  filter: brightness(0.85);
+}
+
+/* The "on" image starts hidden; a fast opacity flip reads as an electrical surge. */
+#intro-pod-on {
+  opacity: 0;
+  transition: opacity 0.09s steps(2, end);
+  /* The transfer glow is greener/brighter than the dormant chamber. */
+  filter: brightness(1.08) saturate(1.15);
+}
+
+#intro-stage.powered #intro-pod-on {
+  opacity: 1;
+}
+
+/* --- Subtitles: revealed one at a time by intro.ts (it swaps textContent and
+   re-triggers `.show`). A soft rise + fade. Sits low over the art. --- */
+#intro-subtitle {
+  position: absolute;
+  bottom: 14%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(86%, 760px);
+  margin: 0;
+  padding: 0 16px;
+  font-size: clamp(16px, 2.6vw, 26px);
+  line-height: 1.45;
+  color: #e7f1ff;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.85), 0 0 30px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+}
+
+#intro-subtitle.show {
+  animation: intro-subtitle-in 0.9s ease-out forwards;
+}
+
+@keyframes intro-subtitle-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* --- "Press any key to skip" — armed (revealed) once the first subtitle shows. */
+#intro-skip {
+  position: absolute;
+  bottom: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #5d6878;
+  opacity: 0;
+  pointer-events: none;
+}
+
+#intro-skip.show {
+  animation:
+    intro-fade-in 0.8s ease-out forwards,
+    intro-skip-pulse 2s ease-in-out 1s infinite;
+}
+
+@keyframes intro-skip-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+/* --- The lone title — shown last, after the fade-to-black. Reuses the splash's
+   cyan-ESCAPE / glitching-AI visual language with intro-scoped class names (the
+   splash element is long gone by now, so the styles can't be shared by selector). */
+.intro-title {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: clamp(48px, 12vw, 120px);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  line-height: 1.05;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.04em;
+  opacity: 0;
+}
+
+.intro-title.show {
+  opacity: 1;
+}
+
+.intro-word-escape {
+  background: linear-gradient(100deg, #4cc9f0, #cde7ff, #4cc9f0);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 12px rgba(76, 201, 240, 0.35));
+}
+
+.intro-title.show .intro-word-escape {
+  animation: splash-escape-glow 3.6s ease-in-out infinite;
+}
+
+.intro-word-ai {
+  color: #eef4ff;
+  font-size: 1.18em;
+  letter-spacing: 0.28em;
+}
+
+.intro-title.show .intro-word-ai {
+  animation: intro-ai-pop 1.1s steps(1, end) forwards;
+}
+
+/* The AI glitch-in: hard flicker + chromatic split decaying into a humming logo —
+   the same menace as the splash, retimed to land on the lone-title beat. */
+@keyframes intro-ai-pop {
+  0%   { opacity: 0; transform: translate(0, 0) scale(1.16); text-shadow: none; }
+  8%   { opacity: 1; transform: translate(-3px, 2px) scale(1.1);
+         text-shadow: 3px 0 0 rgba(255, 40, 60, 0.85), -3px 0 0 rgba(60, 220, 255, 0.7); }
+  16%  { opacity: 0.2; transform: translate(4px, -2px) scale(1.04); text-shadow: none; }
+  26%  { opacity: 1; transform: translate(-2px, -3px) scale(1.01);
+         text-shadow: -4px 0 0 rgba(255, 40, 60, 0.8), 4px 0 0 rgba(60, 220, 255, 0.7); }
+  36%  { opacity: 0.35; transform: translate(3px, 2px) scale(1); text-shadow: none; }
+  50%  { opacity: 1; transform: translate(-1px, 1px) scale(1);
+         text-shadow: 2px 0 0 rgba(255, 40, 60, 0.6), -2px 0 0 rgba(60, 220, 255, 0.5); }
+  70%  { opacity: 1; transform: translate(0, 0) scale(1);
+         text-shadow: 1px 0 0 rgba(255, 40, 60, 0.4), -1px 0 0 rgba(60, 220, 255, 0.35); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1);
+         text-shadow: 0 0 30px rgba(120, 180, 255, 0.45),
+                      1px 0 0 rgba(255, 40, 60, 0.22), -1px 0 0 rgba(60, 220, 255, 0.18); }
+}
+
+@keyframes intro-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* --- Reduced motion: keep the narrative + title, drop the motion. The stage cuts
+   in instantly, the pod surge is a static reveal (no flicker), subtitles + title
+   appear without sliding/glitching. intro.ts also compresses the JS timeline. --- */
+#intro.reduced-motion,
+#intro.reduced-motion #intro-stage,
+#intro.reduced-motion #intro-pod-on {
+  transition: none;
+}
+
+#intro.reduced-motion #intro-subtitle.show {
+  animation: intro-fade-in 0.4s ease-out forwards;
+}
+
+#intro.reduced-motion .intro-title.show .intro-word-escape,
+#intro.reduced-motion .intro-title.show .intro-word-ai {
+  animation: none;
+}
+
+#intro.reduced-motion .intro-title.show .intro-word-ai {
+  opacity: 1;
+  text-shadow: 0 0 30px rgba(120, 180, 255, 0.45);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #intro,
+  #intro-stage,
+  #intro-pod-on {
+    transition: none;
+  }
+  #intro-subtitle.show {
+    animation: intro-fade-in 0.4s ease-out forwards;
+  }
+  .intro-title.show .intro-word-escape,
+  .intro-title.show .intro-word-ai {
+    animation: none;
+  }
+  .intro-title.show .intro-word-ai {
+    opacity: 1;
+    text-shadow: 0 0 30px rgba(120, 180, 255, 0.45);
+  }
+  #intro-skip.show {
+    animation: intro-fade-in 0.8s ease-out forwards;
+  }
+}
+
 /* --- In-game help (toggle H or ?). Tabbed. Hidden until `.open`. --- */
 #help-overlay {
   position: fixed;

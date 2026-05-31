@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.117: **Cinematic new-character intro — Phase 3: the `intro.ts` module + CSS.** New self-contained,
+  renderer-agnostic DOM/CSS overlay (mirrors the splash/login pattern in menu.ts) implementing the full
+  "ESCAPE AI" transfer-pod cinematic: black + electrical hum → the empty chamber (`transfer-pod-off.png`)
+  slowly fades in → four narrative subtitles reveal one at a time → the pods flicker on↔off
+  (`transfer-pod-on.png`, a human + a kangaroo mid-transfer) with a spark crack on each power-on → fade
+  to black → the lone glitching "ESCAPE AI" title → resolve. `client/src/intro.ts` exports
+  `preloadIntroAssets()` (warms the two ~2.7MB PNGs via `img.decode()`, fire-and-forget),
+  `isIntroActive()` (lets main.ts keep music silent while the overlay is up), and `playIntro()` (plays the
+  sequence; resolves on natural finish OR skip; **never rejects** so it can't block the join). Robustness:
+  the macro timeline is JS-scheduled (cancellable mid-sequence, unlike CSS-delay choreography) with a
+  single `settled`-guarded `finish()` that clears every pending timer, removes the skip listeners, stops
+  the `intro_power` loop, and tears down the overlay — natural-finish and skip share it, plus a
+  hard-ceiling safety timer. It is **time-driven, not load-driven**, so a 404/slow decode can never hang
+  it. Skip is armed only once the first subtitle shows ("Press any key to skip"). The pod flicker toggles
+  two stacked pre-decoded `<img>`s by class (never reassigns `src` on a 2.7MB PNG → no re-decode hitch).
+  `prefers-reduced-motion` is honored — motion is removed (instant cuts, no flicker, no glitch) but the
+  narrative + title still show; the JS timeline compresses too. The title reuses the splash's
+  cyan-ESCAPE / chromatic-glitch-AI language with intro-scoped class names. New `#intro` block (z-index
+  60, above splash/login/HUD/game) + a `@media (prefers-reduced-motion: reduce)` override in style.css.
+  Not yet wired into the join flow — that's Phase 4. Build clean (strict TS, Vite bundle OK; PNGs copied
+  to `dist/images/`). Touched `client/src/intro.ts` (new), `client/src/style.css`.
+
 - 0.2.116: **Cinematic new-character intro — Phase 2: surface the new-vs-returning signal.** `runMenu`'s
   `MenuResult` (`client/src/menu.ts`) gains a non-optional `isNewCharacter: boolean`, set at the single
   `finish()` call from the same `AuthResult.resumed` the species handoff already keys off of
