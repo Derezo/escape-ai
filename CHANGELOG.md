@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.142: **Terminals — server activation lock + 15s auto-deactivate.** Keeper terminals
+  now carry a shared activation lock on the world entity (`activatedBy` + `activatedTick`)
+  set when a player taps one. The lock blocks OTHER players from counting/ordering at that
+  terminal and auto-releases `TERMINAL.DEACTIVATE_SECS` (15s) later via the per-tick
+  `world.pruneExpired` sweep — freeing it for the next player **without** touching anyone's
+  per-player quest tally (`player.questTerminals` stays the permanent quest source of truth).
+  The owner's current activate-step terminal ids ride their own entity as
+  `quest.activatedIds` (transient, advisory, non-empty only) so the client hint can skip
+  terminals already tapped. New shared field `QuestProgress.activatedIds?`; no
+  `WORLD_GEN_VERSION` bump (no world-gen/collision change). The terminal scan is now a single
+  source of truth (`quests.nearestTerminal` + `quests.isTerminalLockedByOther`), reused by
+  the `stealth.applyAction` 'interact' branch (dead `nearTerminal` helper removed). Touched
+  `server/config.js`, `server/game/{quests,stealth,world,engine}.js`, `shared/src/types.ts`.
+
 - 0.2.141: **Quest hint arrow — center triangle on route point and keep glow concentric
   with fill.** The arrow vertices were not symmetric about the local origin (tip at +s,
   base at -0.6s), so Phaser's `setOrigin(0.5)` anchored the pivot at the bounding-box

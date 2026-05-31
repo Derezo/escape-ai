@@ -110,6 +110,15 @@ export interface QuestProgress {
    * species path; 2-3 for the redesigned ones. JSON-serializable.
    */
   steps: QuestStepProgress[];
+  /**
+   * The CURRENT 'activate'-step terminal ids this player has already counted (the
+   * owner's per-step distinct-terminal tally). Forwarded ONLY on the owner's own
+   * entity, and ONLY while non-empty, so the client quest hint can skip terminals
+   * already tapped and route to the next free one. Transient + advisory (it never
+   * gates the escape — `complete` does) and absent on non-activate steps, so it
+   * stays out of the determinism/parity contract. JSON-serializable.
+   */
+  activatedIds?: string[];
 }
 
 /** One step of a multi-step quest, as it rides the snapshot (plain JSON). */

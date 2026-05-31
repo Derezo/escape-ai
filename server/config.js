@@ -161,6 +161,17 @@ module.exports = {
     COOLDOWN_SECS: parseFloat(process.env.ABILITY_COOLDOWN_SECS) || 4
   },
 
+  // Keeper terminals (the 'activate'/'order' quest targets). A terminal carries a
+  // shared activation lock (terminal.activatedBy + activatedTick) that everyone
+  // sees (drives the client LED) and that blocks OTHER players from counting it.
+  // The lock auto-clears DEACTIVATE_SECS after activation so a terminal frees up
+  // for the next player — WITHOUT touching anyone's per-player quest tally.
+  TERMINAL: {
+    // Seconds a terminal stays locked to its activator before the per-tick sweep
+    // (world.pruneExpired) releases it. Converted to ticks server-side.
+    DEACTIVATE_SECS: parseFloat(process.env.TERMINAL_DEACTIVATE_SECS) || 15
+  },
+
   // Animal collection (food / follow / steal / score). Feeding an animal its
   // liked food recruits it as a follower that trails you to the gate. All timing
   // is in seconds here and converted to ticks server-side (deterministic).

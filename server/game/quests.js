@@ -38,6 +38,7 @@ const config = require('../config');
 const world = require('./world');
 const follow = require('./follow');
 const { bumpStat } = require('./stats-delta');
+const { secsToTicks } = require('./room-utils');
 
 // Reach radius for the 'reach' step: a generous brush of the species' questObject
 // tile counts as "home". RECT_SIZE * 1.5 mirrors the gate's escape reach so
@@ -338,7 +339,9 @@ function onAbility(player) {
 // --- activate (distinct terminals) ------------------------------------------
 
 /** True if the player is within RECT_SIZE of any terminal; returns the nearest
- *  terminal entity (or null) so 'activate' can count it by id. */
+ *  terminal entity (or null) so 'activate' can count it by id. The SINGLE source
+ *  of truth for the terminal scan — stealth.js's 'interact' branch reuses this
+ *  (via the exported alias) rather than re-walking the entity list. */
 function nearestTerminal(player, roomName) {
   const r2 = config.RECT_SIZE * config.RECT_SIZE;
   let nearest = null;
@@ -355,26 +358,60 @@ function nearestTerminal(player, roomName) {
 }
 
 /**
+ * True if `term`'s shared activation lock is currently held by SOMEONE ELSE (not
+ * `player`) and still within the DEACTIVATE_SECS window. Such a terminal is
+ * unavailable to `player` this interact — no quest count, no terminal-driven robot
+ * order. A free terminal, an expired lock, or the player's OWN lock all return
+ * false (own re-tap stays a harmless no-op, idempotent via questTerminals.has).
+ * Pure read of the world entity; never mutates. Centralizes the lock math so the
+ * stealth 'interact' guard and onInteract agree.
+ * @param {object} term         a kind:'terminal' world entity (or null)
+ * @param {object} player       the acting player
+ * @param {number} currentTick
+ * @returns {boolean}
+ */
+function isTerminalLockedByOther(term, player, currentTick) {
+  if (!term || !term.activatedBy) return false;
+  if (term.activatedBy === player.id) return false; // my own lock — not blocked
+  const expiresAt = (term.activatedTick || 0) + secsToTicks(config.TERMINAL.DEACTIVATE_SECS);
+  return expiresAt > currentTick; // still within the lock window
+}
+
+/**
  * 'activate' advance, fired from applyAction's 'interact' branch: if the CURRENT
  * step is an 'activate' and the player is near a terminal it hasn't tapped before,
  * count that DISTINCT terminal toward the step's need. The distinct-terminal Set
  * is reset per activate step (in bumpCurrent on entry + in resetSteps), so a
  * multi-step quest revisiting terminals starts each activate step's tally fresh.
- * No-op for non-activate steps or repeat taps of the same terminal.
+ * No-op for non-activate steps or repeat taps of the same terminal. A terminal
+ * currently locked by ANOTHER player (within DEACTIVATE_SECS) is unavailable — no
+ * count. On a real new count it STAMPS the shared world-entity lock
+ * (term.activatedBy/activatedTick) so everyone sees it and other players are
+ * blocked until the 15s sweep (world.pruneExpired) clears it. The lock is the
+ * VISUAL/CONTENTION lock only — it never touches the per-player questTerminals
+ * tally (the permanent quest source of truth).
  * @param {object} player
  * @param {string} roomName
+ * @param {number} currentTick
  * @returns {boolean} true if progress was made this call (a new terminal counted)
  */
-function onInteract(player, roomName) {
+function onInteract(player, roomName, currentTick) {
   const quest = player.quest;
   if (!quest || quest.complete) return false;
   const step = currentStep(quest);
   if (!step || step.kind !== 'activate') return false;
   const term = nearestTerminal(player, roomName);
   if (!term) return false;
+  // Locked by another player within the 15s window → unavailable to me this tap.
+  if (isTerminalLockedByOther(term, player, currentTick)) return false;
   if (!player.questTerminals) player.questTerminals = new Set();
   if (player.questTerminals.has(term.id)) return false; // already counted
   player.questTerminals.add(term.id);
+  // Stamp the SHARED world-entity lock (drives the LED + blocks others). This is
+  // a property of the world entity, NOT the player tally — the 15s auto-deactivate
+  // clears ONLY these fields and leaves questTerminals untouched.
+  term.activatedBy = player.id;
+  term.activatedTick = currentTick;
   // done is the distinct-terminal count, capped at need. Drive the step to exactly
   // that value (rather than +1) so the Set is always the source of truth.
   const target = Math.min(step.need, player.questTerminals.size);
@@ -398,4 +435,8 @@ module.exports = {
   onOrder,
   onAbility,
   onInteract,
+  // terminal scan + lock helpers (single source of truth; stealth.js reuses them
+  // in the 'interact' branch so the scan isn't duplicated).
+  nearestTerminal,
+  isTerminalLockedByOther,
 };

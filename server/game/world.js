@@ -507,9 +507,22 @@ function addWorldEntity(roomName, entity) {
 }
 
 /**
- * Remove every world entity in a room whose `expireTick` has passed. Called each
- * tick from the engine so temporary effects (hazards, decoys) clean themselves up
- * and stop riding the snapshot. Returns the number removed.
+ * Per-tick world maintenance. Two jobs, both run from the same engine hook
+ * (stepNpcs) so transient state is reconciled before anyone perceives it:
+ *
+ *   1. Remove every world entity whose `expireTick` has passed (skunk hazards, fox
+ *      decoys) so temporary effects clean themselves up and stop riding the snapshot.
+ *   2. Release any keeper-terminal activation lock (terminal.activatedBy /
+ *      activatedTick) older than TERMINAL.DEACTIVATE_SECS, freeing it for the next
+ *      player and flipping its client LED back to "off". This clears ONLY the shared
+ *      world-entity lock fields — it NEVER touches any player's questTerminals tally,
+ *      so no one's quest progress changes when a terminal auto-deactivates.
+ *
+ * config + secsToTicks are required LAZILY here (world.js keeps zero top-level
+ * requires to stay a clean leaf module that the orchestrators all import); Node
+ * caches the modules so this is a cache hit, not a per-tick reload.
+ *
+ * Returns the number of expired entities removed.
  * @param {string} roomName
  * @param {number} currentTick
  * @returns {number}
@@ -517,11 +530,22 @@ function addWorldEntity(roomName, entity) {
 function pruneExpired(roomName, currentTick) {
   const rw = roomWorlds.get(roomName);
   if (!rw) return 0;
+  const config = require('../config');
+  const { secsToTicks } = require('./room-utils');
+  const lockTicks = secsToTicks(config.TERMINAL.DEACTIVATE_SECS);
   let removed = 0;
   for (const [id, e] of rw.entities) {
     if (typeof e.expireTick === 'number' && e.expireTick <= currentTick) {
       rw.entities.delete(id);
       removed++;
+      continue;
+    }
+    // Auto-deactivate an expired terminal lock (visual/contention lock only — the
+    // per-player quest tally is intentionally NOT referenced here).
+    if (e.kind === 'terminal' && e.activatedBy &&
+        (e.activatedTick || 0) + lockTicks <= currentTick) {
+      e.activatedBy = null;
+      e.activatedTick = 0;
     }
   }
   return removed;

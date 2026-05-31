@@ -1186,9 +1186,17 @@ function applyAction(player, action, roomName, currentTick) {
       // Interacting near a terminal acts like a Second-Law order to the nearest
       // robot (a terminal command stands a patrol down), and advances an 'activate'
       // quest (elephant/peacock/parrot) by counting each DISTINCT terminal tapped.
-      if (nearTerminal(player, roomName)) {
-        orderNearestRobot(player, roomName, currentTick);
-        quests.onInteract(player, roomName);
+      // A terminal currently green-locked by ANOTHER player (within the 15s window)
+      // is unavailable: skip BOTH the robot order and the quest count this tap. Reuse
+      // quests.nearestTerminal as the single terminal-scan source of truth (no dupe
+      // loop), and quests.isTerminalLockedByOther for the lock math; tapping your OWN
+      // still-locked terminal stays a harmless no-op (questTerminals.has idempotency).
+      {
+        const term = quests.nearestTerminal(player, roomName);
+        if (term && !quests.isTerminalLockedByOther(term, player, currentTick)) {
+          orderNearestRobot(player, roomName, currentTick);
+          quests.onInteract(player, roomName, currentTick);
+        }
       }
       break;
     case 'feed':
@@ -1614,15 +1622,6 @@ function unitFromFacing(facing) {
  */
 function clampWorld(v) {
   return Math.max(0, Math.min(config.WORLD_MAX, v));
-}
-
-/** True if the player is within RECT_SIZE of any terminal in its room. */
-function nearTerminal(player, roomName) {
-  const r2 = config.RECT_SIZE * config.RECT_SIZE;
-  for (const e of world.getWorldEntities(roomName)) {
-    if (e.kind === 'terminal' && shared.dist2(player, e) <= r2) return true;
-  }
-  return false;
 }
 
 /**

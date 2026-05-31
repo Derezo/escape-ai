@@ -299,7 +299,14 @@ function toEntity(player) {
   // questBlocked is the last tick this player brushed the gate WITHOUT a complete
   // quest, so the client can flash a "finish your quest" hint near the gate.
   if (player.quest) {
-    entity.quest = player.quest;
+    // Forward the CURRENT activate-step's counted terminal ids so the client hint
+    // can skip terminals this player already tapped. Spread into a FRESH object so
+    // we never mutate the live player.quest (which would leak into the delta-diff
+    // stringify / parity). Only attach activatedIds when non-empty, to keep deltas
+    // small and avoid sending an empty array on non-activate steps.
+    entity.quest = player.questTerminals && player.questTerminals.size
+      ? { ...player.quest, activatedIds: [...player.questTerminals] }
+      : player.quest;
     if (player.questBlocked) entity.questBlocked = player.questBlocked;
   }
   // Animal collection: the player's food bag rides its OWN entity so the client
