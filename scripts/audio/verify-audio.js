@@ -4,7 +4,7 @@
 /**
  * Audio drift verifier  (TINS 2026 — Escape AI)
  *
- * The primary headless gate for the audio asset pipeline. Five checks:
+ * The primary headless gate for the audio asset pipeline. Six checks:
  *
  *   1. KEY COVERAGE (both directions): every manifest sfx/music key appears in the
  *      generated maps; no orphan keys in the generated maps that aren't in the
@@ -27,6 +27,11 @@
  *   5. FALLBACK INTEGRITY: every SFX_FALLBACK value points at an existing file
  *      under assets/ (strip './', resolve to repo root). FAIL if any missing.
  *
+ *   6. GIT-TRACKING INTEGRITY: every manifest render (sfx/music/voice output) that
+ *      EXISTS on disk must be git-tracked — an untracked render passes checks 4/5
+ *      green but a clean clone / CI / APK ships its fallback WAV instead. Skipped
+ *      (WARN) outside a git repo. FAIL on any present-but-untracked render.
+ *
  * Exit code is non-zero on any FAIL. WARNs are informational and do not fail.
  *
  * Usage:
@@ -38,6 +43,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 
 const { render, SYNTH_ONLY_KEYS, MANIFEST_PATH, OUT_PATH } = require('./gen-bindings');
 
@@ -59,6 +65,7 @@ if (process.argv.includes('--help') || process.argv.includes('-h')) {
     '  3. Drift gate (render(manifest) === on-disk generated file)',
     '  4. Asset existence with tolerance (SFX placeholder fallback, music warned)',
     '  5. Fallback WAV integrity (every SFX_FALLBACK value exists on disk)',
+    '  6. Git-tracking integrity (on-disk manifest renders must be committed)',
   ].join('\n'));
   process.exit(0);
 }
@@ -308,6 +315,59 @@ function checkFallbackIntegrity() {
 }
 
 // ---------------------------------------------------------------------------
+// Check 6: Git-tracking integrity
+// ---------------------------------------------------------------------------
+//
+// Checks 4/5 only stat the working tree, so a generated render that exists on
+// disk but was never `git add`ed passes them green — yet a clean clone / CI /
+// Capacitor bundle ships only committed files, so that render 404s and silently
+// degrades to its WAV fallback. This check closes that blind spot: every manifest
+// output (sfx/music/voice) that EXISTS on disk must also be git-tracked.
+//
+// Scope is deliberately the manifest's own outputs — an on-disk file no longer in
+// the manifest (e.g. a deprecated render kept around) is none of this gate's
+// business. Absent renders are fine here too (Check 4 already WARNs; the fallback
+// covers them) — we only assert that what's present is committed.
+function checkGitTracking() {
+  // Collect every manifest output path that exists on disk, repo-relative.
+  const outputs = [...sfxEntries, ...musicEntries, ...voiceEntries]
+    .map((e) => e.output)
+    .filter((rel) => fs.existsSync(path.join(REPO_ROOT, rel)));
+
+  if (outputs.length === 0) {
+    console.log('OK (git tracking): no manifest renders on disk to check.');
+    return;
+  }
+
+  // One `git ls-files` call returns the subset of those paths that ARE tracked;
+  // anything present-on-disk but absent from that set is the untracked-render bug.
+  let trackedSet;
+  try {
+    const out = execFileSync('git', ['ls-files', '-z', '--', ...outputs], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+    trackedSet = new Set(out.split('\0').filter(Boolean));
+  } catch (e) {
+    // Not a git repo (e.g. a source tarball) — can't assert tracking; don't fail.
+    warn(`git tracking check skipped (git unavailable: ${e.message.split('\n')[0]}).`);
+    return;
+  }
+
+  let untracked = 0;
+  for (const rel of outputs) {
+    if (!trackedSet.has(rel)) {
+      fail(`generated render '${rel}' exists on disk but is UNTRACKED in git — a clean clone / CI / APK ships its fallback WAV instead. Run: git add ${rel}`);
+      untracked++;
+    }
+  }
+
+  if (untracked === 0) {
+    console.log(`OK (git tracking): all ${outputs.length} on-disk manifest renders are committed.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 async function main() {
@@ -316,6 +376,7 @@ async function main() {
   checkDrift();
   checkAssetExistence();
   checkFallbackIntegrity();
+  checkGitTracking();
 
   if (process.exitCode) {
     console.error(`\nAudio verification FAILED.`);

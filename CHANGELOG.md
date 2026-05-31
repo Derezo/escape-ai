@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.135: **Audio audit — verify-audio.js git-tracking gate (Check 6).** The drift gate's
+  asset-existence checks only stat the working tree, so a generated render present on disk but never
+  `git add`ed passed green — yet a clean clone / CI / APK ships only committed files and 404s to the
+  fallback WAV (exactly the bug 0.2.133 cleaned up). New Check 6 runs `git ls-files` over every
+  manifest output (sfx/music/voice) that exists on disk and FAILs on any present-but-untracked render
+  with an actionable `git add` message; it's skipped with a WARN outside a git repo (source tarballs).
+  Verified both ways: green with everything committed (34 on-disk renders), and FAIL + exit 1 when a
+  render is made present-but-untracked. Touched `scripts/audio/verify-audio.js`.
+
 - 0.2.134: **Audio audit — wire dead cues + fix lockdown loop, drop redundant ambient SFX.**
   Follow-up to the audit's usage findings. (1) `lockdown_alarm` is declared `soundLoop:true` but
   was played one-shot — switched to `startLoop('lockdown_alarm')` on the seal edge / `stopLoop` on
