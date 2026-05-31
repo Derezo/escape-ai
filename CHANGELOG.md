@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.156: **NPC anti-bounce, Phase 5 — validation polish.** `/plan-validation-and-review`
+  passed clean (all 7 requirements implemented + traced, every new symbol connected, 0
+  dead/duplicate code, 0 comprehension findings, server 12 + shared 99 tests green,
+  client build green, 0 npm vulnerabilities). Applied the one non-blocking note: the
+  contained-wander target picker (`pickContainedTarget`) now avalanche-mixes the FNV-1a
+  hash with `0x9e3779b1` BEFORE the `% cells.length` (mirroring `wanderVec`), removing the
+  raw-hash low-bit bias so pen animals + guards spread their saunter targets evenly across
+  the interior. Still fully deterministic (same id:bucket → same tile on every server).
+
 - 0.2.155: **NPC anti-bounce, Phase 3 — robots stop bouncing at walls.** Extends the
   smoother to the three robot movement paths that could flip facing tick-to-tick at a
   wall. (1) `movement.patrolStep` gains an opt-in `smooth` box: when the caller passes

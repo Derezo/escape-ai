@@ -1013,7 +1013,12 @@ function pickContainedTarget(cacheKey, bounds, entity, rm, currentTick) {
   const cells = interiorFreeCells(cacheKey, bounds, rm);
   if (cells.length === 0) return null;
   const bucket = Math.floor(currentTick / config.PATHFIND.PEN_TARGET_TICKS);
-  const ord = shared.hash32(`${entity.id}:${bucket}`) % cells.length;
+  // Avalanche-mix the hash before the modulo (mirrors wanderVec in step.ts): a raw
+  // FNV-1a hash has mild low-bit bias, so `% cells.length` over a small pool would
+  // favor some interior tiles; the 0x9e3779b1 mix spreads the pick evenly. Still fully
+  // deterministic — same (id, bucket) → same tile on every server.
+  const mixed = (Math.imul(shared.hash32(`${entity.id}:${bucket}`), 0x9e3779b1) >>> 0);
+  const ord = mixed % cells.length;
   return cells[ord];
 }
 
