@@ -4,6 +4,13 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.116: **Cinematic new-character intro — Phase 2: surface the new-vs-returning signal.** `runMenu`'s
+  `MenuResult` (`client/src/menu.ts`) gains a non-optional `isNewCharacter: boolean`, set at the single
+  `finish()` call from the same `AuthResult.resumed` the species handoff already keys off of
+  (`isNewCharacter = !msg.resumed`). This is the gate main.ts will use to play the intro for brand-new
+  characters only — a returning player resuming an in-progress run skips it. One-field, one-call change;
+  client typechecks clean. Touched `client/src/menu.ts`.
+
 - 0.2.115: **Cinematic new-character intro — Phase 1: intro audio assets.** Groundwork for the first-run
   "ESCAPE AI" transfer-pod cinematic: two new SFX in the audio single-source-of-truth
   (`asset-pipeline/manifest.json`) — `intro_power` (a looping low electrical power-up hum for the dormant

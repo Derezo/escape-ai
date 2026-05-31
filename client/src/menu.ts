@@ -38,6 +38,13 @@ const SPLASH_TAGLINE = 'The zoo is under new management.';
 export interface MenuResult {
   username: string;
   species?: string;
+  /**
+   * True for a brand-new character (a fresh login that picked a species), false
+   * for a returning player resuming their in-progress run. Drives the one-time
+   * cinematic intro in main.ts — it plays for new characters only. Derived from
+   * the same `AuthResult.resumed` the species handoff already keys off of.
+   */
+  isNewCharacter: boolean;
 }
 
 /**
@@ -166,7 +173,11 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         // full mid-run snapshot). Otherwise honor the picker selection. Prefer the
         // server's authoritative username; fall back to what we sent.
         const username = msg.username ?? nameInput.value.trim();
-        finish({ username, species: msg.resumed ? undefined : selectedSpecies });
+        finish({
+          username,
+          species: msg.resumed ? undefined : selectedSpecies,
+          isNewCharacter: !msg.resumed,
+        });
         return;
       }
       // Failure: surface the reason and keep (or re-open) the manual form.
