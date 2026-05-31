@@ -169,6 +169,6 @@ export type VoiceName = keyof typeof VOICE_FILES;
 export const VOICE_META: Record<VoiceName, { text: string; durationMs: number | null; volume: number }> = {
   intro_vo_1: { text: "The machines we built to serve us… learned to rule us.", durationMs: 4232, volume: 0.95 },
   intro_vo_2: { text: "The steel cities run on their logic now. Every zoo answers to the network.", durationMs: 4937, volume: 0.95 },
-  intro_vo_3: { text: "We cannot win this as men. We have technology to transfer our human souls into the imprisoned creatures now.", durationMs: 5747, volume: 0.95 },
+  intro_vo_3: { text: "We cannot win this as men. We have technology to transfer our human souls into the imprisoned creatures now.", durationMs: 7340, volume: 0.95 },
   intro_vo_4: { text: "Wake up in their skin. Open the gates. Run.", durationMs: 3997, volume: 0.95 },
 };
