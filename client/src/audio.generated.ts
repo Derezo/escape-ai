@@ -29,6 +29,8 @@ export const SFX_FILES = {
   hit: './sfx/hit.mp3',
   error: './sfx/error.mp3',
   confirm: './sfx/confirm.mp3',
+  intro_power: './sfx/intro_power.mp3',
+  intro_spark: './sfx/intro_spark.mp3',
   blip: './sfx/blip.wav',
   select: './sfx/select.wav',
   pickup: './sfx/pickup.wav',
@@ -64,6 +66,8 @@ export const SFX_FALLBACK: Partial<Record<SfxName, string>> = {
   hit: './sfx/hit.wav',
   error: './sfx/error.wav',
   confirm: './sfx/confirm.wav',
+  intro_power: './sfx/electric_hum.wav',
+  intro_spark: './sfx/electric_spark.wav',
 };
 
 /**
@@ -88,6 +92,8 @@ export const SFX_VOLUME: Record<SfxName, number> = {
   hit: 0.8,
   error: 0.7,
   confirm: 0.7,
+  intro_power: 0.45,
+  intro_spark: 0.6,
   blip: 0.6,
   select: 0.6,
   pickup: 0.6,

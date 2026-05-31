@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.115: **Cinematic new-character intro — Phase 1: intro audio assets.** Groundwork for the first-run
+  "ESCAPE AI" transfer-pod cinematic: two new SFX in the audio single-source-of-truth
+  (`asset-pipeline/manifest.json`) — `intro_power` (a looping low electrical power-up hum for the dormant
+  transfer chamber) and `intro_spark` (a one-shot high-voltage arc crack fired on each pod consciousness-
+  transfer flip). Both follow the established placeholder contract: `scripts/gen-placeholder-sfx.js` gains
+  two zero-dependency synth WAVs (`electric_hum`, `electric_spark` — harsh rising/zapping sawtooth, the
+  closest the hand-written-WAV synth gets to "electrical") that back the manifest `placeholder` field, so
+  the feature is fully functional on a clean clone with no credit spend; the real Suno MP3s are a free
+  user-run upgrade later (`generate-sfx.py --key=intro_power|intro_spark`). Regenerated
+  `client/src/audio.generated.ts` via `npm run audio` (28 SFX keys now); drift gate green, fallback
+  integrity OK, the two un-generated MP3s WARN-only with active fallbacks. Also commits the two source
+  pod renders (`assets/images/transfer-pod-{off,on}.png`) the cinematic fades between. Touched
+  `scripts/gen-placeholder-sfx.js`, `asset-pipeline/manifest.json`, `client/src/audio.generated.ts`.
+
 - 0.2.114: **Join-lag: a late joiner now gets the full world immediately, not after ~5s.** The room
   snapshot broadcast is a delta keyed by the room's shared `lastSentByRoom` memory; static props
   (pens, food, gate, robots, idle animals) only ride a FULL refresh (`currentTick % 100 === 0`, every

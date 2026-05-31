@@ -79,6 +79,12 @@ const SFX = [
   { name: 'thud', wave: 'square', freq: 140, ms: 160, sweep: 60 }, // heavy impact down
   { name: 'sparkle2', wave: 'triangle', freq: 1175, ms: 220, sweep: 1568 }, // soft chime up
   { name: 'dazzle', wave: 'sine', freq: 660, ms: 260, sweep: 1760 }, // bright flourish up
+  // Cinematic intro placeholders (Escape AI new-character sequence). No noise
+  // primitive exists, so harsh sawtooth approximates "electrical": a low rising
+  // power-up drone for the dormant-chamber hum, a fast high zap for each pod flip.
+  // These are FALLBACKS — the real texture comes from user-run Suno MP3s later.
+  { name: 'electric_hum', wave: 'sawtooth', freq: 70, ms: 900, sweep: 110 }, // low building drone
+  { name: 'electric_spark', wave: 'sawtooth', freq: 1600, ms: 140, sweep: 320 }, // sharp arc zap down
 ];
 
 // --- oscillators ------------------------------------------------------------

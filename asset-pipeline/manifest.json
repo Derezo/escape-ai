@@ -291,6 +291,28 @@
       "placeholder": "confirm",
       "defaultVolume": 0.7,
       "descriptor": "a clean positive confirmation, two cool rising synthetic tones, action accepted"
+    },
+
+    {
+      "key": "intro_power",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:intro-power",
+      "output": "assets/sfx/intro_power.mp3",
+      "placeholder": "electric_hum",
+      "soundLoop": true,
+      "defaultVolume": 0.45,
+      "descriptor": "a low ominous electrical power-up hum with intermittent crackle and arcing, building voltage in a dormant steampunk transfer chamber"
+    },
+    {
+      "key": "intro_spark",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:intro-spark",
+      "output": "assets/sfx/intro_spark.mp3",
+      "placeholder": "electric_spark",
+      "defaultVolume": 0.6,
+      "descriptor": "a sharp electrical spark crack, a high-voltage arc snapping between conduits as the consciousness transfer fires"
     }
   ]
 }
