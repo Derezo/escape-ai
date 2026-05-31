@@ -213,6 +213,12 @@ export interface Entity {
   /** For a `returningHome` animal: world-unit center of its home enclosure to drift toward. */
   homeX?: number;
   homeY?: number;
+  /** For an `animal` being hauled home by a robot: that robot's id (set on capture,
+   *  cleared on release). While set the NPC is inert to idle drift + invisible to other
+   *  robots. ALSO set on the ROBOT as the captured NPC's id (single-writer: behaviors.js). */
+  capturedBy?: string;
+  /** For a captured NPC / its hauling robot: the species key used to look up the destination pen. */
+  captureSpecies?: string;
 
   [key: string]: unknown;
 }

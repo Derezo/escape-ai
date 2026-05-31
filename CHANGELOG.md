@@ -4,6 +4,30 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.106: **Robot NPC-capture PLUMBING (not yet triggerable — Phase 3 wires it).** Lays the
+  groundwork for keeper-robots that CAPTURE a loose non-player animal (or a player's
+  follower — a robot "steal"), haul it pinned to their body back to that species' pen via
+  A* through the gate, release it inside, and resume patrol. THIS change is plumbing only:
+  no trigger or per-robot dispatch yet, so the new path is defined + exported but never
+  called — the server boots unchanged. (1) `behaviors.speedFor()` gains a `case 'return':`
+  at `config.ROBOT_SPEED` — the same panic-charge base as a chaser, keeping the `* lockMult
+  * speedBoost` tail so a returning robot also gets the lockdown multiplier + boost. (2) New
+  exported `behaviors.stepRobotReturn(robot, npc, ctx)`: each tick it RELEASES (clears both
+  sides' `capturedBy`/`captureSpecies`, rejoins patrol at the nearest waypoint) when the
+  species has no home (`penBounds`/`penGoalTile` missing) or when the NPC is already inside
+  the pen interior (`pathfind.inBounds`); otherwise it `moveTowardPoint`s toward the
+  gate-inside goal tile's center and PINS the NPC onto the robot (after the robot moves, so
+  the NPC rides along). It reuses stealth's existing `idleCtx` plus two added fields
+  (`penBounds`, `penGoalTile`) — documented in the function header so Phase 3 supplies them.
+  (3) `stealth.gatherAnimals` now SKIPS any animal with `capturedBy` set (a hauled NPC is
+  off the board — no other robot freezes on or re-targets it) and `stealth.stepIdleAnimals`
+  skips its idle drift (the hauling robot owns its position). (4) `shared/src/types.ts` adds
+  two typed optional `Entity` fields — `capturedBy?: string` and `captureSpecies?: string` —
+  documentation/safety only; they ride the existing index signature, so **no `net.ts`
+  change** and no `WORLD_GEN_VERSION` bump. Determinism preserved (integer-tick checks +
+  shared math only; no `Math.random`/`Date.now`). shared builds clean, 90/90 shared tests
+  green, server boots cleanly.
+
 - 0.2.105: **Fix: den species (skunk/mole/fox) spawned STUCK in their pen.** The `den`
   enclosure stamp in `shared/src/world.ts` walled the spawn-center `BURROW_MOUND` on three
   sides with solid `ROCKY_DEN_WALL` tiles (W, E, N), leaving a 1-tile south-only pocket.

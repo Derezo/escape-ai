@@ -62,6 +62,9 @@ function speedFor(robot, lockdown, currentTick) {
   let base;
   switch (robot.behavior) {
     case 'pursue': base = config.ROBOT_SPEED; break;
+    // 'return': hauling a captured NPC home — a panic charge at the SAME base as a
+    // chaser (ROBOT_SPEED), so it also benefits from the lockdown mult + boost tail.
+    case 'return': base = config.ROBOT_SPEED; break;
     case 'investigate': base = config.INVESTIGATE.SPEED; break;
     default: base = config.PATROL_SPEED; break; // patrol (and any unset state)
   }
@@ -298,10 +301,92 @@ function stepRobotIdle(robot, animals, ctx) {
   robot.facing = shared.facingFromVec(res.dirX, res.dirY, robot.facing || 's');
 }
 
+/**
+ * The robot's RETURN movement for this tick — a robot that has CAPTURED a non-player
+ * animal hauls it (pinned to its body) back to that species' pen, routing A* around
+ * walls / through the gate, then RELEASES it inside the enclosure and rejoins patrol.
+ * Called from stealth.stepRobots when `robot.behavior === 'return'` (Phase 3 wires the
+ * capture TRIGGER + this dispatch; Phase 2 only defines the plumbing). Single-writer
+ * here for the robot's behavior/patrolIndex AND both sides' capture fields on release.
+ *
+ * The capture link is symmetric: `robot.capturedBy` is the NPC's id (what the robot is
+ * hauling) and the NPC's `capturedBy` is the robot's id (who's hauling it). The NPC is
+ * inert to every other system while captured (gatherAnimals hides it, stepIdleAnimals
+ * skips its drift) — this function owns its position by pinning it onto the robot.
+ *
+ * ctx FIELDS READ (Phase 3 assembles these — it reuses stealth's existing idleCtx and
+ * adds `penBounds` + `penGoalTile`):
+ *   rm              the room map ({ tile, collision, w, h }) — tile→world + collision
+ *   worldEntities   the room's world props (hazard veto in moveTowardPoint)
+ *   lockdown        room lockdown flag (folds the speed multiplier into speedFor)
+ *   currentTick     integer tick (speedFor boost phase + path repath cadence)
+ *   dt              seconds this tick (movement integration)
+ *   entersHazard    (nx,ny,worldEntities)→bool Third-Law veto, passed to moveTowardPoint
+ *   scratch         the room's reusable A* scratch (moveTowardPoint → followPathToGoal)
+ *   followPathToGoal the shared cached-path helper (moveTowardPoint routing)
+ *   clearPath       (entity)→void clears the robot's cached A* path on release
+ *   penBounds       {minX,minY,maxX,maxY} the destination pen's INTERIOR rect (arrival)
+ *   penGoalTile     {tx,ty} the gate-INSIDE goal tile to route to (tile coords)
+ *   route           the room's patrol loop (for resume at nearest waypoint on release)
+ *
+ * @param {object} robot  mutated in place (the hauler)
+ * @param {object} npc    the captured animal, mutated in place (pinned to the robot)
+ * @param {object} ctx    see above
+ */
+function stepRobotReturn(robot, npc, ctx) {
+  const { rm, worldEntities, lockdown, currentTick, dt, entersHazard, penBounds, penGoalTile, route } = ctx;
+
+  // Clear both sides' capture link + rejoin patrol at the nearest waypoint. One place
+  // so every release path (no-home, arrived) tears the capture down identically.
+  const release = () => {
+    robot.capturedBy = undefined;
+    robot.captureSpecies = undefined;
+    if (npc) {
+      npc.capturedBy = undefined;
+      npc.captureSpecies = undefined;
+    }
+    robot.behavior = 'patrol';
+    robot.patrolIndex = (route && route.length) ? nearestWaypointIndex(robot, route) : robot.lastPatrolIndex;
+    if (ctx.clearPath) ctx.clearPath(robot);
+  };
+
+  // 1) NO HOME for this species (shouldn't happen — Phase 3 only enters 'return' with a
+  //    resolvable pen): release immediately and rejoin patrol rather than haul nowhere.
+  if (!penBounds || !penGoalTile) {
+    release();
+    return;
+  }
+
+  // 2) ARRIVED: the NPC is inside the pen interior → release it home. It resumes the
+  //    normal contained wander next tick (returningHome cleared, homeX/Y dropped).
+  if (pathfind && pathfind.inBounds(npc.x, npc.y, penBounds)) {
+    if (npc) {
+      npc.returningHome = false;
+      npc.homeX = undefined;
+      npc.homeY = undefined;
+    }
+    release();
+    return;
+  }
+
+  // 3) MOVE: charge toward the gate-inside goal tile's CENTER (tile→world), routing A*
+  //    around walls / through the gate exactly like the investigate/return-home paths.
+  const speed = speedFor(robot, lockdown, currentTick);
+  const goalWorldX = (penGoalTile.tx + 0.5) * rm.tile;
+  const goalWorldY = (penGoalTile.ty + 0.5) * rm.tile;
+  moveTowardPoint(robot, goalWorldX, goalWorldY, dt, speed, rm, worldEntities, entersHazard, ctx);
+
+  // PIN the NPC onto the robot AFTER the robot moves, so it rides along this tick.
+  npc.x = robot.x;
+  npc.y = robot.y;
+  npc.facing = robot.facing;
+}
+
 module.exports = {
   setShared,
   isReady,
   speedFor,
   stepRobotIdle,
+  stepRobotReturn,
   pickInvestigateTarget,
 };

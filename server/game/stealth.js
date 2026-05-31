@@ -334,6 +334,10 @@ function gatherAnimals(roomName, connectedPlayers, rooms, worldEntities, current
   // Idle world animals: decoys the robot may chase instead of a player.
   for (const e of worldEntities) {
     if (e.kind === 'animal') {
+      // CAPTURED: an animal already being hauled home by a robot (capturedBy set) is
+      // OFF the board — it must not be a fresh target (no other robot freezes on it or
+      // re-captures it), so omit it from the perceivable list entirely.
+      if (e.capturedBy) continue;
       // AWARENESS: an animal that is "where it belongs" is invisible to robots. A
       // LEASHED follower (being led around) or one mid-RETURN (returningHome, still
       // outside its pen) stays visible — only a genuinely at-home idler is hidden.
@@ -573,6 +577,9 @@ function stepIdleAnimals(dt, roomName, currentTick) {
     // is moved by follow.stepFollowers this tick (which runs right after this) —
     // skip it here so it isn't both drifted AND pulled along the chain (double-move).
     if (follow.isLeashed(e, currentTick)) continue;
+    // CAPTURED: an animal being hauled home by a robot is positioned by behaviors.js
+    // (pinned onto the robot each tick) — idle drift must not fight that, so skip it.
+    if (e.capturedBy) continue;
 
     const species = penSpeciesOf(e.id);
 
