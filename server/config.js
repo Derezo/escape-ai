@@ -110,7 +110,13 @@ module.exports = {
     // Squared world-unit distance a returning animal must close since its last
     // progress checkpoint to count as "making progress" (resets the watchdog clock).
     // Below this it's considered stalled and the watchdog timer keeps running.
-    RETURN_PROGRESS_EPS2: parseFloat(process.env.PATHFIND_RETURN_PROGRESS_EPS2) || 64
+    RETURN_PROGRESS_EPS2: parseFloat(process.env.PATHFIND_RETURN_PROGRESS_EPS2) || 64,
+    // Ticks a penned animal HOLDS one ambient-wander destination before re-rolling to
+    // a new reachable interior tile. ~50 ticks ≈ 2.5s at 20Hz: long enough that the
+    // A* path is followed to completion (the saunter reads as deliberate, not twitchy)
+    // and the per-animal repath cost stays amortized to a fraction of a search/tick.
+    // The pen-wander A* targets a tile chosen by hash(id:bucket) over this bucket.
+    PEN_TARGET_TICKS: parseInt(process.env.PATHFIND_PEN_TARGET_TICKS, 10) || 50
   },
 
   // Species abilities (Phase 4). Each species has one edge-triggered power fired

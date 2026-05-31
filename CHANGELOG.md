@@ -4,6 +4,33 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.154: **NPC anti-bounce, Phase 2 — A*-target pen wander (kills the tortoise
+  jitter).** Replaces the reactive contained-wander for PENNED animals in
+  `stealth.stepIdleAnimals`. Instead of `wanderAvoid` (which generated a wander heading
+  that pointed INTO the pond's solid deep-water core for ~40 ticks, so `steerAround`
+  flip-flopped its tangent and the body bounced E/W in place), a pen animal now picks a
+  deterministic REACHABLE interior tile — `pickPenTarget` hashes `id:bucket` over the
+  pen's raster-ordered, radius-clear free-interior cells (`penInteriorCells`, per
+  room+species cache; the deep-water/den core is excluded so a target is always
+  stand-able), holding it `PATHFIND.PEN_TARGET_TICKS` (50 ≈ 2.5s) then re-rolling — and
+  A*s to it via the existing `followPathToGoal`, so no into-wall heading is ever
+  produced. The committed heading is turn-rate-limited through `movement.smoothHeading`
+  (Phase 1) so it can't reverse in a tick, and facing comes from that smoothed heading.
+  Near a wall (the whole ring of a pond pen) the path is followed PURELY (the proven
+  gate-threading trick); only in genuinely open pen interior is a light `wanderVec`
+  blend added. NON-pen animals (the fox lure `decoy-N`) keep the legacy `wanderAvoid`
+  path byte-identical. Two correctness fixes folded in: pass RAW `WANDER_ANIMAL_SPEED`
+  to `locomotionStep` (it re-applies the gait internally — `gaitWanderSpeed` would
+  double-gate a tortoise to ¼ speed); and a `wasReturningHome` edge `clearPath` so a
+  stale return route can't seed the first pen target (they share the entity path cache).
+  Capture clears the new `headAngle`/`wasReturningHome` scratch so a captured-then-
+  released animal restarts fresh. New server gate suite (`pen-wander-jitter.test.js`, 4
+  tests) drives the REAL code path: a pond tortoise makes **0** near-opposite facing
+  reversals over 600 ticks (vs 120–183 before) and genuinely travels; the whole 94-pen
+  zoo totals ≤1; bit-identical replay; targets never land on a solid cell. All new
+  per-entity fields are server-only/never-serialized. 9 server + 99 shared tests green;
+  `check-facing` green; server boots (TURN + smoothHeading validated at load).
+
 - 0.2.153: **NPC anti-bounce, Phase 1 — shared turn-rate limiter.** Root-caused the
   recurring NPC "E/W flip / bounce" jitter (clearest on a tortoise circling its pond
   pen): `steerAround`'s tangential slide is not temporally stable when a held wander

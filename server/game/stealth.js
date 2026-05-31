@@ -89,7 +89,10 @@ async function loadShared() {
     'boxHitsSolid', 'wanderVec', 'hash32',
     // Anti-vibration: the idle-wander facing commit uses the deadband helper +
     // its WANDER tuning, so validate both at boot (stale dist fails LOUD here).
-    'facingFromVecDeadband', 'WANDER'
+    'facingFromVecDeadband', 'WANDER',
+    // Anti-bounce: the turn-rate-limit smoother (TURN tunable) — the pen-wander +
+    // robot heading commit smooth through movement.smoothHeading; validate the tuning.
+    'TURN'
   ];
   const missing = required.filter((name) => mod[name] === undefined);
   if (missing.length) {
@@ -104,7 +107,7 @@ async function loadShared() {
   // per-species gait registry (locomotion.js). Loaded + validated the same way so
   // a stale shared/dist fails LOUD at boot rather than mid-tick.
   const moveMod = await import('../../shared/dist/movement.js');
-  const moveRequired = ['steerAround', 'patrolStep', 'chainFollowStep', 'speedBoost', 'wanderAvoid'];
+  const moveRequired = ['steerAround', 'patrolStep', 'chainFollowStep', 'speedBoost', 'wanderAvoid', 'smoothHeading'];
   const moveMissing = moveRequired.filter((name) => moveMod[name] === undefined);
   if (moveMissing.length) {
     throw new Error(
@@ -588,6 +591,10 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
               if (npc.followerOf) follow.releaseFollower(npc);
               // Also clear any return-home drift — the robot owns its motion now.
               npc.returningHome = false;
+              // Drop the pen-wander smoother + return-edge scratch so a captured-then-
+              // released animal restarts its heading fresh (no stale angle/edge leak).
+              npc.headAngle = undefined;
+              npc.wasReturningHome = false;
               // Stamp the capture link on BOTH sides + flip the robot to the return state.
               robot.lastPatrolIndex = robot.patrolIndex; // resume here after dropping cargo
               robot.behavior = 'return';
@@ -667,6 +674,12 @@ function stepIdleAnimals(dt, roomName, currentTick) {
     // proximity guess. Keyed by e.species (how releaseToHome stamped it) with the
     // id-parsed species as a fallback so a pen animal still matches.
     if (e.returningHome) {
+      // Mark that this animal is running the return-home path, which SHARES the entity
+      // path-cache fields (path/pathGoalTx/Ty/pathIndex) with the pen-wander below. The
+      // pen-wander block clears the cache once on the returningHome→pen-wander EDGE
+      // (see `if (e.wasReturningHome)`), so a stale return route can't bleed into the
+      // first pen-wander target. Server-only scratch, never serialized.
+      e.wasReturningHome = true;
       const homeSpecies = (gateBySpecies.has(e.species) && e.species) || species;
       const homeBounds = homeBySpecies.get(e.species) || (species && homeBySpecies.get(species));
       const goalTile = homeSpecies && gateBySpecies.get(homeSpecies);
@@ -790,31 +803,92 @@ function stepIdleAnimals(dt, roomName, currentTick) {
       }
     }
 
-    // CONTAINMENT (Phase C): a pen animal (id `pen-${species}` / `pen-${species}-n`)
-    // that is NOT following wanders ONLY within its enclosure interior rect. The soft
-    // inward bias inside wanderAvoid turns it away from the fence before it reaches
-    // the gate row; the collision grid is the hard backstop. Non-pen animals (the fox
-    // lure `decoy-N`, any future free animal) have no entry → mapB → roam (unchanged).
-    const bounds = (species && homeBySpecies.get(species)) || mapB;
-    // wanderAvoid SLIDES off walls (deterministic probe-and-rotate) instead of pinning
-    // flush to them until the heading re-rolls. The species gait is applied by feeding
-    // it the gait-adjusted speed for this tick (gaitWanderSpeed) — so a wandering
-    // tortoise crawls at ½ speed and a kangaroo's drift lurches in hop bursts (speed 0
-    // on a pause tick → it holds, exactly like locomotionStep).
+    // CONTAINMENT. A pen animal (id `pen-${species}` / `pen-${species}-n`) wanders
+    // ONLY within its enclosure interior. Two strategies, split by whether it's penned:
+    //
+    //   PEN ANIMAL → A*-TO-AN-INTERIOR-TARGET (the anti-bounce fix). The old reactive
+    //   wanderAvoid generated a wander heading that, for ~40 ticks at a stretch, pointed
+    //   straight INTO an interior obstacle (a pond's solid deep-water core, a den core,
+    //   the fence). steerAround then deflected to a tangent that flip-flopped tick to
+    //   tick as the body drifted across a probe boundary — the body bounced E/W in place
+    //   and facing snapped e↔w (the reported jitter). Instead we pick a deterministic
+    //   REACHABLE interior tile (pickPenTarget) and A* to it (followPathToGoal, reusing
+    //   the return-home machinery), so the heading always points somewhere walkable — no
+    //   into-wall heading is ever generated. The committed heading is additionally
+    //   turn-rate-limited (movement.smoothHeading) so it can't reverse in one tick, and
+    //   facing is derived from that smoothed heading — both bounce sources are gone.
+    //
+    //   NON-PEN ANIMAL (fox lure `decoy-N`, any free animal) → the LEGACY wanderAvoid
+    //   path, byte-identical to before: it roams the whole map with no persistent
+    //   into-wall heading (no interior obstacle ring), so it never exhibited the jitter.
+    const penBounds = species && homeBySpecies.get(species);
     const bx = e.x;
     const by = e.y;
+
+    if (!penBounds) {
+      // --- legacy free-roam wander (unchanged) ---
+      movement.wanderAvoid(
+        e, currentTick, dt, gaitWanderSpeed(e, currentTick),
+        rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, mapB,
+      );
+      e.facing = shared.facingFromVecDeadband(e.x - bx, e.y - by, e.facing || 's', shared.WANDER.FACING_DEADBAND);
+      continue;
+    }
+
+    // EDGE: first pen-wander tick after a return-home ended — flush the shared path
+    // cache so the now-stale return route can't be followed as the first pen target.
+    if (e.wasReturningHome) {
+      clearPath(e);
+      e.wasReturningHome = false;
+    }
+
+    // Pick (or hold) the deterministic interior destination tile, then path to it.
+    const target = pickPenTarget(roomName, species, e, rm, currentTick);
+    const waypoint = target
+      ? followPathToGoal(e, rm, scratch, target.tx, target.ty, currentTick)
+      : null;
+
+    if (waypoint) {
+      let dx = waypoint.x - e.x;
+      let dy = waypoint.y - e.y;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len; dy /= len;
+      // In the OPEN interior of a big pen, blend a light ambient wander so the saunter
+      // still reads as wandering; near a wall (the whole ring of a pond pen) follow the
+      // path PURELY — steerAround there would re-aim the clean heading and re-introduce
+      // the oscillation. Mirrors the return-home near-wall split (the proven gate trick).
+      const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
+      const nearWall = shared.boxHitsSolid(e.x, e.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile);
+      if (!nearWall) {
+        const wv = shared.wanderVec(e.id, currentTick);
+        const w = RETURN_WANDER_BLEND;
+        dx = (1 - w) * dx + w * wv.dirX;
+        dy = (1 - w) * dy + w * wv.dirY;
+        const blen = Math.hypot(dx, dy) || 1;
+        dx /= blen; dy /= blen;
+      }
+      // TURN-RATE LIMIT the committed heading (anti-bounce): a sharp reversal becomes
+      // impossible, so the body arcs smoothly and facing (from the same heading) is
+      // stable. The committed angle rides on the entity (server-only scratch).
+      const sm = movement.smoothHeading(dx, dy, e.headAngle);
+      e.headAngle = sm.angle;
+      // RAW WANDER_ANIMAL_SPEED — locomotionStep re-applies the species gait internally
+      // (gaitSpeed), so passing gaitWanderSpeed here would double-gate (tortoise ¼ speed).
+      locomotion.locomotionStep(
+        e, sm.dirX, sm.dirY, currentTick, dt, config.WANDER_ANIMAL_SPEED,
+        rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS,
+      );
+      e.facing = shared.facingFromVec(sm.dirX, sm.dirY, e.facing || 's');
+      continue;
+    }
+
+    // FALLBACK (no interior pool / unreachable target / over-budget A*): the legacy
+    // contained wanderAvoid, so a pen animal on a degenerate seed still drifts and is
+    // never frozen. Faces with the deadband as before.
     movement.wanderAvoid(
       e, currentTick, dt, gaitWanderSpeed(e, currentTick),
-      rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, bounds,
+      rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, penBounds,
     );
-    // Face the actual drift direction — but with a DEADBAND so a pen-corner grind
-    // doesn't make the animal vibrate. wanderAvoid holds one desired heading for
-    // ~40 ticks, yet when the body is pinned in a corner steerAround's probe fan
-    // finds a DIFFERENT clear micro-slide every tick; deriving facing from each
-    // sub-pixel displacement snapped it to wildly different dirs tick-to-tick
-    // (the visible vibration). facingFromVecDeadband HOLDS the prior facing when
-    // the actual move is below WANDER.FACING_DEADBAND, so facing only turns on a
-    // real step. Deterministic + pure (no RNG/clock) like facingFromVec.
     e.facing = shared.facingFromVecDeadband(e.x - bx, e.y - by, e.facing || 's', shared.WANDER.FACING_DEADBAND);
   }
 }
@@ -874,6 +948,63 @@ const homeGateForRoom = perRoomCache(world.getHomeGateInsideBySpecies);
  *  fallback target + the snap-home destination when a return-home stalls. Built once
  *  per room (world-gen proves every center is non-solid + inside its enclosure). */
 const homeCentersForRoom = perRoomCache(world.getHomeCentersBySpecies);
+
+/**
+ * Per-(room, species) cache of the enclosure's WANDERABLE interior tiles: every cell
+ * inside the species containment bounds that is non-solid AND clears a body-radius box
+ * (so the deep-water core of a pond, the den core, etc. are excluded — a tortoise can
+ * never target a tile it can't stand on). Built once per room+species and reused as the
+ * deterministic destination pool for the pen-wander A* (pickPenTarget). The list is in
+ * RASTER order (ty outer, tx inner) so the hash-index pick is bit-stable across servers.
+ *
+ * Keyed `roomName::species`. Returns `[]` for a species with no bounds / no free interior
+ * (degenerate); the caller falls back to the home center then ambient drift.
+ */
+const penInteriorCellsCache = new Map();
+function penInteriorCells(roomName, species, rm) {
+  const key = `${roomName}::${species}`;
+  let cells = penInteriorCellsCache.get(key);
+  if (cells !== undefined) return cells;
+  cells = [];
+  const bounds = homeBoundsForRoom(roomName).get(species);
+  if (bounds) {
+    // Inclusive tile span of the interior containment rect. Match interiorInsetBounds:
+    // bounds are world-unit inset, so floor/ceil to the tiles fully inside them.
+    const minTx = Math.ceil(bounds.minX / rm.tile);
+    const maxTx = Math.floor(bounds.maxX / rm.tile);
+    const minTy = Math.ceil(bounds.minY / rm.tile);
+    const maxTy = Math.floor(bounds.maxY / rm.tile);
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        if (tx < 0 || ty < 0 || tx >= rm.w || ty >= rm.h) continue;
+        if (rm.collision[ty * rm.w + tx] === 1) continue;
+        // Radius-clear so the picked target is a tile the body can actually occupy
+        // (excludes a 1-tile nook flush against the deep core / fence).
+        const cx = tx * rm.tile + rm.tile / 2;
+        const cy = ty * rm.tile + rm.tile / 2;
+        if (shared.boxHitsSolid(cx, cy, ROBOT_RADIUS, rm.collision, rm.w, rm.h, rm.tile)) continue;
+        cells.push({ tx, ty });
+      }
+    }
+  }
+  penInteriorCellsCache.set(key, cells);
+  return cells;
+}
+
+/**
+ * The deterministic pen-wander destination tile for an animal this tick: a reachable
+ * interior cell chosen by hashing (id : slow-bucket) over the species' raster-ordered
+ * free-interior pool, so the target HOLDS for PEN_TARGET_TICKS then re-rolls. Returns
+ * null when the species has no usable interior (caller falls back). Pure + deterministic
+ * (hash32 over a fixed cell list) — same (id, tick, room) → same tile on every server.
+ */
+function pickPenTarget(roomName, species, entity, rm, currentTick) {
+  const cells = penInteriorCells(roomName, species, rm);
+  if (cells.length === 0) return null;
+  const bucket = Math.floor(currentTick / config.PATHFIND.PEN_TARGET_TICKS);
+  const ord = shared.hash32(`${entity.id}:${bucket}`) % cells.length;
+  return cells[ord];
+}
 
 /** Per-room reusable A* scratch buffer (sized to the room's grid). One per room,
  *  reused across every findPath call there so a search allocates nothing per call.
