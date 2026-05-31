@@ -226,8 +226,18 @@ class WorldScene extends Phaser.Scene {
   private pendingMap: WorldMap | null = null;
   /** True once buildWorld has stamped the tilemap (so we don't rebuild). */
   private worldBuilt = false;
-  /** Per-building roof objects + footprint (world units), for the fade-on-enter. */
-  private roofs: { rect: Phaser.GameObjects.Rectangle; bx0: number; by0: number; bx1: number; by1: number; inside: boolean }[] = [];
+  /** Per-building roof objects + footprint (world units), for the fade-on-enter.
+   *  `tiles` holds the per-cell tile images rendered from map.roof.data (may be
+   *  empty if the building has no roof grid cells, in which case `fallback` is the
+   *  plain rectangle used instead). Exactly one of tiles.length>0 or fallback set. */
+  private roofs: {
+    tiles: Phaser.GameObjects.Image[];
+    fallback: Phaser.GameObjects.Rectangle | null;
+    bx0: number; by0: number; bx1: number; by1: number; inside: boolean;
+  }[] = [];
+  /** Entrance doorway markers (entrance chevron images above the roof) created in
+   *  buildWorld. Tracked so a rebuild destroys the old set. */
+  private doorwayMarkers: Phaser.GameObjects.GameObject[] = [];
   /** Aux-building signage (name labels + 🔒 markers) created by buildAuxSignage.
    *  Tracked so a buildWorld re-run (new map) destroys the old set first — these are
    *  standalone text objects, not EntityViews, so destroyView never reaches them. */
@@ -464,32 +474,64 @@ class WorldScene extends Phaser.Scene {
     // above draws under it. The base is one tile below the canopy cell (the trunk).
     this.buildCanopies(map, TS, TILESET_KEY, cols);
 
-    // Roof grid tiles bake into per-building rectangles (below) for the fade, so
-    // we DON'T draw the roof grid as a static layer — the rects own the roof.
+    // Roof grid tiles are rendered as per-cell Image objects grouped per building
+    // (see buildRoofTiles below). We do NOT draw the roof grid as a single static
+    // layer — the per-building image sets own the roof and fade together as a unit.
 
     // 3. Per-building roof rectangles (fade on enter). Footprint in world units.
     //    AUXILIARY service buildings (b.auxKind set) get a distinct roof tint plus
     //    always-visible signage (name label + locked-door marker) so the three food
     //    halls read apart even with the roof faded. Species homes + the gatehouse
     //    (no auxKind) keep the default brown roof and get no signage — unchanged.
-    //    Clear any prior roofs + signage first so a rebuild (new map) never leaks the
-    //    previous map's standalone objects (they aren't EntityViews → not swept).
-    for (const r of this.roofs) r.rect.destroy();
+    //    Clear any prior roofs, signage, and doorway markers first so a rebuild
+    //    (new map) never leaks the previous map's standalone objects (they aren't
+    //    EntityViews → not swept by the entity reconciler).
+    for (const r of this.roofs) {
+      for (const img of r.tiles) img.destroy();
+      r.fallback?.destroy();
+    }
     this.roofs.length = 0;
     for (const s of this.auxSignage) s.destroy();
     this.auxSignage.length = 0;
+    for (const m of this.doorwayMarkers) m.destroy();
+    this.doorwayMarkers.length = 0;
+
+    // Pre-register tileset frames for all roof tile indices so buildRoofTiles can
+    // use them (same pattern as buildCanopies — one registration per index).
+    const roofTex = this.textures.get(TILESET_KEY);
+    for (const [idxStr] of Object.entries(TILE_BY_INDEX)) {
+      const idx = Number(idxStr);
+      const def = TILE_BY_INDEX[idx];
+      if (!def || def.layer !== 'roof') continue;
+      const frameName = `t${idx}`;
+      if (!roofTex.has(frameName)) {
+        roofTex.add(frameName, 0, (idx % cols) * TS, Math.floor(idx / cols) * TS, TS, TS);
+      }
+    }
+
     for (const b of map.buildings) {
       const bx = b.rx * TS;
       const by = b.ry * TS;
       const bw = b.rw * TS;
       const bh = b.rh * TS;
-      const roofColor = b.auxKind !== undefined ? AUX_ROOF_TINT[b.auxKind] : 0x6b4f3a;
-      const rect = this.add
-        .rectangle(bx + bw / 2, by + bh / 2, bw, bh, roofColor, 1)
-        .setStrokeStyle(2, 0x4a3526, 1)
-        .setDepth(DEPTH_ROOF);
-      this.roofs.push({ rect, bx0: bx, by0: by, bx1: bx + bw, by1: by + bh, inside: false });
+
+      // Build per-cell tile images from map.roof.data within this building's rect.
+      const roofTiles = this.buildRoofTiles(b, map, TS, TILESET_KEY, b.auxKind);
+
+      let fallback: Phaser.GameObjects.Rectangle | null = null;
+      if (roofTiles.length === 0) {
+        // No roof grid cells for this building — fall back to the flat rectangle.
+        const roofColor = b.auxKind !== undefined ? AUX_ROOF_TINT[b.auxKind] : 0x6b4f3a;
+        fallback = this.add
+          .rectangle(bx + bw / 2, by + bh / 2, bw, bh, roofColor, 1)
+          .setStrokeStyle(2, 0x4a3526, 1)
+          .setDepth(DEPTH_ROOF);
+      }
+
+      this.roofs.push({ tiles: roofTiles, fallback, bx0: bx, by0: by, bx1: bx + bw, by1: by + bh, inside: false });
       if (b.auxKind !== undefined) this.buildAuxSignage(b, TS);
+      // Entrance marker: a visible chevron above the roof at the door cell.
+      this.buildDoorwayMarker(b, TS);
     }
 
     // 4. Camera: bound to the world and (later) follow the local player.
@@ -530,6 +572,76 @@ class WorldScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setDepth(DEPTH_AUX_OVERLAY);
     this.auxSignage.push(label);
+  }
+
+  /**
+   * Render the ROOF grid cells for one building as individual Phaser.Image objects
+   * at DEPTH_ROOF (the same depth as the old rectangle), so they fade together in
+   * updateRoofFade. Returns the array of created images — empty if no roof tiles
+   * exist in the building's footprint (caller falls back to the flat rectangle).
+   *
+   * Aux-building tile images get a tinted overlay (a 60%-alpha colour rect over
+   * the tile grid) so the three service halls are visually distinct, mirroring the
+   * old per-building tint. Species homes + the gatehouse use the natural
+   * ROOF_RED_* art without any tint overlay.
+   */
+  private buildRoofTiles(
+    b: Building,
+    map: WorldMap,
+    TS: number,
+    tilesetKey: string,
+    auxKind: AuxKind | undefined,
+  ): Phaser.GameObjects.Image[] {
+    const imgs: Phaser.GameObjects.Image[] = [];
+    const data = map.roof.data;
+    for (let ty = b.ry; ty < b.ry + b.rh; ty++) {
+      for (let tx = b.rx; tx < b.rx + b.rw; tx++) {
+        const idx = data[ty * map.w + tx];
+        if (idx === 0) continue;
+        const frameName = `t${idx}`;
+        const wx = tx * TS + TS / 2;
+        const wy = ty * TS + TS / 2;
+        const img = this.add
+          .image(wx, wy, tilesetKey, frameName)
+          .setOrigin(0.5)
+          .setDepth(DEPTH_ROOF);
+        // Apply a colour tint for aux buildings so they still read as distinct from
+        // species-home roofs. We use setTint which multiplies with the tile art
+        // — a warm/cool/grey cast over the terracotta shingles.
+        if (auxKind !== undefined) {
+          img.setTint(AUX_ROOF_TINT[auxKind]);
+        }
+        imgs.push(img);
+      }
+    }
+    return imgs;
+  }
+
+  /**
+   * Draw a visible entrance marker (a small downward-pointing triangle + "ENTER"
+   * text) ABOVE the roof (DEPTH_AUX_OVERLAY) at the building's door cells. This
+   * lets players see where to enter while the roof is still opaque (they are
+   * outside). The marker is always-on (not faded with the roof). Stored in
+   * this.doorwayMarkers so it is destroyed on map rebuild.
+   */
+  private buildDoorwayMarker(b: Building, TS: number): void {
+    // Door is at (b.doorTx, b.doorTy) — the south edge of the building.
+    // Centre the marker on the 2-wide door (doorTx is the right cell of the pair
+    // → centre between doorTx-1 and doorTx, i.e. doorTx-0.5 in tile units).
+    const wx = (b.doorTx - 0.5) * TS + TS / 2; // world-x centre of 2-wide door
+    const wy = b.doorTy * TS;                    // top edge of door row (just above)
+
+    // A downward-pointing triangle as an entrance chevron.
+    const tri = this.add
+      .triangle(
+        wx, wy - 4,          // origin (world pos above door threshold)
+        -8, -10,             // top-left
+        8, -10,              // top-right
+        0, 0,                // bottom (points down toward the entrance)
+        0xffdd44, 0.85,
+      )
+      .setDepth(DEPTH_AUX_OVERLAY);
+    this.doorwayMarkers.push(tri);
   }
 
   /**
@@ -605,12 +717,25 @@ class WorldScene extends Phaser.Scene {
       const inside = px >= r.bx0 && px < r.bx1 && py >= r.by0 && py < r.by1;
       if (inside === r.inside) continue;
       r.inside = inside;
-      this.tweens.add({
-        targets: r.rect,
-        alpha: inside ? 0 : 1,
-        duration: 220,
-        ease: 'Sine.easeOut',
-      });
+      const targetAlpha = inside ? 0 : 1;
+      // Tween either the per-cell tile images or the fallback rectangle.
+      if (r.tiles.length > 0) {
+        for (const img of r.tiles) {
+          this.tweens.add({
+            targets: img,
+            alpha: targetAlpha,
+            duration: 220,
+            ease: 'Sine.easeOut',
+          });
+        }
+      } else if (r.fallback) {
+        this.tweens.add({
+          targets: r.fallback,
+          alpha: targetAlpha,
+          duration: 220,
+          ease: 'Sine.easeOut',
+        });
+      }
     }
   }
 
