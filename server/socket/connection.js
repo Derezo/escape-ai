@@ -5,6 +5,7 @@
  * Events: ping (latency echo), disconnect (cleanup).
  */
 
+const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../shared/dist/net.js');
 const { broadcastLobbyState } = require('./lobby');
 const follow = require('../game/follow');
 const session = require('../game/session');
@@ -18,10 +19,13 @@ function register(socket, deps) {
   const { io, connectedPlayers, rooms, state } = deps;
 
   // Latency measurement: echo the client's timestamp straight back.
-  // Contract: client emits `ping {t}`, server replies `pong {t}`.
-  socket.on('ping', (payload) => {
+  // Contract: client emits `ping {t}`, server replies `pong {t}` — names from the
+  // shared net contract (CLIENT_EVENTS.PING / SERVER_EVENTS.PONG). 'disconnect' is
+  // a socket.io built-in lifecycle event (not part of our net contract), so it
+  // stays a literal.
+  socket.on(CLIENT_EVENTS.PING, (payload) => {
     const t = payload && typeof payload === 'object' ? payload.t : payload;
-    socket.emit('pong', { t });
+    socket.emit(SERVER_EVENTS.PONG, { t });
   });
 
   socket.on('disconnect', () => {

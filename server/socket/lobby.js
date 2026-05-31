@@ -9,6 +9,7 @@
  */
 
 const { v4: uuidv4 } = require('uuid');
+const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../shared/dist/net.js');
 const world = require('../game/world');
 const quests = require('../game/quests');
 const follow = require('../game/follow');
@@ -55,7 +56,7 @@ function speciesRosterKeys() {
 function register(socket, deps) {
   const { io, connectedPlayers, rooms, state } = deps;
 
-  socket.on('lobby:join', (payload = {}) => {
+  socket.on(CLIENT_EVENTS.LOBBY_JOIN, (payload = {}) => {
     // Rate-limit (coarse): lobby:join is rare; an over-rate join is dropped with
     // no state change (no room churn, no extra spawn). The client may retry.
     if (!limiter.allow(socket.id, 'lobby:join')) return;
@@ -227,15 +228,15 @@ function register(socket, deps) {
     // regenerates the identical tilemap via the shared generateWorld(seed) for
     // rendering AND collision-aware prediction. The server owns the seed
     // (seedFromString(room)); the client never computes it, so there's no parity
-    // risk on the seed itself. The event name is the literal 'map' (matches
-    // SERVER_EVENTS.MAP in shared/src/net.ts; the server is CJS so we don't import
-    // the ESM net module). Payload shape mirrors MapMsg {seed, version, tile, w, h}.
-    socket.emit('map', world.getMapMeta(room));
+    // risk on the seed itself. The event name is SERVER_EVENTS.MAP, imported from
+    // the shared net contract (the same constant the client subscribes to).
+    // Payload shape mirrors MapMsg {seed, version, tile, w, h}.
+    socket.emit(SERVER_EVENTS.MAP, world.getMapMeta(room));
 
     broadcastLobbyState(io, connectedPlayers, rooms, room);
   });
 
-  socket.on('input', (payload = {}) => {
+  socket.on(CLIENT_EVENTS.INPUT, (payload = {}) => {
     // Rate-limit (tight but generous): the legit input stream is ~20 Hz; the cap
     // sustains 40/sec with a 60-packet burst, so normal play is never throttled
     // and only a pathological flood is shed. A dropped frame is safe — the engine
@@ -289,7 +290,7 @@ function broadcastLobbyState(io, connectedPlayers, rooms, room) {
     if (p) players.push({ id: p.id, name: p.name, x: p.x, y: p.y });
   }
 
-  io.to(room).emit('lobby:state', { players });
+  io.to(room).emit(SERVER_EVENTS.LOBBY_STATE, { players });
 }
 
 module.exports = { register, broadcastLobbyState, leaveRoom };

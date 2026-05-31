@@ -9,11 +9,12 @@
  * use it as the authoritative player name + species, and connection.js can
  * attribute play-time/stats on disconnect.
  *
- * Event-name strings mirror shared/src/net.ts CLIENT_EVENTS.AUTH_LOGIN /
- * SERVER_EVENTS.AUTH_RESULT (the server is JS and can't import the TS const, so
- * — like the existing 'lobby:join' handler — we hardcode the wire names here).
+ * Event names come from the shared net contract (shared/src/net.ts → dist/net.js);
+ * the server require(esm)-imports the same CLIENT_EVENTS/SERVER_EVENTS the client
+ * uses, so the wire names are a single source of truth (Node>=22 require of ESM).
  */
 
+const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../shared/dist/net.js');
 const { isPlayableSpecies } = require('./species-roster');
 const { limiter } = require('./rate-limit');
 
@@ -24,7 +25,7 @@ const { limiter } = require('./rate-limit');
 function register(socket, deps) {
   const { socket: sock, db, state } = deps;
 
-  sock.on('auth:login', (payload = {}) => {
+  sock.on(CLIENT_EVENTS.AUTH_LOGIN, (payload = {}) => {
     // Rate-limit: auth:login is rare, so a flood is abuse. Over-budget packets
     // are silently dropped (no state change, no disconnect) — the client retries.
     if (!limiter.allow(sock.id, 'auth:login')) return;
@@ -37,7 +38,7 @@ function register(socket, deps) {
 
     if (!result.ok) {
       // Rejected — leave `state` untouched so no partial identity leaks in.
-      sock.emit('auth:result', { ok: false, reason: result.reason });
+      sock.emit(SERVER_EVENTS.AUTH_RESULT, { ok: false, reason: result.reason });
       return;
     }
 
@@ -68,7 +69,7 @@ function register(socket, deps) {
     const resumeSpecies =
       savedSession && isPlayableSpecies(savedSession.species) ? savedSession.species : undefined;
 
-    sock.emit('auth:result', {
+    sock.emit(SERVER_EVENTS.AUTH_RESULT, {
       ok: true,
       token: result.token,
       username: user.username,

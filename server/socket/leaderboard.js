@@ -11,11 +11,12 @@
  * top-N. NOTHING is trusted from the client but the (validated) sort key + limit;
  * scores and ranks are computed server-side and can't be forged.
  *
- * Event-name strings mirror shared/src/net.ts CLIENT_EVENTS.LEADERBOARD_REQUEST /
- * SERVER_EVENTS.LEADERBOARD_DATA (the server is CJS and can't import the TS const,
- * so — like the other handlers — we hardcode the wire names here).
+ * Event names come from the shared net contract (CLIENT_EVENTS.LEADERBOARD_REQUEST /
+ * SERVER_EVENTS.LEADERBOARD_DATA), require(esm)-imported from shared/dist/net.js so
+ * the wire names match the client without a duplicated literal (Node>=22 require ESM).
  */
 
+const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../shared/dist/net.js');
 const { limiter } = require('./rate-limit');
 
 // Whitelist of sort keys the client may request (mirrors net.ts LeaderboardSort).
@@ -37,7 +38,7 @@ const DEFAULT_LIMIT = 100;
 function register(socket, deps) {
   const { socket: sock, db, state } = deps;
 
-  sock.on('leaderboard:request', (payload = {}) => {
+  sock.on(CLIENT_EVENTS.LEADERBOARD_REQUEST, (payload = {}) => {
     // Rate-limit: the query touches every account row, so a flood is shed (the
     // panel's poll cadence is well within budget). Over-budget → silent no-op.
     if (!limiter.allow(sock.id, 'leaderboard:request')) return;
@@ -55,7 +56,7 @@ function register(socket, deps) {
     // Defensive: a bare test harness may omit db. Reply with an empty board rather
     // than throwing, so the client UI degrades gracefully.
     if (!db || typeof db.getLeaderboard !== 'function') {
-      sock.emit('leaderboard:data', { sort: reqSort || 'score', rows: [], total: 0, you: null });
+      sock.emit(SERVER_EVENTS.LEADERBOARD_DATA, { sort: reqSort || 'score', rows: [], total: 0, you: null });
       return;
     }
 
@@ -63,7 +64,7 @@ function register(socket, deps) {
     // Un-authed sockets simply get `you: null` (no account → no rank).
     const requesterUserId = (state && state.userId) || undefined;
     const result = db.getLeaderboard({ sort: reqSort, limit, requesterUserId });
-    sock.emit('leaderboard:data', result);
+    sock.emit(SERVER_EVENTS.LEADERBOARD_DATA, result);
   });
 }
 

@@ -4,6 +4,71 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.113: **World-gen perf: reuse one `floodReachable` `seen` buffer across reachability passes.**
+  The reachability-carve loop in `generateWorld` (`shared/src/world.ts`) calls `floodReachable` (a BFS
+  over the collision grid) once per carve iteration — ~10–38 times per world build — and each call
+  allocated a fresh `new Uint8Array(w*h)` (16 KB on the 128×128 grid) for its `seen` set, churning
+  ~160–620 KB of short-lived garbage per `generateWorld` (and every room build + client join calls it).
+  `floodReachable` now takes the `seen` scratch as a parameter and `.fill(0)`s it on entry; the loop
+  allocates ONE buffer before iterating and reuses it. The fill is purely sequential and local to each
+  call (consumed before the next call overwrites it) with no nested/reentrant flood, so a single shared
+  buffer is safe. **Byte-identical output: the pinned collision + entity-spec hash drift tripwire
+  (`shared/test/world.test.mjs`) still passes UNCHANGED (`PINNED_COLLISION_HASH = 3946684960`,
+  `PINNED_ENTITYSPEC_HASH = 2090828514`), so `WORLD_GEN_VERSION` stays 17 — no map drift, no client
+  desync.** Touched only `shared/src/world.ts`. Verified: `npm run build` clean (strict TS), `npm test`
+  90/90.
+
+- 0.2.112: **Server game-module dedup: two verified non-breaking duplication extractions (one judged not worth it).**
+  Pure internal refactors in the authoritative game modules — no exported signature, return shape, or behavior
+  change; the code is byte-for-byte equivalent in output. Touched ONLY `server/game/world.js` and
+  `server/game/stealth.js` (+ one mirrored comment in `server/game/behaviors.js`).
+  - **Extraction 1 (world.js) — interior inset-rect math.** `getHomeBoundsBySpecies`,
+    `getGuardBoundsByRobotId` and `getAuxInteriorRects` each inlined the identical interior wall-ring inset
+    (`minX=(rx+1)*tile; minY=(ry+1)*tile; maxX=Math.max((rx+rw-1)*tile,minX); maxY=Math.max((ry+rh-1)*tile,minY)`,
+    Math.max-clamped against a degenerate rect). Confirmed all three byte-identical first (including
+    getHomeBoundsBySpecies applying the SAME inset to housing AND building rects via its shared `add` helper —
+    no housing-vs-building off-by-one), then extracted a module-local pure helper
+    `interiorInsetBounds(rx, ry, rw, rh, tile) -> {minX,minY,maxX,maxY}` near the top of world.js and called it
+    from all three. Each caller's Map building / keying is unchanged.
+  - **Extraction 2 (stealth.js) — per-room lazy-cache wrappers.** `homeBoundsForRoom`, `guardBoundsForRoom`,
+    `auxInteriorRectsForRoom` and `homeGateForRoom` were four hand-rolled get-or-build-and-store wrappers around
+    single-arg world.js getters. Extracted a `perRoomCache(getter)` factory and defined the four as
+    `const homeBoundsForRoom = perRoomCache(world.getHomeBoundsBySpecies);` etc. Call sites
+    (`homeBoundsForRoom(roomName)`) are unchanged. The factory's `=== undefined` build trigger is equivalent to
+    the old `if (!v)` because every getter returns a freshly-built Map/array (always truthy), so an absent key
+    is the only falsy a cache lookup yields. `pathScratchForRoom` was deliberately EXCLUDED — it takes
+    `(roomName, rm)` and calls `pathfind.makeScratch(rm.w, rm.h)`, not the single-arg pattern — and is left
+    exactly as-is. (The four flipped from hoisted `function` declarations to non-hoisted `const`s, which is
+    safe: all call sites are inside tick-time functions that run after module load.)
+  - **Extraction 3 (near-wall test) — NOT extracted, by design.** `stealth.stepIdleAnimals` and
+    `behaviors.moveTowardPoint` share a 2-line radius-aware near-wall probe
+    (`bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;` + a `shared.boxHitsSolid` call). De-duplicating would
+    require a cross-module helper because each file caches its own late-bound `shared` (assigned async via
+    `setShared`, `null` at module-eval). Routing animal-drift code through a `behaviors` (robot-FSM) export to
+    reuse `ROBOT_RADIUS` is a semantic coupling smell for a 2-line self-documenting test whose surrounding
+    branch conditions differ intentionally (`if (nearWall)` vs `if (onPath && nearWall)`). Left both sites,
+    confirmed the detection is byte-identical (modulo the entity x/y source), and added a one-line
+    "mirror … keep in sync" cross-reference comment at each.
+  - **Verification:** `node --check` clean on all three files; `cd shared && npm run build` green; server boots
+    to "listening" with no throw; `cd server && npm test` 3/3 pass; `node scripts/sim-clients.js 4 --secs=8`
+    held 4/4 at steady ~20Hz; `node scripts/check-facing.js` OK (determinism intact).
+
+- 0.2.111: **Server socket handlers now import the net contract — no more hardcoded wire strings.**
+  `shared/src/net.ts` (→ `dist/net.js`) is the single source of truth for event names
+  (`CLIENT_EVENTS`/`SERVER_EVENTS`), and the client already imports it — but the server socket
+  handlers hardcoded the literals (`'auth:login'`, `'auth:result'`, `'lobby:join'`, `'input'`,
+  `'map'`, `'lobby:state'`, `'ping'`, `'pong'`, `'leaderboard:request'`, `'leaderboard:data'`)
+  behind a now-false comment that "the server is CJS and can't import the TS const." Node>=22
+  (declared in `server/package.json` `engines`) supports `require()` of an ESM module with no
+  top-level await, and `shared/dist/net.js` is pure `export const` — so each handler now does
+  `const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../shared/dist/net.js')` and references the
+  constants. The two remaining literals (`'connection'`, `'disconnect'`) are socket.io built-in
+  lifecycle events, not part of our net contract, and stay as-is. Pure code-level refactor: every
+  wire string is byte-identical, ZERO behavioral/wire change. Touched only `server/socket/auth.js`,
+  `lobby.js`, `connection.js`, `leaderboard.js` (+ stale comments removed). Verified: `node --check`
+  on each file, clean boot, `scripts/e2e-follow.js` → "E2E PASSED" (auth/join/input/map/snapshot/feed
+  over the wire), `scripts/sim-clients.js 4` held 4/4 at 20 Hz.
+
 - 0.2.110: **Join-lag: warm the default room at server boot.** `generateWorld()` (the 128×128 tile
   fill + collision + reachability carve, ~5–13ms) ran SYNCHRONOUSLY inside the `lobby:join` handler
   the first time a room was created, blocking the event loop and stalling every other room's
