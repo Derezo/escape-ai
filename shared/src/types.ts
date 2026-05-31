@@ -53,6 +53,9 @@ export interface EntityFx {
   kind: FxKind;
   startTick: number;
   untilTick: number;
+  /** For a `collect` fx: the food key that was just picked up, so the client can
+   *  show the food's name + icon in the pickup toast. Absent for other fx kinds. */
+  foodKey?: string;
 }
 
 /**

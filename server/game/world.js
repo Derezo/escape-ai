@@ -94,7 +94,8 @@ async function loadSharedWorld() {
     worldToTile: worldMod.worldToTile,
     seedFromString: rngMod.seedFromString,
     questForSpecies: questMod.questForSpecies,
-    foodForSpecies: foodMod.foodForSpecies
+    foodForSpecies: foodMod.foodForSpecies,
+    FOOD_PICKUP_AMOUNT: foodMod.FOOD_PICKUP_AMOUNT
   };
   const missing = Object.keys(required).filter((name) => required[name] === undefined);
   if (missing.length) {
@@ -570,6 +571,21 @@ function foodForSpecies(species) {
   return sharedWorld.foodForSpecies(species);
 }
 
+/**
+ * Units of food gained per collect press — the shared FOOD_PICKUP_AMOUNT constant
+ * (shared/dist/food.js). Total; throws if called before loadSharedWorld() resolves.
+ * @returns {number}
+ */
+function foodPickupAmount() {
+  if (!sharedWorld) {
+    throw new Error(
+      'world.foodPickupAmount() called before loadSharedWorld() resolved. ' +
+      'engine.init() must await world.loadSharedWorld() before any player joins.'
+    );
+  }
+  return sharedWorld.FOOD_PICKUP_AMOUNT;
+}
+
 module.exports = {
   loadSharedWorld,
   getOrCreateRoomWorld,
@@ -591,5 +607,6 @@ module.exports = {
   nextTempId,
   questForSpecies,
   foodForSpecies,
+  foodPickupAmount,
   INITIAL_WORLD_STATE
 };

@@ -58,15 +58,19 @@ test('food collection works and advances a collect step (no throw)', async () =>
     quests.initPlayer(p);
     assert.equal(p.quest.type, 'collect', 'bird step 0 is collect');
 
+    // FOOD_PICKUP_AMOUNT is 2: one press banks 2 units, bumps the stat by 2, and
+    // fills bird's collect ×2 step in that single press (rolling to the next step).
     const collected = follow.collectNearbyFood(p, ROOM, 1);
     assert.equal(collected, true, 'collectNearbyFood succeeds (did not throw on the quest hook)');
-    assert.equal(p.inventory.seed, 1, 'one food unit banked');
-    assert.equal(p.statsDelta.foodCollected, 1, 'foodCollected stat bumped');
-    assert.equal(p.quest.done, 1, 'collect step advanced to 1/2');
+    assert.equal(p.inventory.seed, 2, 'two food units banked per collect');
+    assert.equal(p.statsDelta.foodCollected, 2, 'foodCollected stat bumped by the collected amount');
+    assert.equal(p.quest.stepIndex, 1, 'collect ×2 filled in one press → rolled to the next step');
+    // The collect fx carries the foodKey so the client toast can name + icon it.
+    assert.equal(p.fx && p.fx.foodKey, 'seed', 'collect fx carries the foodKey');
 
+    // A second press banks another handful.
     follow.collectNearbyFood(p, ROOM, 2);
-    assert.equal(p.inventory.seed, 2, 'second food unit banked');
-    assert.equal(p.quest.stepIndex, 1, 'collect ×2 filled → rolled to the next step');
+    assert.equal(p.inventory.seed, 4, 'second press banks another 2 units');
   } finally {
     world.getWorldEntities = orig;
   }

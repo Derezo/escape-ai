@@ -68,6 +68,14 @@ export const FOODS: FoodDef[] = SPECIES_KEYS.map((k) => FOOD_BY_SPECIES[k]).filt
 export const FOOD_KEYS: string[] = FOODS.map((f) => f.key);
 
 /**
+ * Units of food gained per successful collect press. The single source of truth so
+ * the server's inventory bump, the `foodCollected` stat, the quest 'collect' step
+ * progress, AND the client's pickup toast all agree. A renewable food source is a
+ * feeding station, so a press yields a small handful rather than a single unit.
+ */
+export const FOOD_PICKUP_AMOUNT = 2;
+
+/**
  * The food a species likes — a pure, deterministic, TOTAL lookup. Falls back to
  * a generic 'kibble' for an unknown key (never expected for a playable species,
  * but keeps the function total so the generator/server never get undefined).

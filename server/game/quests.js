@@ -282,14 +282,16 @@ function stepEscort(player, roomName, currentTick) {
 
 /**
  * 'collect' advance: observe a successful food pickup (follow.collectNearbyFood
- * bumps foodCollected; this only reads the success). One unit per call. No-op
- * unless the current step is a 'collect'.
+ * bumps foodCollected; this only reads the success). Advances the current step by
+ * `amount` units actually collected (default 1) so quest progress tracks the bag.
+ * No-op unless the current step is a 'collect'.
  * @param {object} player
+ * @param {number} [amount=1]  units collected this press
  */
-function onCollect(player) {
+function onCollect(player, amount) {
   const step = currentStep(player.quest);
   if (!step || step.kind !== 'collect') return;
-  bumpCurrent(player, 1);
+  bumpCurrent(player, amount || 1);
 }
 
 /**

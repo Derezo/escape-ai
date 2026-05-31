@@ -122,14 +122,19 @@ function collectNearbyFood(player, roomName, currentTick) {
   }
   if (!nearest) return false;
   const key = nearest.foodKey || world.foodForSpecies(nearest.species).key;
+  // A renewable feeding station yields a small handful per press (shared
+  // FOOD_PICKUP_AMOUNT — the ONE source of truth, also used by the client toast).
+  const amount = world.foodPickupAmount();
   if (!player.inventory) player.inventory = {};
-  player.inventory[key] = (player.inventory[key] || 0) + 1;
-  bumpStat(player, 'foodCollected');
+  player.inventory[key] = (player.inventory[key] || 0) + amount;
+  bumpStat(player, 'foodCollected', amount);
   // Quest: a 'collect' step OBSERVES this success edge (it never re-bumps the
-  // foodCollected stat above — only advances the quest's current step).
-  quests().onCollect(player);
-  // FX echo so the client can fire a pickup burst/SFX on this player's entity.
-  setFx(player, 'collect', currentTick);
+  // foodCollected stat above — only advances the quest's current step), by the
+  // same number of units actually collected so inventory + quest progress agree.
+  quests().onCollect(player, amount);
+  // FX echo so the client can fire a pickup burst/SFX on this player's entity, plus
+  // the foodKey so the toast can name the food + show its icon.
+  setFx(player, 'collect', currentTick, { foodKey: key });
   return true;
 }
 
@@ -444,10 +449,12 @@ function releaseFollowersOf(roomName, playerId) {
 
 /** Stamp the render-echo of a collect/feed/steal event onto an entity. Mirrors
  *  stealth.setFx: startTick is the client's one-shot edge; a short untilTick drives
- *  any brief sustained glow. */
-function setFx(entity, kind, currentTick) {
+ *  any brief sustained glow. `extra` carries optional kind-specific data (e.g. the
+ *  collected `foodKey` so the client toast can show the food's name + icon); the
+ *  whole fx object is rebuilt each call, so a prior fx's extras never leak. */
+function setFx(entity, kind, currentTick, extra) {
   const t = currentTick || 0;
-  entity.fx = { kind, startTick: t, untilTick: t + Math.max(1, secsToTicks(0.5)) };
+  entity.fx = { kind, startTick: t, untilTick: t + Math.max(1, secsToTicks(0.5)), ...extra };
 }
 
 module.exports = {

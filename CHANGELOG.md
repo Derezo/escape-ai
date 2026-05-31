@@ -4,6 +4,19 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.140: **Food collection — 2 per press + named pickup toast.** Collecting from a feeding
+  station now yields **2 units** per press (was 1) for every food type, and the pickup toast names
+  the food with its icon — "+2 🥩 Raw Steak" instead of the bare "+1 food" — so it's clear what was
+  grabbed. New shared `FOOD_PICKUP_AMOUNT` (`shared/src/food.ts`) is the single source of truth: the
+  server's inventory bump, the `foodCollected` stat (bumped by the amount), and the quest 'collect'
+  step (advanced by the amount) all read it, so the bag, stat, and quest progress stay consistent — a
+  "collect ×2" step now fills in one press. The `collect` fx carries the new optional
+  `EntityFx.foodKey` (`shared/src/types.ts`) so the client can look the food up (`foodByKey`) for the
+  toast; an older server omitting it falls back to "+2 food". Shared 90/90, server 3/3 (collect
+  wiring test updated for the new rate + foodKey echo), client tsc + build clean. Touched
+  `shared/src/food.ts`, `shared/src/types.ts`, `server/game/follow.js`, `server/game/quests.js`,
+  `server/game/world.js`, `server/test/quest-wiring.test.js`, `client/src/main.ts`.
+
 - 0.2.139: **Intro narration — resync `intro_vo_3` voice clip.** Completes the 0.2.137
   follow-up: the rewritten `intro_vo_3` line was re-baked via ElevenLabs, so the spoken VO now
   matches the on-screen subtitle and `durationMs` was re-measured 5747 → 7340 (the new line is

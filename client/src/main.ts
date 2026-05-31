@@ -19,6 +19,7 @@ import type { InputMsg, PlayerAction } from '@shared/net';
 import { moveWithCollision, moveSpeed, facingFromVec } from '@shared/step';
 import { generateWorld, WORLD_GEN_VERSION, type WorldMap } from '@shared/world';
 import { speciesByKey } from '@shared/species';
+import { foodByKey, FOOD_PICKUP_AMOUNT } from '@shared/food';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -537,7 +538,12 @@ async function main(): Promise<void> {
       // player entity; 'feed'/'steal' ride the animal we just claimed (followerOf
       // === myId by now). Flavor only — the press already played its sound.
       if (fx.kind === 'collect' && e.id === myId) {
-        flashCue('+1 food', 'collect');
+        // Name the food + show its icon so it's clear WHAT was picked up (e.g.
+        // "+2 🥩 Raw Steak"). The server stamps fx.foodKey on the collect edge; fall
+        // back to a generic label if an older server omits it.
+        const food = typeof fx.foodKey === 'string' ? foodByKey(fx.foodKey) : undefined;
+        const label = food ? `${food.icon} ${food.label}` : 'food';
+        flashCue(`+${FOOD_PICKUP_AMOUNT} ${label}`, 'collect');
       } else if ((fx.kind === 'feed' || fx.kind === 'steal') && e.followerOf === myId) {
         flashCue(fx.kind === 'steal' ? 'stolen — following you!' : 'following you!', fx.kind as 'feed' | 'steal');
       }
