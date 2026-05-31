@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.141: **Quest hint arrow — center triangle on route point and keep glow concentric
+  with fill.** The arrow vertices were not symmetric about the local origin (tip at +s,
+  base at -0.6s), so Phaser's `setOrigin(0.5)` anchored the pivot at the bounding-box
+  centre (x≈+3.2px from origin at scale 1) rather than the arrow's true centre. This
+  caused the arrow to ride forward of the route point and to rotate about a point near
+  its tip. The glow (scale 1.8) and fill (scale 1.0) had different bbox-centre offsets,
+  so the two triangles were not concentric. Fix: vertices shifted to
+  `(±0.8s, 0 / ±0.55s)` — symmetric in both axes about (0,0) — so the bbox centre
+  equals the origin and `setOrigin(0.5)` anchors correctly. Overall arrow length
+  unchanged (1.6s). Touched `client/src/render/phaser.ts`.
+
 - 0.2.140: **Food collection — 2 per press + named pickup toast.** Collecting from a feeding
   station now yields **2 units** per press (was 1) for every food type, and the pickup toast names
   the food with its icon — "+2 🥩 Raw Steak" instead of the bare "+1 food" — so it's clear what was

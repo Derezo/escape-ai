@@ -1016,13 +1016,14 @@ class WorldScene extends Phaser.Scene {
 
     // A slim isosceles triangle pointing +x (rotated each frame to its heading), plus
     // a larger additive-blend copy beneath it for the soft glow. Both start invisible.
-    // setOrigin(0.5) centres the anchor on the shape's bounding box (matching every
-    // other shape in this renderer), so the arrow rides the path point and rotates
-    // cleanly about its centre instead of wobbling about a bbox corner.
+    // Vertices are deliberately centered on the local origin: tip at +0.8s, base at
+    // -0.8s (midpoint of the ±0.8s span = 0), so setOrigin(0.5)'s bbox-center anchor
+    // coincides with the arrow's true centre — fill and glow stay concentric at any
+    // scale and the arrow rides the route point without forward offset.
     const s = QUEST_ARROW.SIZE;
     const mk = (scale: number, blend: Phaser.BlendModes): Phaser.GameObjects.Triangle =>
       this.add
-        .triangle(px, py, s * scale, 0, -s * 0.6 * scale, s * 0.55 * scale, -s * 0.6 * scale, -s * 0.55 * scale, QUEST_ARROW.TINT)
+        .triangle(px, py, s * 0.8 * scale, 0, -s * 0.8 * scale, s * 0.55 * scale, -s * 0.8 * scale, -s * 0.55 * scale, QUEST_ARROW.TINT)
         .setOrigin(0.5)
         .setDepth(DEPTH_QUEST_ARROW)
         .setAlpha(0)
