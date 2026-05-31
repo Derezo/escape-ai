@@ -39,7 +39,7 @@
 
 import { playSfx, startLoop, stopLoop, preloadVoice, playVoice, stopVoice } from './audio';
 import { VOICE_META, type VoiceName } from './audio.generated';
-import { playMusicState } from './music';
+import { duckMusic, unduckMusic } from './music';
 
 // --- Asset URLs (Vite publicDir = assets/, base './' → Capacitor-safe) --------
 const POD_OFF_URL = './images/transfer-pod-off.png';
@@ -268,6 +268,9 @@ function runSequence(resolve: () => void): void {
     window.removeEventListener('pointerdown', onSkip);
     stopLoop('intro_power');
     stopVoice(); // cut any in-progress narration on skip/finish
+    // Restore the title music to full volume; the main.ts frame-loop guard will
+    // then crossfade it to explore_loop now that isIntroActive() returns false.
+    unduckMusic();
     overlay.remove();
     active = false;
     resolve();
@@ -278,11 +281,15 @@ function runSequence(resolve: () => void): void {
   // (flicker, fade, title, finish) chains off the computed end of the last subtitle.
   const tl = computeTimeline(reduced);
 
-  // --- Audio: silence the menu music, start the power-up hum ----------------
-  // The menu's title_theme is playing; fade it out so the cold hum owns the
-  // soundscape. main.ts's frame-loop music guard keeps it silent (isIntroActive())
-  // until the overlay is gone, then crossfades the gameplay track in.
-  playMusicState(null);
+  // --- Audio: duck the title music, start the power-up hum ------------------
+  // title_theme is already playing from the click-gate gesture; rather than
+  // silencing it, duck it to ~30% so the cold hum and narration own the
+  // soundscape while the story beats play. main.ts's frame-loop music guard
+  // holds title_theme during the intro (isIntroActive() → 'title_theme'),
+  // keeping the duck intact. On finish(), unduckMusic() restores the volume,
+  // and the next frame selectMusic() returns explore_loop → playMusicState
+  // crossfades (1200ms) — the title→explore transition on spawn.
+  duckMusic();
   startLoop('intro_power', HUM_VOLUME);
 
   // --- Phase: chamber fades in ----------------------------------------------

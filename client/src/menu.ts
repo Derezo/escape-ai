@@ -1,24 +1,30 @@
 /**
- * The pre-game front end: a splash screen, then a login with a species picker.
+ * The pre-game front end: a click-gate, then a splash screen, then a login
+ * with a species picker.
  *
  * `runMenu()` owns the whole "before you're in the world" experience and
  * RESOLVES exactly once — when the player is authenticated and ready to join.
  * main.ts awaits it, then calls `net.join(...)`; nothing joins until auth lands.
  *
  * Flow:
+ *   0. CLICK-GATE — a minimal full-screen overlay shown BEFORE the splash. Its
+ *      sole purpose is to satisfy the browser audio-autoplay policy: the first
+ *      keydown/pointerdown unlocks the AudioContext and starts the title music,
+ *      then the gate fades out revealing the splash already behind it.
  *   1. SPLASH — animated "ESCAPE AI" title; any key/pointer dismisses it. That
- *      first gesture ALSO unlocks audio (browsers gate the AudioContext on a
- *      user gesture) — see the audio-unlock note below.
+ *      second gesture keeps audio unlocked (harmless second call) and title
+ *      music is already playing (playMusicState is idempotent — no restart).
  *   2. LOGIN — if a token is stored, auto-login ("Welcome back, …"); else a
  *      username field + a grid species picker + Play. Submit emits auth:login.
  *   3. auth:result — on ok, persist the token, cache the stats, resolve. On a
  *      failure reason, show an inline error / fall back to manual entry.
  *
- * Audio-unlock coordination: the unlock lives HERE (menu.ts calls
- * `unlockAudio()` on the splash's first-gesture handler). main.ts no longer
- * registers its own once-listeners, so audio is unlocked exactly once. This is
- * the natural home for it — the first gesture a player makes IS the splash
- * dismissal, which is already a one-shot handler.
+ * Audio-unlock coordination: the unlock lives in the click-gate handler (the
+ * very first gesture). menu.ts calls `unlockAudio()` there AND starts
+ * `title_theme` via `playMusicState`. The splash's dismissSplash() still calls
+ * `unlockAudio()` (harmless — it just resumeLoops() on an already-unlocked
+ * context) and does NOT restart the music (playMusicState is idempotent).
+ * main.ts no longer registers its own once-listeners.
  *
  * Pure DOM/CSS overlays (renderer-agnostic). Species copy + roster come from
  * `@shared/species`; event handling goes through NetClient (no wire strings).
@@ -28,6 +34,7 @@ import type { NetClient } from './net/client';
 import type { AuthResult, UserStats } from '@shared/net';
 import { SPECIES } from '@shared/species';
 import { unlockAudio, playSfx } from './audio';
+import { playMusicState } from './music';
 import { loadAuth, saveAuth, clearAuth } from './auth';
 import { createSpeciesSprite } from './species-sprite';
 
@@ -67,7 +74,44 @@ export function getLastStats(): UserStats | undefined {
  */
 export function runMenu(net: NetClient): Promise<MenuResult> {
   return new Promise<MenuResult>((resolve) => {
-    // --- Build the splash overlay (shown first) -----------------------------
+    // --- Build the click-gate overlay (shown FIRST, above the splash) -------
+    // Its only job: satisfy the browser audio-autoplay policy. The first
+    // keydown/pointerdown unlocks the AudioContext and starts title_theme, then
+    // the gate fades out to reveal the splash already mounted behind it.
+    const gate = document.createElement('div');
+    gate.id = 'clickgate';
+    gate.innerHTML = `
+      <p id="clickgate-prompt">Click or press any key to start your escape...</p>
+    `;
+    document.body.appendChild(gate);
+
+    const dismissGate = (): void => {
+      window.removeEventListener('keydown', dismissGate);
+      window.removeEventListener('pointerdown', dismissGate);
+      // Unlock the AudioContext on this first user gesture.
+      unlockAudio();
+      // Start the title music immediately — it will keep playing through the
+      // splash and login screens. playMusicState is idempotent, so later calls
+      // from the main.ts guard or dismissSplash are no-ops while it's playing.
+      playMusicState('title_theme');
+      // Fade the gate out; remove it once the transition finishes so the splash
+      // (already in the DOM behind it) becomes the visible layer.
+      gate.classList.add('leaving');
+      window.setTimeout(() => {
+        gate.remove();
+        // ARM the splash listeners only NOW — after the gate gesture has been
+        // fully consumed. Attaching them here (rather than at the top level of
+        // runMenu) ensures gesture 1 dismisses only the gate, and the NEXT
+        // gesture dismisses the splash. dismissSplash and showLogin are in scope
+        // because they are defined in the same runMenu closure below.
+        window.addEventListener('keydown', dismissSplash, { once: true });
+        window.addEventListener('pointerdown', dismissSplash, { once: true });
+      }, 280);
+    };
+    window.addEventListener('keydown', dismissGate, { once: true });
+    window.addEventListener('pointerdown', dismissGate, { once: true });
+
+    // --- Build the splash overlay (shown after the gate fades) --------------
     const splash = document.createElement('div');
     splash.id = 'splash';
     // The title is two separately-choreographed words: "ESCAPE" fades in slowly,
@@ -287,10 +331,13 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
       }
     };
 
-    // --- Splash dismissal: the first gesture unlocks audio + shows login ----
-    // Any keydown or pointerdown dismisses the splash. This is also where audio
-    // is unlocked (browsers require a user gesture) — main.ts deliberately does
-    // NOT register its own unlock listeners, so this is the single unlock point.
+    // --- Splash dismissal: second gesture — shows login ----------------------
+    // Any keydown or pointerdown dismisses the splash. These listeners are
+    // registered inside dismissGate's setTimeout (after the gate fade), NOT
+    // here at the top level — that is the fix for the two-gesture sequence.
+    // unlockAudio() is a harmless second call (it just resumeLoops() on an
+    // already-unlocked context). Title music is already playing from the
+    // click-gate gesture; playMusicState in the main.ts guard is idempotent.
     const dismissSplash = (): void => {
       window.removeEventListener('keydown', dismissSplash);
       window.removeEventListener('pointerdown', dismissSplash);
@@ -302,7 +349,8 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         showLogin();
       }, 280);
     };
-    window.addEventListener('keydown', dismissSplash, { once: true });
-    window.addEventListener('pointerdown', dismissSplash, { once: true });
+    // NOTE: window.addEventListener for dismissSplash is intentionally NOT here.
+    // It is deferred to dismissGate's setTimeout so the splash only arms after
+    // the gate gesture is fully consumed. See dismissGate above.
   });
 }

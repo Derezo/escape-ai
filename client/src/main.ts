@@ -799,11 +799,14 @@ async function main(): Promise<void> {
     }
 
     // --- Music state machine: select and crossfade the appropriate track. While
-    // the first-run cinematic is up, hold music silent so its electrical hum owns
-    // the soundscape — we joined before the intro, so `myId` is already set and
-    // selectMusic() would otherwise crossfade a gameplay track in under the intro.
-    // The frame after the overlay tears down, the right track fades in normally. ---
-    playMusicState(isIntroActive() ? null : selectMusic());
+    // the first-run cinematic is up, hold title_theme (idempotent — no restart)
+    // so its duck under the hum/VO remains intact. We joined before the intro,
+    // so `myId` is already set and selectMusic() would otherwise crossfade the
+    // explore_loop in under the still-playing intro. Instead, the frame after
+    // the intro overlay tears down isIntroActive() returns false, selectMusic()
+    // returns explore_loop, and playMusicState crossfades (1200ms) — the
+    // natural title→gameplay crossfade on first spawn. ---
+    playMusicState(isIntroActive() ? 'title_theme' : selectMusic());
 
     requestAnimationFrame(frame);
   }

@@ -4,6 +4,25 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.152: **Click-gate + title-music continuity (client only).** Adds a
+  `#clickgate` overlay (`menu.ts` + `style.css`) that appears BEFORE the splash
+  as the very first screen: one pulsing centered line "Click or press any key to
+  start your escape..." satisfies the browser audio-autoplay policy — the first
+  gesture unlocks the AudioContext and starts `title_theme` immediately, then the
+  gate fades out (280ms) to reveal the existing splash behind it. The splash's
+  `dismissSplash` listeners are armed inside `dismissGate`'s `setTimeout`
+  callback (after the 280ms gate fade), NOT at the top level of `runMenu` —
+  this ensures gesture 1 dismisses only the gate and gesture 2 dismisses only
+  the splash, preserving the intended two-click flow. Title music now continues
+  through the login screen and the cinematic intro: `intro.ts` replaces the old
+  `playMusicState(null)` with `duckMusic()` (drops to ~30% under the hum/VO) and
+  calls `unduckMusic()` in `finish()`. The `main.ts` frame-loop music guard
+  changes from `isIntroActive() ? null : selectMusic()` to
+  `isIntroActive() ? 'title_theme' : selectMusic()` — holding the title track
+  (idempotent, no restart) while the intro plays, then crossfading (1200ms) to
+  `explore_loop` the frame after the overlay tears down. Build green (tsc strict
+  + vite).
+
 - 0.2.151: **Phase 6 validation cleanups — gate-funnel invariant + doc drift.** Adds a
   deterministic `world.test.mjs` invariant asserting every pen gate's 2-wide south
   opening + apron stays walkable (collision 0) across the pinned seed spread, locking in

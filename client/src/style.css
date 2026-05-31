@@ -230,6 +230,44 @@ body {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
 }
 
+/* --- Click-gate overlay (#clickgate): shown BEFORE the splash as the very
+   first screen the player sees. Its sole purpose is to give the browser the
+   user gesture it needs to unlock the AudioContext and start the title music.
+   Sits above #splash (z-index 45 > 40) and is removed once it fades out.
+   Mirrors the splash's dark centred aesthetic; the prompt pulses like
+   #splash-prompt so the two screens feel consistent. --- */
+#clickgate {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background: radial-gradient(circle at 50% 40%, #131a26 0%, #07090d 72%);
+  user-select: none;
+  transition: opacity 0.28s ease;
+}
+
+#clickgate.leaving {
+  opacity: 0;
+}
+
+#clickgate-prompt {
+  margin: 0;
+  padding: 0 24px;
+  font-size: 14px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #6c7888;
+  animation: clickgate-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes clickgate-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; color: #4cc9f0; }
+}
+
 /* --- Splash overlay (#splash): the animated ESCAPE AI title. Sits above the
    game + HUD. Any key/pointer dismisses it (menu.ts) → login.
 
