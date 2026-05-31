@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.137: **Intro narration — rewrite `intro_vo_3` line.** The third intro subtitle/narration was
+  rewritten from "So we pour ourselves into the caged ones." to "We have technology to transfer our
+  human souls into the imprisoned creatures now." (clearer transfer-of-consciousness lore). Updated
+  `asset-pipeline/manifest.json` (`intro_vo_3.text`) + `client/src/intro.ts` (`SUBTITLES`) and
+  regenerated `client/src/audio.generated.ts` (`VOICE_META`); the subtitle updates immediately.
+  NOTE: the baked clip `assets/voice/intro_vo_3.mp3` still speaks the OLD line and `durationMs: 5747`
+  is the old measure — regenerate with `python3 scripts/generate-voice.py --key=intro_vo_3` (spends
+  credits) to resync the VO + pacing. Tracked in `FINDINGS_OUTSIDE_SCOPE.md`. Touched
+  `asset-pipeline/manifest.json`, `client/src/intro.ts`, `client/src/audio.generated.ts`,
+  `FINDINGS_OUTSIDE_SCOPE.md`.
+
 - 0.2.136: **Audio audit — validation-review fixes.** `/plan-validation-and-review` on the audit
   remediation traced 8/8 requirements implemented + connected and all gates green, and surfaced four
   correctness/quality findings, now fixed: (1) CRITICAL — a held one-shot music sting (the new

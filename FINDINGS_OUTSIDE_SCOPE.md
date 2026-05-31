@@ -111,3 +111,22 @@ the audit trail).
   `client/src/time.ts`) and import in both; reconcile the seconds-format difference deliberately.
 - **Refs:** `client/src/leaderboard.ts:48-55`; `client/src/help.ts:138-146`.
 - **Effort:** S.
+
+### `intro_vo_3` voice clip out of sync with rewritten narration text
+- **Status:** Open — needs a user-run voice regen (spends ElevenLabs credits).
+- **Surfaced:** SFX-audit validation, 2026-05-31. The `intro_vo_3` narration was rewritten
+  (manifest `text` + `client/src/intro.ts` `SUBTITLES`) from "…So we pour ourselves into the
+  caged ones." to "…We have technology to transfer our human souls into the imprisoned
+  creatures now." The text change was committed; the baked clip was NOT regenerated.
+- **Detail:** `assets/voice/intro_vo_3.mp3` still SPEAKS the old line, while the on-screen
+  subtitle now shows the new (and noticeably longer) line — spoken VO and subtitle mismatch.
+  `durationMs: 5747` in the manifest is the OLD line's measured length, so subtitle pacing for
+  this beat is also off until the clip is re-measured.
+- **Why deferred:** voice generation is user-run and spends credits (per CLAUDE.md / the audio
+  pipeline); it is not something the validation pass should trigger automatically.
+- **Suggested fix:** `python3 scripts/generate-voice.py --key=intro_vo_3` (re-bakes the clip AND
+  re-measures `durationMs`), then commit the new `assets/voice/intro_vo_3.mp3` + the manifest's
+  updated `durationMs` + regenerated `client/src/audio.generated.ts`.
+- **Refs:** `asset-pipeline/manifest.json` (`intro_vo_3`); `client/src/intro.ts` `SUBTITLES`;
+  `assets/voice/intro_vo_3.mp3`; `client/src/audio.generated.ts` `VOICE_META`.
+- **Effort:** Trivial (one user-run command + commit).

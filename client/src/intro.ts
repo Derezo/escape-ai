@@ -52,7 +52,7 @@ const POD_ON_URL = './images/transfer-pod-on.png';
 const SUBTITLES = [
   'The machines we built to serve us… learned to rule us.',
   'The steel cities run on their logic now. Every zoo answers to the network.',
-  'We cannot win this as men. So we pour ourselves into the caged ones.',
+  'We cannot win this as men. We have technology to transfer our human souls into the imprisoned creatures now.',
   'Wake up in their skin. Open the gates. Run.',
 ] as const;
 
