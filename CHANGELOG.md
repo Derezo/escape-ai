@@ -4,6 +4,34 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.107: **Robot NPC-capture is now LIVE — capture trigger + return dispatch wired into
+  `stepRobots` (Phase 3, the payoff).** The plumbing from 0.2.106 is now reachable: a
+  keeper-robot that touches a loose non-player animal GRABS it and hauls it home. Two
+  server-only edits in `server/game/stealth.js` `stepRobots`, no shared/client change. (1)
+  RETURN DISPATCH at the TOP of the per-robot loop (right after the Second-Law standdown
+  `continue`, before `robotDecision`): if `robot.capturedBy` is set and the captive's link
+  still points back (`captive.capturedBy === robot.id`), the robot overrides all Three-Laws
+  perception — `mode='pursue'` (so the client renders the hauler as active, not idle, reusing
+  the existing RobotMode union — no new wire mode), per-robot `idleCtx.penBounds`/`penGoalTile`
+  resolved from `homeBoundsForRoom`/`homeGateForRoom` for `captureSpecies` (and
+  `idleCtx.guardBounds` cleared so a previous robot's bounds can't bleed in), then
+  `behaviors.stepRobotReturn(robot, captive, idleCtx)` and `continue`. If the captive vanished
+  or its back-link broke, the stale `capturedBy`/`captureSpecies` are dropped and the robot
+  falls through to normal behavior this tick. (2) CAPTURE TRIGGER as a sibling `else if
+  (target)` arm of the existing player-catch in the `pursue` branch: on touch
+  (`dist2 <= touchR2`) the robot resolves the NPC's pen (`penSpeciesOf(id) || species`); if a
+  pen exists, it tears any player leash (`follow.releaseFollower` — a robot "steal", the owner
+  loses the follower), clears `returningHome`, stamps `capturedBy`/`captureSpecies` on BOTH
+  sides, sets `robot.behavior='return'` + `lastPatrolIndex`, and `clearPath`s the stale chase
+  route — next tick the dispatch takes over and hauls. Capturing an NPC does NOT feed panic:
+  `pursuingRobots`/`catches` stay strictly inside the `isPlayer` arm (a captured scenery
+  animal is not an escape). A penless animal (shouldn't happen for a pen species) is left as a
+  normal uncatchable chase target, exactly as before. Determinism preserved (integer-tick
+  fields + shared math; no `Math.random`/`Date.now`). shared builds clean; server boots clean
+  and reaches "listening"; `scripts/e2e-follow.js` PASSES (food wire intact); `scripts/sim-clients.js
+  20 --secs=15` holds 20/20 clients at a locked ~20Hz snapshot rate with no errors in the
+  server log (the new per-tick NPC mutation introduces no desync or tick degradation).
+
 - 0.2.106: **Robot NPC-capture PLUMBING (not yet triggerable — Phase 3 wires it).** Lays the
   groundwork for keeper-robots that CAPTURE a loose non-player animal (or a player's
   follower — a robot "steal"), haul it pinned to their body back to that species' pen via

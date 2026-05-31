@@ -454,6 +454,27 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       continue;
     }
 
+    // HAULING A CAPTURED NPC: a robot that has grabbed an animal ignores all normal
+    // perception (no pursue/freeze/patrol) and charges it home to its pen, then resumes
+    // patrol. Overrides the Three-Laws decision while the cargo is held.
+    if (robot.capturedBy) {
+      const captive = worldEntities.find((e) => e.id === robot.capturedBy && e.kind === 'animal');
+      if (captive && captive.capturedBy === robot.id) {
+        robot.mode = 'pursue'; // wire/HUD: render the hauler as an active (non-idle) robot
+        robot.targetId = robot.capturedBy;
+        const species = robot.captureSpecies;
+        idleCtx.guardBounds = undefined;
+        idleCtx.penBounds = species ? homeBoundsForRoom(roomName).get(species) : undefined;
+        idleCtx.penGoalTile = species ? homeGateForRoom(roomName).get(species) : undefined;
+        behaviors.stepRobotReturn(robot, captive, idleCtx);
+        continue;
+      }
+      // Captive vanished (pruned / released elsewhere) or its link no longer points back:
+      // drop the stale capture refs and fall through to normal behavior this tick.
+      robot.capturedBy = undefined;
+      robot.captureSpecies = undefined;
+    }
+
     const decision = shared.robotDecision(robot, animals, lockdown);
     robot.mode = decision.mode;
     robot.targetId = decision.targetId;
@@ -526,6 +547,37 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
           // anti-loop fix, paired with the grace window stamped in catchPlayer.
           catchPlayer(target.ref, spawnForSpecies(roomName, target.ref.species, target.ref), currentTick);
           catches++;
+        }
+      } else if (target) {
+        // CAPTURE a non-player animal on touch: the robot grabs it and switches to the
+        // return-haul state (charges it home to its pen, see the dispatch above). This is
+        // the FIRST robot→NPC capture — idle/escaped animals AND a player's leashed
+        // follower (a robot-"steal": the owner loses it) are all fair game once touched.
+        // Capturing an NPC does NOT feed panic (pursuingRobots/catches stay player-only).
+        if (shared.dist2(robot, target) <= touchR2) {
+          const npc = worldEntities.find((e) => e.id === target.id && e.kind === 'animal');
+          if (npc) {
+            const species = penSpeciesOf(npc.id) || npc.species;
+            const penBounds = species ? homeBoundsForRoom(roomName).get(species) : undefined;
+            const penGoalTile = species ? homeGateForRoom(roomName).get(species) : undefined;
+            if (penBounds && penGoalTile) {
+              // ROBOT-STEAL: if it was leashed to a player, tear the leash so it leaves the
+              // chain and the owner loses it (hard reset clears followerOf/timers/grace).
+              if (npc.followerOf) follow.releaseFollower(npc);
+              // Also clear any return-home drift — the robot owns its motion now.
+              npc.returningHome = false;
+              // Stamp the capture link on BOTH sides + flip the robot to the return state.
+              robot.lastPatrolIndex = robot.patrolIndex; // resume here after dropping cargo
+              robot.behavior = 'return';
+              robot.capturedBy = npc.id;
+              robot.captureSpecies = species;
+              npc.capturedBy = robot.id;
+              npc.captureSpecies = species;
+              clearPath(robot); // drop any stale chase path before the haul routes anew
+            }
+            // If the species has no pen (shouldn't happen for a pen animal), don't
+            // capture — leave it as a normal (uncatchable) chase target, like today.
+          }
         }
       }
     } else if (decision.mode === 'idle') {
