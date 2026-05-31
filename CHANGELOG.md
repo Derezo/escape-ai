@@ -4,6 +4,19 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.119: **Cinematic new-character intro — once-only fix: gate on first-ever join, not every fresh run.**
+  Headless end-to-end verification (a zero-dep CDP driver against a real Chrome) surfaced that gating the
+  intro on `!resumed` alone replayed it every time a *returning* player started a fresh run (picked a
+  species again) — the "always, with a skip" behavior we explicitly did NOT want; the chosen behavior is
+  "new character only". `isNewCharacter` in `client/src/menu.ts` is now `!msg.resumed && (msg.stats.games
+  ?? 0) <= 1`: the server bumps `games` to 1 on the first successful login *before* stamping stats
+  (`server/socket/auth.js` → `db.incGames` then `db.getStatsForUser`), so `games <= 1` is the genuine
+  first-join signal. Verified end-to-end: a brand-new account sees the full cinematic (13/13 lifecycle
+  checks — overlay at z-60, chamber fade-in, subtitles, skip-arm, pod power-on flicker, lone title,
+  teardown into the already-built world); skip after the first subtitle tears down instantly with no
+  orphaned timers; and the SAME account's second login (`games >= 2`) does NOT replay it (9/9 edge
+  checks). Touched `client/src/menu.ts`.
+
 - 0.2.118: **Cinematic new-character intro — Phase 4: wire it into the join flow.** main.ts now plays the
   cinematic for brand-new characters. `preloadIntroAssets()` runs at boot next to `preloadSfx()` so the
   pod PNGs are decoded before auth completes. After `net.join(...)`, a new character triggers

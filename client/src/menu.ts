@@ -39,10 +39,12 @@ export interface MenuResult {
   username: string;
   species?: string;
   /**
-   * True for a brand-new character (a fresh login that picked a species), false
-   * for a returning player resuming their in-progress run. Drives the one-time
-   * cinematic intro in main.ts — it plays for new characters only. Derived from
-   * the same `AuthResult.resumed` the species handoff already keys off of.
+   * True only on the player's genuine FIRST-EVER join — not resuming a saved
+   * mid-run session (`!AuthResult.resumed`) AND their first session
+   * (`AuthResult.stats.games <= 1`; the server bumps `games` to 1 on the first
+   * login before stamping stats). Drives the one-time cinematic intro in main.ts.
+   * Pairing the two conditions keeps the intro to the true first time — `!resumed`
+   * alone would replay it whenever a returning player starts a fresh run.
    */
   isNewCharacter: boolean;
 }
@@ -173,10 +175,20 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         // full mid-run snapshot). Otherwise honor the picker selection. Prefer the
         // server's authoritative username; fall back to what we sent.
         const username = msg.username ?? nameInput.value.trim();
+        // NEW CHARACTER (drives the one-time cinematic intro): the player's genuine
+        // first-ever join. That means NOT resuming a saved mid-run session AND this
+        // being their first session — the server increments `games` to 1 on the
+        // first successful login before stamping stats, so `games <= 1` is the
+        // first-join signal. Gating on `!resumed` alone would replay the intro every
+        // time a returning player starts a fresh run; pairing it with `games` keeps
+        // it to the true first time. Missing stats (shouldn't happen on ok) is
+        // treated as new.
+        const games = msg.stats?.games ?? 0;
+        const isNewCharacter = !msg.resumed && games <= 1;
         finish({
           username,
           species: msg.resumed ? undefined : selectedSpecies,
-          isNewCharacter: !msg.resumed,
+          isNewCharacter,
         });
         return;
       }
