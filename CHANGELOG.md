@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.120: **Cinematic intro — validation remediation: re-entrancy guard on `playIntro()`.** The
+  `/plan-validation-and-review` code-comprehension pass flagged that `playIntro()` (`client/src/intro.ts`)
+  had no guard against an accidental double-call: a second concurrent invocation would build a second
+  overlay and orphan the first run's timers/listeners/hum loop. main() only ever calls it once, but the
+  public API is now defensive — `if (active) return Promise.resolve();` at the top short-circuits a
+  re-entrant call. Validation otherwise green: all 10 plan requirements traced IMPLEMENTED + CONNECTED, no
+  dead/duplicate code, no unused imports, shared tests 90/90, client build clean, no secrets, no new
+  dependency findings (the pre-existing dev-only esbuild/vite advisory is already tracked in
+  FINDINGS_OUTSIDE_SCOPE.md). Touched `client/src/intro.ts`.
+
 - 0.2.119: **Cinematic new-character intro — once-only fix: gate on first-ever join, not every fresh run.**
   Headless end-to-end verification (a zero-dep CDP driver against a real Chrome) surfaced that gating the
   intro on `!resumed` alone replayed it every time a *returning* player started a fresh run (picked a

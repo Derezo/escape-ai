@@ -129,8 +129,14 @@ export function preloadIntroAssets(): void {
  * Play the full cinematic. Resolves when it finishes naturally OR when the player
  * skips (after the first subtitle). NEVER rejects — all work is guarded so the
  * caller's join can never be blocked by an intro error.
+ *
+ * Re-entrancy guard: if an intro is already on screen (`active`), this resolves
+ * immediately without building a second overlay — a second concurrent run would
+ * orphan the first one's timers/listeners/loop. main() only calls this once, but
+ * the guard keeps the public API safe regardless.
  */
 export function playIntro(): Promise<void> {
+  if (active) return Promise.resolve();
   return new Promise<void>((resolve) => {
     try {
       runSequence(resolve);
