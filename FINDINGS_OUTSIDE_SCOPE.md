@@ -97,3 +97,17 @@ the audit trail).
 - **Pointer:** `server/game/behaviors.js:21` — `const world = require('./world');` has no `world.*` usage anywhere in the file.
 - **Why deferred:** Pre-existing (present at base commit `5880ea1`, untouched by the robot-capture plan). Out of scope per the validation skill's in-scope/out-of-scope rule — not traceable to the plan's changes.
 - **Effort:** Trivial (delete one line); verify nothing else in the file references it (confirmed none do).
+
+### `formatPlayTime()` duplicated in help.ts and leaderboard.ts (low-priority DRY)
+- **Status:** Open
+- **Surfaced:** `/plan-validation-and-review` of the global-chat plan, 2026-05-31 (dedup scan).
+- **Detail:** a play-time formatter (seconds → "1h 23m" / "12m" / "45s") is defined twice
+  with slightly different second-rendering: `client/src/leaderboard.ts:48-55` (used for the
+  `playSeconds` column) and `client/src/help.ts:138-146` (used for the Stats-tab "Play time").
+- **Why deferred:** Pre-existing — neither function was touched by the chat plan
+  (`leaderboard.ts` wasn't modified at all; `help.ts` only gained the `/` controls line). Out
+  of scope per the validation skill's in-scope/out-of-scope rule.
+- **Suggested approach if picked up:** extract one formatter to a shared client util (e.g.
+  `client/src/time.ts`) and import in both; reconcile the seconds-format difference deliberately.
+- **Refs:** `client/src/leaderboard.ts:48-55`; `client/src/help.ts:138-146`.
+- **Effort:** S.

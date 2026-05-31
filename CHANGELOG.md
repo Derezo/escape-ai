@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.132: **Global chat — validation remediation.** `/plan-validation-and-review` traced all 13
+  requirements IMPLEMENTED + CONNECTED, found no security/logic/correctness bugs (chat text is
+  rendered via `textContent` only — no XSS), confirmed the wire end-to-end (12/12 e2e assertions),
+  shared 90/90 + server 3/3 tests, client build clean, audio drift gate green. Two cleanups: removed
+  the unused `ChatHandle.destroy()` (dead code — no sibling overlay defines teardown, the widget
+  lives for the page lifetime, per the "wire it in or don't add it" rule) and named the
+  autoscroll-slack magic number (`AUTOSCROLL_SLACK_PX`). The pre-existing `formatPlayTime`
+  duplication (`help.ts`/`leaderboard.ts`) and the client esbuild/Vite dev-only advisory are
+  out-of-scope and logged in `FINDINGS_OUTSIDE_SCOPE.md`. Touched `client/src/chat.ts`,
+  `FINDINGS_OUTSIDE_SCOPE.md`.
+
 - 0.2.131: **Global chat — two-client e2e regression harness.** New `scripts/e2e-chat.js` boots the
   real server on a temp port/DB, connects two socket.io clients, and asserts the chat contract:
   both clients receive a sent line, the sender identity is SERVER-stamped (not forgeable), text is

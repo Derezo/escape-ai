@@ -40,6 +40,9 @@ const MAX_LOG = 200;
 /** Hard cap mirrored from the server (net.ts ChatSend) — trims the input client-side
  *  too so the field can't hold more than the server will accept. */
 const MAX_LEN = 256;
+/** Auto-scroll on a new message only when the view is within this many px of the
+ *  bottom — so a player who has scrolled up to read history isn't yanked back down. */
+const AUTOSCROLL_SLACK_PX = 24;
 
 /** A chat line plus the client-derived `mine` flag (senderId === our own entity id). */
 export type ChatEntry = ChatMessage & { mine: boolean };
@@ -56,8 +59,6 @@ export interface ChatHandle {
   /** True while the chat input holds focus — main.ts polls this every tick to freeze
    *  movement + skip actions while the player is typing. */
   get inputFocused(): boolean;
-  /** Tear down listeners/timers/DOM (symmetry; not strictly needed in this SPA). */
-  destroy(): void;
 }
 
 /** Options for {@link createChat}. */
@@ -134,7 +135,7 @@ export function createChat(opts: ChatOptions): ChatHandle {
   // --- Helpers ----------------------------------------------------------------
 
   const isAtBottom = (): boolean =>
-    scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 24;
+    scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < AUTOSCROLL_SLACK_PX;
 
   const scrollToBottom = (): void => {
     scroll.scrollTop = scroll.scrollHeight;
@@ -349,12 +350,6 @@ export function createChat(opts: ChatOptions): ChatHandle {
     get inputFocused() {
       return chatInputFocused;
     },
-
-    destroy() {
-      cancelBubbles();
-      window.removeEventListener('keydown', onKeyDown);
-      root.remove();
-    },
   };
 
   // Icon click toggles. (Primary affordance on touch, where there's no '/' key.)
@@ -363,16 +358,17 @@ export function createChat(opts: ChatOptions): ChatHandle {
 
   // `/` opens (mirrors leaderboard.ts's window keydown). Guarded by !expanded &&
   // !inputFocused so pressing `/` while typing inserts a literal slash. main.ts
-  // adds `/` to its movement-exclusion list so it never leaks into walking.
-  const onKeyDown = (e: KeyboardEvent): void => {
+  // adds `/` to its movement-exclusion list so it never leaks into walking. No
+  // teardown: like the leaderboard/help/inventory overlays, the widget lives for
+  // the page lifetime, so the listener is never removed.
+  window.addEventListener('keydown', (e) => {
     if (e.key === '/' && !expanded && !chatInputFocused) {
       e.preventDefault();
       handle.open();
     } else if (e.key === 'Escape' && expanded) {
       handle.close();
     }
-  };
-  window.addEventListener('keydown', onKeyDown);
+  });
 
   return handle;
 }
