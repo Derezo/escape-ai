@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.122: **Intro voice narration — Phase V2: the ElevenLabs generator (stdlib, user-run, gated).** New
+  `scripts/generate-voice.py` + `scripts/elevenlabs/` package, mirroring `scripts/sunoapi/`'s conventions
+  (stdlib-only — no pip; user-run, spends credits; `--list`/`--dry-run` make ZERO network calls and work
+  with the key unset; same exit-code contract 0/1/2/3/4). `client.py` reads `ELEVENLABS_API_KEY` from the
+  system env and POSTs to `/v1/text-to-speech/<voice_id>?output_format=mp3_44100_128` (model `eleven_v3`,
+  cinematic voice settings; the endpoint returns MP3 bytes directly — no submit/poll), with retry/backoff
+  on 429/5xx and clear 401/422 messages. On success it stages the raw clip + provenance JSON under the
+  gitignored `asset-pipeline/output/<key>/`, places `assets/voice/<key>.mp3`, **measures the clip's
+  duration with a zero-dependency MP3 frame-header parser** (validated against `ffprobe` to within ~one
+  frame, ~24ms), and **bakes `durationMs` back into the manifest with a surgical one-line edit** (no full
+  re-serialize — preserves the manifest's intentional formatting/blank lines; verified the diff is exactly
+  the single `durationMs` line). CLI: `--key`/`--generate-all`/`--list`/`--dry-run`/`--force`/`--voice`/
+  `--model`/`--only`. Verified: `--list` + `--dry-run` (key unset) print correctly with 0 network; a real
+  `--key` with the key unset exits 2; the duration measurer agrees with ffprobe on four existing MP3s.
+  Touched `scripts/generate-voice.py` (new), `scripts/elevenlabs/{__init__,paths,manifest,client,core}.py`
+  (new).
+
 - 0.2.121: **Intro voice narration — Phase V1: `voice[]` manifest section + VO-refined copy.** Groundwork
   for ElevenLabs-narrated intro subtitles. `asset-pipeline/manifest.json` gains a third audio kind, a
   `voice` array of 4 entries (`intro_vo_1..4`), each carrying `text` (the narration — the SINGLE source
