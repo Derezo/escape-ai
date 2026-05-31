@@ -246,3 +246,43 @@ generation looks wrong or if the API response shape ever changes.
 - **Client:** `client/src/music.ts` decodes MP3 via the Web Audio API (`decodeAudioData`
   handles MP3 directly), shares the one `AudioContext` from `audio.ts`, and is
   renderer-agnostic. `base: './'` keeps the asset URLs Capacitor-safe.
+
+---
+
+## 13. Voice narration — ElevenLabs (the cinematic intro)
+
+A third audio kind: spoken narration for the first-run "ESCAPE AI" intro. It rides the
+SAME manifest single-source-of-truth + drift gate as music/sfx, but is generated via
+**ElevenLabs** (not Suno) by a parallel stdlib-only package, `scripts/elevenlabs/`.
+
+**Manifest (`voice` array).** Each entry's `text` is the narration AND the on-screen
+subtitle (`client/src/intro.ts` keeps `SUBTITLES` byte-identical to it). Fields: `key`,
+`text`, `output` (`assets/voice/<key>.mp3`), `voiceId` (default `6sFKzaJr574YWVu4UuJF`),
+`model` (default `eleven_v3`), `defaultVolume`, and `durationMs` (null until baked).
+
+**Generation (you run it — spends ElevenLabs credits).** `ELEVENLABS_API_KEY` must be a
+**system** env var (never a repo file). Mirrors the Suno CLI:
+
+```bash
+python3 scripts/generate-voice.py --list                      # free, no key
+python3 scripts/generate-voice.py --dry-run --key=intro_vo_1  # free, prints the request
+python3 scripts/generate-voice.py --key=intro_vo_1            # spends credits
+python3 scripts/generate-voice.py --generate-all              # all four clips
+# exit codes: 0 ok · 1 usage · 2 auth (key unset) · 3 API · 4 integrity
+```
+
+Unlike Suno's submit→poll→download, the ElevenLabs TTS endpoint
+(`POST /v1/text-to-speech/<voice_id>`) returns the MP3 bytes directly. Each run: stages
+the raw clip + provenance JSON under `asset-pipeline/output/<key>/`, places
+`assets/voice/<key>.mp3`, **measures the clip duration** (a zero-dependency MP3
+frame-header parser — no ffmpeg) and **bakes `durationMs` back into the manifest** with a
+surgical one-line edit. Then run `cd scripts && npm run audio` so the baked durations +
+URLs reach `client/src/audio.generated.ts` (`VOICE_FILES` + `VOICE_META`), and rebuild.
+
+**Client.** `intro.ts` reads `VOICE_META`: each subtitle holds for `durationMs + 1.5s`,
+and plays its clip on the transition via `playVoice()` in `audio.ts` (a one-shot voice
+buffer cache parallel to SFX; `stopVoice()` cuts it on skip/teardown). **Fallback:** a
+clip whose duration isn't baked yet uses the original fixed cadence and plays silently —
+so a clean clone (no voice generated) runs the intro exactly as before; voice + clip-paced
+timing activate only once you generate. The drift gate treats a missing voice `.mp3` as a
+WARN (like music).
