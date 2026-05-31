@@ -17,6 +17,7 @@ const auth = require('./auth');
 const lobby = require('./lobby');
 const connection = require('./connection');
 const leaderboard = require('./leaderboard');
+const chat = require('./chat');
 
 module.exports = function initSockets(io, db) {
   // Shared, server-wide state.
@@ -45,6 +46,9 @@ module.exports = function initSockets(io, db) {
     // Leaderboard: on-demand ranking query; reads `state.userId` for the asker's
     // own row, so it's registered after auth (which populates it).
     leaderboard.register(socket, deps);
+    // Chat: room-wide text chat; reads the socket's player record (set by lobby) for
+    // the authoritative sender identity, so it's registered after lobby.
+    chat.register(socket, deps);
   });
 
   // Public API for external modules (engine.js reads these maps).

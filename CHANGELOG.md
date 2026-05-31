@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.128: **Global chat — server handler + rate limit (Phase 2/5).** New `server/socket/chat.js`
+  handles `chat:send`: it rate-limits, looks up the sender's own player record (no record / not
+  joined → can't chat), sanitizes the only client-supplied field (trim + 256-char cap, drop if
+  empty), and broadcasts `chat:message` to everyone in the sender's room with the SERVER-stamped
+  identity (`player.id`/`name`/`species`) + current tick — the client can't forge the sender.
+  Registered in `server/socket/index.js` after `lobby` (so the player record exists). Added a
+  `chat:send` token-bucket spec to `rate-limit.js` (burst 12, 2/sec sustained — generous for human
+  chatter, sheds floods; env-overridable via `RL_CHAT_BURST`/`RL_CHAT_REFILL_PER_SEC`). Touched
+  `server/socket/chat.js` (new), `server/socket/index.js`, `server/socket/rate-limit.js`.
+
 - 0.2.127: **Global chat — net contract (Phase 1/5).** Added the chat event pair to the shared
   single-source-of-truth net contract: `chat:send {text}` (client→server) and `chat:message
   {senderId, senderName, senderSpecies, text, tick}` (server→client, broadcast to the room). The

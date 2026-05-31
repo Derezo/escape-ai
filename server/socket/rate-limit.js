@@ -54,6 +54,14 @@ const INPUT_REFILL_PER_SEC = parseFloat(process.env.RL_INPUT_REFILL_PER_SEC) || 
 const LEADERBOARD_BURST = parseFloat(process.env.RL_LEADERBOARD_BURST) || 8;
 const LEADERBOARD_REFILL_PER_SEC = parseFloat(process.env.RL_LEADERBOARD_REFILL_PER_SEC) || 1;
 
+// CHAT class — the global chat:send stream. Chat is bursty (a few lines fired off in
+// quick succession) but low-rate overall. Sized so real chatter is NEVER throttled —
+// a burst of 12 absorbs a rapid back-and-forth, refilling 2/sec sustained (well above
+// human typing cadence) — while a spammer flooding the room is shed.
+//   burst 12, refill 2/sec ⇒ ~12 immediate, then 2/sec sustained.
+const CHAT_BURST = parseFloat(process.env.RL_CHAT_BURST) || 12;
+const CHAT_REFILL_PER_SEC = parseFloat(process.env.RL_CHAT_REFILL_PER_SEC) || 2;
+
 // Per-kind bucket spec. `allow(socketId, kind)` looks the kind up here.
 const SPECS = {
   // auth:login and lobby:join share the COARSE budget (separate buckets, same size).
@@ -62,7 +70,9 @@ const SPECS = {
   // the high-rate movement stream.
   input: { burst: INPUT_BURST, refillPerSec: INPUT_REFILL_PER_SEC },
   // the on-demand leaderboard fetch/poll.
-  'leaderboard:request': { burst: LEADERBOARD_BURST, refillPerSec: LEADERBOARD_REFILL_PER_SEC }
+  'leaderboard:request': { burst: LEADERBOARD_BURST, refillPerSec: LEADERBOARD_REFILL_PER_SEC },
+  // the global chat stream.
+  'chat:send': { burst: CHAT_BURST, refillPerSec: CHAT_REFILL_PER_SEC }
 };
 
 /**
