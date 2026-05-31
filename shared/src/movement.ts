@@ -80,6 +80,46 @@ export interface Heading {
 }
 
 /**
+ * Order the NON-straight probe offsets so the one whose RESULTING heading lands
+ * closest to `biasAngle` is tried first — the anti-vibration tie-break. With a
+ * stable reference (a held wander heading, a leader direction) a boxed-in NPC
+ * keeps picking the SAME slide direction tick-to-tick instead of alternating
+ * between +45° and −45° as its desired heading wobbles across a probe boundary
+ * (the micro-slide that reads as vibration). When `biasAngle` is undefined the
+ * fixed {@link PROBE_FAN} order is kept verbatim (the legacy behavior).
+ *
+ * Tie-break (DOCUMENTED, deterministic): probes are sorted by absolute angular
+ * distance from `biasAngle` (wrapped to [0, π]); at EQUAL angular distance the
+ * higher PROBE_FAN index loses to the lower one, which — given PROBE_FAN lists
+ * +offset immediately before its −offset at each magnitude — preserves the
+ * historical "+ before − at equal distance" rule. `Array.prototype.sort` in V8 is
+ * stable, and the comparator never returns 0 for distinct offsets unless their
+ * angular distances tie, so the order is fully determined by (offsets, biasAngle).
+ */
+function probeOrder(base: number, biasAngle: number | undefined): readonly number[] {
+  // Straight-ahead is always tried first (offset 0 is PROBE_FAN[0]); only the
+  // remaining fan is reordered, so an UNBLOCKED straight probe returns instantly
+  // with no behavior change vs. the legacy path.
+  if (biasAngle === undefined) return PROBE_FAN;
+  const rest = PROBE_FAN.slice(1);
+  // Decorate-sort-undecorate keeps the index for the stable, documented tie-break.
+  return [
+    PROBE_FAN[0],
+    ...rest
+      .map((off, i) => ({ off, i, d: angDist(base + off, biasAngle) }))
+      .sort((a, b) => a.d - b.d || a.i - b.i)
+      .map((p) => p.off),
+  ];
+}
+
+/** Smallest absolute angular distance between two angles, wrapped to [0, π]. */
+function angDist(a: number, b: number): number {
+  let d = Math.abs(a - b) % (Math.PI * 2);
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  return d;
+}
+
+/**
  * Given a DESIRED unit heading, return an adjusted unit heading that makes
  * forward progress against the collision grid. Probes the desired heading
  * first; if a short look-ahead box would be solid, rotates through {@link
@@ -91,6 +131,15 @@ export interface Heading {
  * don't move") pins an NPC flush to a wall until its wander heading re-rolls.
  * Here the NPC instead turns toward the first open direction within ±135° of
  * where it wanted to go and slides around the corner via moveWithCollision.
+ *
+ * Optional `biasAngle` (radians) is an anti-vibration REFERENCE heading: when the
+ * straight probe is blocked, the remaining probes are ordered by closeness to it
+ * (see {@link probeOrder}) so a boxed-in NPC keeps choosing the same slide
+ * direction instead of flip-flopping. Callers with a stable held heading pass it
+ * (wanderAvoid passes its wander heading); callers without it omit the param and
+ * get the legacy fixed-fan order. CRITICAL: when the straight probe is CLEAR the
+ * function returns the desired heading regardless of biasAngle — identical to the
+ * legacy path — so the parity/determinism gates stay green for the common case.
  *
  * Pure + deterministic: no RNG, no clock; the probe order and tie-break are
  * fixed. atan2/cos/sin are already part of the deterministic core (facingFromVec,
@@ -109,12 +158,13 @@ export function steerAround(
   mapH: number,
   tile: number,
   radius: number,
+  biasAngle?: number,
 ): Heading {
   if (desX === 0 && desY === 0) return { dirX: 0, dirY: 0 };
   // Look far enough to react to a wall before touching it; at least one step.
   const look = Math.max(radius + tile * STEER.LOOK_TILES, speed * dt);
   const base = Math.atan2(desY, desX);
-  for (const off of PROBE_FAN) {
+  for (const off of probeOrder(base, biasAngle)) {
     const a = base + off;
     const hx = Math.cos(a);
     const hy = Math.sin(a);
@@ -265,6 +315,19 @@ export function speedBoost(id: string, tick: number): number {
  * bound within EDGE_MARGIN), then steers around any solid ahead and integrates
  * with moveWithCollision. Mutates `entity.x/y` in place (like moveWithCollision).
  * Pure given `(entity, tick, dt, grid)`.
+ *
+ * ANTI-VIBRATION (two coupled guards, both deterministic):
+ *   1) The held wander heading is passed to steerAround as the bias reference, so
+ *      a boxed-in wanderer keeps picking the SAME slide direction tick-to-tick
+ *      instead of alternating +45°/−45° as the desired heading wobbles across a
+ *      probe boundary (the flip-flop that micro-slid the body sideways).
+ *   2) HOLD-POSITION: snapshot the position, integrate on the entity, then if the
+ *      net displacement is below {@link WANDER.MIN_STEP} (a sub-pixel grind in a
+ *      corner) roll x/y back to the snapshot — no move this tick. This removes the
+ *      residual sub-MIN_STEP slide the facing deadband alone left in the body.
+ * Together with facingFromVecDeadband on the caller's facing commit, a wanderer
+ * pinned in a pen corner neither slides nor flips — the vibration is gone — while
+ * a real drift step (≫ MIN_STEP) is unaffected.
  */
 export function wanderAvoid(
   entity: { id: string; x: number; y: number },
@@ -286,7 +349,20 @@ export function wanderAvoid(
   if (entity.y < bounds.minY + WANDER.EDGE_MARGIN) dirY = Math.abs(dirY);
   else if (entity.y > bounds.maxY - WANDER.EDGE_MARGIN) dirY = -Math.abs(dirY);
 
-  const heading = steerAround(entity, dirX, dirY, dt, speed, collision, mapW, mapH, tile, radius);
+  // Bias the probe fan toward the (post-edge-bias) wander heading itself so a
+  // boxed-in wanderer commits to one slide direction rather than flip-flopping.
+  const biasAngle = Math.atan2(dirY, dirX);
+  const heading = steerAround(entity, dirX, dirY, dt, speed, collision, mapW, mapH, tile, radius, biasAngle);
   if (heading.dirX === 0 && heading.dirY === 0) return; // boxed in this tick
+
+  // Integrate, then HOLD if it was only a sub-MIN_STEP micro-slide (corner grind).
+  const bx = entity.x;
+  const by = entity.y;
   moveWithCollision(entity, heading.dirX, heading.dirY, dt, speed, collision, mapW, mapH, tile, radius);
+  const mdx = entity.x - bx;
+  const mdy = entity.y - by;
+  if (mdx * mdx + mdy * mdy < WANDER.MIN_STEP * WANDER.MIN_STEP) {
+    entity.x = bx;
+    entity.y = by;
+  }
 }

@@ -160,6 +160,20 @@ export const WANDER = {
    * unit in a fresh direction each tick. Same value on every server (deterministic).
    */
   FACING_DEADBAND: 0.75,
+  /**
+   * Minimum per-tick BODY displacement (units) `wanderAvoid` will commit. When a
+   * boxed-in wanderer's resolved step would move it LESS than this (a sub-pixel
+   * micro-slide), wanderAvoid rolls the move back entirely and HOLDS position for
+   * the tick. This is the body-side companion to {@link FACING_DEADBAND}: the
+   * deadband stops the FACING from flipping, but a sub-unit slide still nudged the
+   * body in alternating directions tick-to-tick (the visible vibration / drift in a
+   * pen corner). Holding below MIN_STEP removes that residual jitter while leaving
+   * real movement (a full drift step ≫ MIN_STEP) untouched. Set equal to
+   * FACING_DEADBAND so the "too small to face" and "too small to move" thresholds
+   * coincide — one boxed-in tick neither turns nor slides. Deterministic (a plain
+   * distance compare), so every server holds on the exact same ticks.
+   */
+  MIN_STEP: 0.75,
 } as const;
 
 /**

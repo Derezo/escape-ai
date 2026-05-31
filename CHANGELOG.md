@@ -4,6 +4,43 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.149: **NPC anti-vibration — stabilized steering fan + hold-position (Phase 4).**
+  Kills the residual animal/robot jitter (sprite flipping + sub-pixel body slide) in
+  tight spaces. SHARED: `steerAround` takes an optional `biasAngle` reference heading —
+  when the straight probe is blocked, the remaining `PROBE_FAN` offsets are ordered by
+  angular closeness to it (stable, documented tie-break: equal distance → lower fan index,
+  preserving the historical "+before−") so a boxed-in NPC keeps the SAME slide direction
+  instead of flip-flopping ±45° as its desired heading wobbles across a probe boundary.
+  The param is OPTIONAL and a strict no-op when the straight probe is clear (the common
+  case), so every parity/determinism gate stays green and existing callers (followers,
+  patrol, investigate, return-home) are unchanged. `wanderAvoid` now (1) passes its own
+  held wander heading as the bias and (2) HOLDS position: it snapshots x/y, integrates,
+  and rolls the move back when the net displacement is below the new `WANDER.MIN_STEP`
+  (= `FACING_DEADBAND` = 0.75) — removing the sub-MIN_STEP corner grind the facing deadband
+  alone left in the body. SERVER: the robot guard/wander facing commit in `behaviors.js`
+  switches to `facingFromVecDeadband` (NPCs only — player facing stays responsive), so a
+  guard pinned in an aux-building corner neither slides nor flips. Engine tick order
+  (stepIdleAnimals → stepFollowers → stepRobots) verified disjoint — no double-move.
+  `shared` build + 90-test suite green; `check-facing` green; server boots clean; e2e-follow
+  passes against the live server.
+
+- 0.2.148: **Client — real shingle roof tiles + entrance doorway markers (Phase 3).**
+  `client/src/render/phaser.ts` only. Replaces the flat brown `Rectangle` per building
+  with per-cell `Image` objects spawned from `map.roof.data` (ROOF_RED_MID/EDGE_*/CORNER_*/
+  RIDGE/PEAK tiles, indices 92–102, plus SHADE_CLOTH 131) using the same `tN` frame-
+  registration pattern as `buildCanopies`. Frames are pre-registered in `buildWorld`
+  before the per-building loop so `buildRoofTiles` can look them up by name. Aux buildings
+  (commissary/washroom/maintenance) get `setTint(AUX_ROOF_TINT[kind])` on each tile image
+  so the three service halls remain visually distinct. The `roofs` tracking type is widened
+  to `{ tiles: Image[]; fallback: Rectangle | null; … }` — if `map.roof.data` has no cells
+  inside a building footprint the fallback rectangle is used instead (no regression). `updateRoofFade`
+  now tweens all per-cell images (or the fallback rect) together, preserving the 220ms
+  Sine.easeOut fade-on-enter behaviour exactly. Adds `buildDoorwayMarker`: a yellow
+  downward-pointing triangle at `DEPTH_AUX_OVERLAY` centred on the 2-wide door opening,
+  visible whether the roof is opaque or faded. All new objects (`tiles` images + doorway
+  markers) are tracked in `doorwayMarkers[]` and destroyed on map rebuild — no leaks.
+  Build green (tsc strict, zero new errors).
+
 - 0.2.147: **World gen v18 — wadeable shoreline + roomier pens (version bump + re-pin).**
   Completes the tiles.ts/world.ts generator edits: shallow + shore water (WATER_SHALLOW,
   POND_EDGE and the full WATER_EDGE / WATER_CORNER / WATER_ICORNER ring) are now PASSABLE —

@@ -264,9 +264,13 @@ function stepRobotIdle(robot, animals, ctx) {
       robot, currentTick, dt, speedFor(robot, lockdown, currentTick),
       rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, guardBounds,
     );
-    // Face the actual drift (zero delta on a boxed-in tick holds facing), mirroring
-    // how stepIdleAnimals faces a contained pen animal after wanderAvoid.
-    robot.facing = shared.facingFromVec(robot.x - bx, robot.y - by, robot.facing || 's');
+    // Face the actual drift with the anti-vibration DEADBAND (NPCs only — players
+    // keep responsive facing). A guard pinned in an aux-building corner makes only
+    // a sub-MIN_STEP slide (now rolled back inside wanderAvoid); deriving facing
+    // from that residual delta would still flip it tick-to-tick, so hold the prior
+    // facing below WANDER.FACING_DEADBAND, mirroring how stepIdleAnimals faces a
+    // contained pen animal. Deterministic + pure like facingFromVec.
+    robot.facing = shared.facingFromVecDeadband(robot.x - bx, robot.y - by, robot.facing || 's', shared.WANDER.FACING_DEADBAND);
     return;
   }
 
