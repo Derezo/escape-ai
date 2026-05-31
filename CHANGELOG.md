@@ -4,6 +4,12 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.146: **Docs — clarify the widened `EntityView.body` type.** Adds a comment on
+  `EntityView.body` (now `Shape | Sprite | Container`) recording the invariant a
+  plan-validation review flagged: the `Shape`/`Sprite` casts in `restyle`/`updateAnimation`
+  are reached only inside `e.kind==='animal'/'robot'` branches, so a terminal's Container
+  body never hits them and the wider type can't cause a bad runtime cast. Comment-only.
+
 - 0.2.145: **Test — terminal-lock activation/auto-deactivate integration test.** Adds
   `server/test/terminal-lock.test.js` (zero-dep `node:test`) covering the five lock
   invariants end-to-end through the real `quests.js`/`world.js` and the actual

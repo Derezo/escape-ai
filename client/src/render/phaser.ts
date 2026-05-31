@@ -145,6 +145,10 @@ type RobotMode = 'idle' | 'frozen' | 'pursue' | 'ordered';
  * actually changed (a static room of entities costs nothing per frame).
  */
 interface EntityView {
+  // Container is used only by the composed terminal prop. The Shape/Sprite casts in
+  // restyle()/updateAnimation() are reached exclusively inside e.kind==='animal'/'robot'
+  // branches (terminals restyle their LED and never animate), so a terminal body never
+  // hits those casts — the wider type can't cause a bad cast at runtime.
   body: Phaser.GameObjects.Shape | Phaser.GameObjects.Sprite | Phaser.GameObjects.Container;
   isSprite: boolean;
   species?: string;
