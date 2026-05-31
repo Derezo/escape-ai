@@ -4,6 +4,18 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.114: **Join-lag: a late joiner now gets the full world immediately, not after ~5s.** The room
+  snapshot broadcast is a delta keyed by the room's shared `lastSentByRoom` memory; static props
+  (pens, food, gate, robots, idle animals) only ride a FULL refresh (`currentTick % 100 === 0`, every
+  5s). A socket joining an *already-populated* room found those props already marked sent, so it saw an
+  almost-empty world until the next full tick — the visible "lag before spawn" in multiplayer. New
+  `engine.sendFullSnapshotTo(socket, room)` emits a one-time full snapshot (all players + all static
+  props) to the joining socket right after the `map` event in `lobby:join`. It builds its own entity
+  list and deliberately does NOT touch `lastSentByRoom`, so the room's delta for every other client is
+  unaffected. Verified: a second client joining a populated room received the full 87-entity world
+  (static props + both players + its own spawn) within 400ms of join, vs. waiting up to 5s before.
+  engine.js also switched its broadcast to `SERVER_EVENTS.SNAPSHOT` (shared net contract) to match.
+
 - 0.2.113: **World-gen perf: reuse one `floodReachable` `seen` buffer across reachability passes.**
   The reachability-carve loop in `generateWorld` (`shared/src/world.ts`) calls `floodReachable` (a BFS
   over the collision grid) once per carve iteration — ~10–38 times per world build — and each call

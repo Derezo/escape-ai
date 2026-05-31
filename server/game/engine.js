@@ -26,6 +26,7 @@
  */
 
 const config = require('../config');
+const { SERVER_EVENTS } = require('../../shared/dist/net.js');
 const world = require('./world');
 const stealth = require('./stealth');
 const quests = require('./quests');
@@ -366,7 +367,7 @@ function broadcastSnapshots() {
     // On a delta tick with nothing changed, still send a heartbeat so clients
     // keep advancing their tick clock and receive fresh acks. The WorldState
     // rides along every tick — it's tiny — so the client always has it fresh.
-    io.to(roomName).emit('snapshot', {
+    io.to(roomName).emit(SERVER_EVENTS.SNAPSHOT, {
       tick: currentTick,
       entities,
       acks,
@@ -375,10 +376,63 @@ function broadcastSnapshots() {
   }
 }
 
+/**
+ * Send a ONE-TIME full snapshot (every player + every static world prop) to a
+ * single just-joined socket, immediately on join — so a player who joins an
+ * already-populated room sees the whole world AT ONCE instead of waiting up to
+ * FULL_REFRESH_INTERVAL ticks (~5s) for the next room-wide full refresh. Between
+ * full refreshes the room broadcast is a delta keyed by the room's shared
+ * `lastSent` memory, and the static props were already marked sent before this
+ * socket existed — so without this nudge the new client would render an almost
+ * empty world until the next full tick (the visible "lag before spawn").
+ *
+ * CRITICAL: this builds its own entity list and DOES NOT touch `lastSentByRoom`.
+ * The room delta memory tracks what the ROOM broadcast last sent; mutating it
+ * here would make the very next room delta wrongly SKIP these entities for every
+ * OTHER client. So this is a pure read-only serialization sent only to `socket`.
+ * Idempotent and side-effect-free on sim state.
+ *
+ * @param {import('socket.io').Socket} socket  the joining socket
+ * @param {string} roomName
+ */
+function sendFullSnapshotTo(socket, roomName) {
+  if (!io || !rooms) return;
+  const members = rooms.get(roomName);
+  if (!members) return;
+
+  const entities = [];
+  const acks = {};
+
+  // Every player currently in the room (includes the just-joined one, so the
+  // client immediately gets its own authoritative spawn position).
+  for (const socketId of members) {
+    const player = connectedPlayers.get(socketId);
+    if (!player) continue;
+    const entity = toEntity(player);
+    acks[entity.id] = player.lastProcessedSeq || 0;
+    entities.push(entity);
+  }
+
+  // Every static world prop (pens, food, gate, robots, idle animals, terminals).
+  for (const entity of world.getWorldEntities(roomName)) {
+    entities.push(entity);
+  }
+
+  socket.emit(SERVER_EVENTS.SNAPSHOT, {
+    tick: currentTick,
+    entities,
+    acks,
+    world: world.getWorldState(roomName)
+  });
+}
+
 module.exports = {
   init,
   start,
   stop,
+  // Send a just-joined socket its initial full snapshot (lobby.js calls this on
+  // join so a late joiner doesn't wait for the next room-wide full refresh).
+  sendFullSnapshotTo,
   // Read-only accessors used by the /health endpoint.
   getCurrentTick: () => currentTick,
   isRunning: () => running,

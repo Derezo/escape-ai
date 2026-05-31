@@ -233,6 +233,15 @@ function register(socket, deps) {
     // Payload shape mirrors MapMsg {seed, version, tile, w, h}.
     socket.emit(SERVER_EVENTS.MAP, world.getMapMeta(room));
 
+    // Immediately seed this socket with a ONE-TIME full snapshot (all players +
+    // all static world props), so a player joining an already-populated room sees
+    // the whole world at once instead of waiting up to FULL_REFRESH_INTERVAL ticks
+    // (~5s) for the next room-wide full refresh — the "lag before spawn". Emitted
+    // AFTER the map so the client has the seed to regenerate the world before it
+    // places these entities (Socket.IO preserves per-socket emit order). This is
+    // read-only on sim state and does NOT disturb the room's delta memory.
+    engine.sendFullSnapshotTo(socket, room);
+
     broadcastLobbyState(io, connectedPlayers, rooms, room);
   });
 
