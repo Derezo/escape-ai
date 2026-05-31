@@ -4,6 +4,14 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.131: **Global chat — two-client e2e regression harness.** New `scripts/e2e-chat.js` boots the
+  real server on a temp port/DB, connects two socket.io clients, and asserts the chat contract:
+  both clients receive a sent line, the sender identity is SERVER-stamped (not forgeable), text is
+  trimmed, blank/empty/missing messages are dropped, an over-long message is capped at 256, and a
+  message sent before joining a room is dropped. All 12 assertions green. (The widget DOM + the
+  main.ts typing-freezes-movement contract were also verified in headless Chrome during this pass.)
+  Touched `scripts/e2e-chat.js` (new).
+
 - 0.2.130: **Global chat — client widget + wiring (Phase 4+5/5).** The chat is live end-to-end.
   `NetClient` gained `sendChat(text)` + `onChat(cb)` and an internal `chat:message` handler
   (`client/src/net/client.ts`). New `client/src/chat.ts` is a collapsible bottom-left DOM overlay
