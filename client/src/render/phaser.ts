@@ -145,7 +145,7 @@ type RobotMode = 'idle' | 'frozen' | 'pursue' | 'ordered';
  * actually changed (a static room of entities costs nothing per frame).
  */
 interface EntityView {
-  body: Phaser.GameObjects.Shape | Phaser.GameObjects.Sprite;
+  body: Phaser.GameObjects.Shape | Phaser.GameObjects.Sprite | Phaser.GameObjects.Container;
   isSprite: boolean;
   species?: string;
   label?: Phaser.GameObjects.Text;
@@ -188,6 +188,10 @@ interface EntityView {
   isLocal?: boolean;
   /** Whether this kind Y-sorts (mobile entities + quest objects in the world band). */
   ysorted?: boolean;
+  /** Status LED arc for terminal entities (red blink = off, solid green = activated). */
+  terminalLight?: Phaser.GameObjects.Arc;
+  /** Cached activation state for the terminal LED; avoids redundant setFillStyle calls. */
+  terminalActive?: boolean;
 }
 
 /** humanLikeness at/above this reads as "human" — mirrors the server freeze threshold. */
@@ -690,6 +694,17 @@ class WorldScene extends Phaser.Scene {
       // The follow ring is a Graphics drawn at absolute coords + (re)animated for
       // its pulse, so redraw it at the fresh position each frame while active.
       if (view.followRing && view.followFrac !== undefined) this.drawFollowRing(view);
+      // TERMINAL LED: animate the status light each frame.  The LED is a Container
+      // child so its position tracks the container automatically; we only drive alpha.
+      // Active (green) → solid; inactive (red) → slow blink via a sine wave.
+      if (view.terminalLight) {
+        if (view.terminalActive) {
+          view.terminalLight.setAlpha(1);
+        } else {
+          const blink = 0.4 + 0.6 * Math.abs(Math.sin(this.time.now / 240));
+          view.terminalLight.setAlpha(blink);
+        }
+      }
       // Y-SORT: once a tilemap world exists, a mobile entity's depth is its world
       // Y, so it draws in front of things above it (smaller Y) and behind things
       // below it — including the canopy layer at mid-band, giving the walk-behind
@@ -831,6 +846,18 @@ class WorldScene extends Phaser.Scene {
         }
       }
       this.styleSuspicionRing(view, suspicion);
+      return;
+    }
+
+    if (e.kind === 'terminal') {
+      // Detect activation flips so we only call setFillStyle when the state changes.
+      const active = typeof e.activatedBy === 'string';
+      if (active !== view.terminalActive) {
+        view.terminalActive = active;
+        // Base fill colour: green when activated, red when idle.
+        // Alpha is driven per-frame in interpolate() (solid green / blinking red).
+        view.terminalLight?.setFillStyle(active ? 0x32ff6a : 0xff3b3b);
+      }
       return;
     }
   }
@@ -1356,14 +1383,47 @@ class WorldScene extends Phaser.Scene {
         return base(body, { species: 'robot', label: this.makeLabel(e), ysorted: true });
       }
 
-      case 'terminal':
-        return base(
-          this.add
-            .rectangle(e.x, e.y, MARKER_SIZE, MARKER_SIZE, 0x32d296)
-            .setStrokeStyle(2, 0xffffff, 0.7)
-            .setOrigin(0.5)
-            .setDepth(DEPTH_PROP),
-        );
+      case 'terminal': {
+        // Outdoor console composed from static child shapes in a Container.
+        // All children are in LOCAL space (origin = container's world position).
+        // Sizes are tuned around MARKER_SIZE (20) / RECT_SIZE (28).
+
+        // Post/base: thin tall darker-steel rect, anchored below centre so the
+        // housing appears to stand on a pole.
+        const post = this.add
+          .rectangle(0, 10, 4, 10, 0x4a5159)
+          .setOrigin(0.5);
+
+        // Housing: the main console body (steel-grey, 20×18).
+        const housing = this.add
+          .rectangle(0, 0, 20, 18, 0x6b7280)
+          .setStrokeStyle(2, 0x2b2f36, 1)
+          .setOrigin(0.5);
+
+        // Screen: an inset darker panel (13×9) near the top of the housing.
+        const screen = this.add
+          .rectangle(0, -2, 13, 9, 0x10202a)
+          .setStrokeStyle(1, 0x2f6f8f, 0.8)
+          .setOrigin(0.5);
+
+        // Keypad: a small light strip below the screen (console flavour).
+        const keypad = this.add
+          .rectangle(0, 5, 10, 3, 0x8a9199)
+          .setOrigin(0.5);
+
+        // Status LED: top-right corner of the housing (~8, ~-7 in local space).
+        // Initial state: inactive → red.  Alpha driven per-frame in interpolate().
+        const initialActive = typeof e.activatedBy === 'string';
+        const terminalLight = this.add
+          .circle(8, -7, 2.5, initialActive ? 0x32ff6a : 0xff3b3b)
+          .setOrigin(0.5);
+
+        const container = this.add
+          .container(e.x, e.y, [post, housing, screen, keypad, terminalLight])
+          .setDepth(DEPTH_PROP);
+
+        return base(container, { terminalLight, terminalActive: initialActive });
+      }
 
       case 'gate':
         return base(
@@ -1508,6 +1568,9 @@ class WorldScene extends Phaser.Scene {
     view.halo?.destroy();
     view.fxGlow?.destroy();
     view.followRing?.destroy();
+    // terminalLight is a Container child and auto-destroys with the container body,
+    // but we nullify the reference so nothing reanimates a destroyed object.
+    view.terminalLight = undefined;
   }
 }
 

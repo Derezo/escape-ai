@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.143: **Terminals — outdoor-console sprite + status LED.** The flat green square is
+  replaced by a composed outdoor computer terminal (Phaser Container: steel housing, dark
+  inset screen, keypad strip, standing post) with a top-corner status LED. The LED reads
+  the entity's shared lock: it **blinks red** when the terminal is off and is **solid green**
+  when activated (`e.activatedBy` set). State flips are detected in `restyle` (one
+  `setFillStyle` per change); the blink alpha animates per-frame in `interpolate`
+  (`0.4 + 0.6·|sin(now/240)|`), reusing the renderer's existing sine-pulse idiom. Adds
+  `EntityView.terminalLight`/`terminalActive`, widens `EntityView.body` to include
+  `Container`, and tears the LED down in `destroyView`. Touched `client/src/render/phaser.ts`.
+
 - 0.2.142: **Terminals — server activation lock + 15s auto-deactivate.** Keeper terminals
   now carry a shared activation lock on the world entity (`activatedBy` + `activatedTick`)
   set when a player taps one. The lock blocks OTHER players from counting/ordering at that
