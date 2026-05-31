@@ -25,10 +25,15 @@ the audit trail).
   heading to the target is wall-blocked (a cheap `boxHitsSolid` look-ahead), fast-repath
   A* to the target's current tile (cadence ~3–5 ticks) and follow the first waypoint via
   the SAME dense-path + near-wall-direct logic Phase 4 added; keep the raw `steerAround`
-  for the open-line case. Reuse `followPathToGoal` with the target tile as the goal.
+  for the open-line case. Reuse `followPathToGoal` with the target tile as the goal. Also
+  route the pursue heading through `movement.smoothHeading` (the anti-bounce turn-rate
+  limiter added in the NPC anti-bounce plan, 2026-05-31) so a robot chasing a target
+  around a corner doesn't flip its heading tick-to-tick — patrol/guard/investigate/return
+  already smooth via `robot.headAngle`; pursue is the one robot path left unsmoothed.
 - **Refs:** `server/game/stealth.js` `stepRobots` (the `decision.mode === 'pursue'`
-  block); `server/game/behaviors.js` `moveTowardPoint` (the pattern to mirror);
-  `shared/src/pathfind.ts` `findPath`.
+  block); `server/game/behaviors.js` `moveTowardPoint` (the pattern to mirror, including
+  its `smoothHeading` call); `shared/src/pathfind.ts` `findPath`;
+  `shared/src/movement.ts` `smoothHeading`.
 - **Effort:** M.
 
 ### Stat-field names enumerated across four server files (low-priority DRY)
