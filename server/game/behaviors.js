@@ -191,6 +191,15 @@ function moveTowardPoint(robot, tx, ty, dt, speed, rm, worldEntities, entersHaza
     hy = heading.dirY;
   }
 
+  // ANTI-BOUNCE: turn-rate-limit the committed heading so a robot rounding a wall (or a
+  // freshly recomputed A* waypoint that briefly points backward) can't reverse in one
+  // tick — the same E/W-flip fix the pen animals got. The smoothed heading feeds BOTH
+  // the move and the facing; the committed angle rides on the robot (server-only).
+  const sm = movement.smoothHeading(hx, hy, robot.headAngle);
+  robot.headAngle = sm.angle;
+  hx = sm.dirX;
+  hy = sm.dirY;
+
   const trial = { x: robot.x, y: robot.y };
   shared.moveWithCollision(trial, hx, hy, dt, speed, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
   if (!entersHazard(trial.x, trial.y, worldEntities)) {
@@ -258,18 +267,44 @@ function stepRobotIdle(robot, animals, ctx) {
   if (robot.guard) {
     resetPathOnTransition('guard');
     robot.behavior = 'guard';
+    const speed = speedFor(robot, lockdown, currentTick);
+    // ANTI-BOUNCE: a guard wanders its aux building via A*-TO-AN-INTERIOR-TARGET — the
+    // SAME fix the pen animals got. Reactive wanderAvoid paced e↔w in a tiny building
+    // (the wander heading re-rolls into a wall every ~40 ticks and there's nowhere to
+    // slide). Instead route to a deterministic reachable interior tile so the heading
+    // always points somewhere walkable, then turn-rate-limit the committed heading.
+    const target = (ctx.pickGuardTarget && guardBounds)
+      ? ctx.pickGuardTarget(robot, guardBounds, currentTick)
+      : null;
+    const waypoint = (target && ctx.followPathToGoal && ctx.scratch)
+      ? ctx.followPathToGoal(robot, rm, ctx.scratch, target.tx, target.ty, currentTick)
+      : null;
+    if (waypoint) {
+      let dx = waypoint.x - robot.x;
+      let dy = waypoint.y - robot.y;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len; dy /= len;
+      const sm = movement.smoothHeading(dx, dy, robot.headAngle);
+      robot.headAngle = sm.angle;
+      const trial = { x: robot.x, y: robot.y };
+      shared.moveWithCollision(trial, sm.dirX, sm.dirY, dt, speed, rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS);
+      if (!entersHazard(trial.x, trial.y, worldEntities)) {
+        robot.x = trial.x;
+        robot.y = trial.y;
+      }
+      robot.facing = shared.facingFromVec(sm.dirX, sm.dirY, robot.facing || 's');
+      return;
+    }
+    // FALLBACK (no building interior / unreachable target): the smoothed contained
+    // wanderAvoid, so a guard on a degenerate building still drifts and never freezes.
     const bx = robot.x;
     const by = robot.y;
+    const smooth = { angle: robot.headAngle };
     movement.wanderAvoid(
-      robot, currentTick, dt, speedFor(robot, lockdown, currentTick),
-      rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, guardBounds,
+      robot, currentTick, dt, speed,
+      rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, guardBounds, smooth,
     );
-    // Face the actual drift with the anti-vibration DEADBAND (NPCs only — players
-    // keep responsive facing). A guard pinned in an aux-building corner makes only
-    // a sub-MIN_STEP slide (now rolled back inside wanderAvoid); deriving facing
-    // from that residual delta would still flip it tick-to-tick, so hold the prior
-    // facing below WANDER.FACING_DEADBAND, mirroring how stepIdleAnimals faces a
-    // contained pen animal. Deterministic + pure like facingFromVec.
+    robot.headAngle = smooth.angle;
     robot.facing = shared.facingFromVecDeadband(robot.x - bx, robot.y - by, robot.facing || 's', shared.WANDER.FACING_DEADBAND);
     return;
   }
@@ -295,10 +330,15 @@ function stepRobotIdle(robot, animals, ctx) {
   }
 
   const speed = speedFor(robot, lockdown, currentTick);
+  // Pass the robot's committed heading angle (in a box) so patrolStep turn-rate-limits
+  // the heading (anti-bounce): a patroller rounding a fence corner can't flip its
+  // facing tick to tick. patrolStep seeds the angle on the first move and returns the
+  // new angle to store back (server-only scratch).
   const res = movement.patrolStep(
     robot, route, robot.patrolIndex, dt, speed,
-    rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS,
+    rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, { angle: robot.headAngle },
   );
+  if (res.angle !== undefined) robot.headAngle = res.angle;
   // Hazard veto (Third Law) on the resolved destination, same as the pursue path.
   if (!entersHazard(res.x, res.y, worldEntities)) {
     robot.x = res.x;

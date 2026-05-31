@@ -4,6 +4,26 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.155: **NPC anti-bounce, Phase 3 — robots stop bouncing at walls.** Extends the
+  smoother to the three robot movement paths that could flip facing tick-to-tick at a
+  wall. (1) `movement.patrolStep` gains an opt-in `smooth` box: when the caller passes
+  its committed heading angle, the patrol heading is turn-rate-limited (a patroller
+  rounding a fence corner can't reverse) and the new angle is returned to store back;
+  omitted → byte-identical legacy path. (2) `movement.wanderAvoid` gains the same opt-in
+  `smooth` box. (3) `behaviors.moveTowardPoint` (investigate / return-haul / exit-pen)
+  smooths its committed heading through `smoothHeading`. (4) GUARD robots — the worst
+  case, a guard pacing e↔w inside a tiny aux building — now wander via A*-TO-AN-
+  INTERIOR-TARGET exactly like pen animals: `pickContainedTarget` (the generalized
+  free-interior-cell picker, shared by pens + guard buildings) chooses a deterministic
+  reachable tile, exposed to behaviors via `idleCtx.pickGuardTarget`, followed with the
+  turn-limited heading; a degenerate building falls back to the smoothed `wanderAvoid`.
+  Robot heading angle rides on `robot.headAngle` (server-only scratch). Result on the
+  real `stepRobots` pipeline: **0** near-opposite facing reversals across the whole
+  9-robot roster (3 guards + 6 patrollers) over 800 ticks — down from 279. New server
+  gate (`robot-bounce.test.js`, 3 tests: reversals ~0, finite+in-world over 1500 ticks,
+  bit-identical replay). 12 server + 99 shared tests green; `check-facing` green; server
+  boots. All new fields server-only/never-serialized — no wire/desync impact.
+
 - 0.2.154: **NPC anti-bounce, Phase 2 — A*-target pen wander (kills the tortoise
   jitter).** Replaces the reactive contained-wander for PENNED animals in
   `stealth.stepIdleAnimals`. Instead of `wanderAvoid` (which generated a wander heading

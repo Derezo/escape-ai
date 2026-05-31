@@ -240,6 +240,12 @@ export interface PatrolResult {
   dirY: number;
   /** True on the tick the current waypoint was reached (index advanced this step). */
   arrived: boolean;
+  /**
+   * The committed heading ANGLE (radians) when turn-rate limiting is active (a
+   * `prevAngle` was passed), for the caller to store back on the entity. `undefined`
+   * when no smoothing was requested (the legacy unsmoothed path).
+   */
+  angle?: number;
 }
 
 /**
@@ -266,6 +272,7 @@ export function patrolStep(
   mapH: number,
   tile: number,
   radius: number,
+  smooth?: { angle: number | undefined },
 ): PatrolResult {
   if (route.length === 0) {
     return { x: entity.x, y: entity.y, index: 0, dirX: 0, dirY: 0, arrived: false };
@@ -292,13 +299,32 @@ export function patrolStep(
   const len = Math.hypot(dx, dy) || 1;
   const desX = dx / len;
   const desY = dy / len;
-  const heading = steerAround(entity, desX, desY, dt, speed, collision, mapW, mapH, tile, radius);
+  let heading = steerAround(entity, desX, desY, dt, speed, collision, mapW, mapH, tile, radius);
+
+  // ANTI-BOUNCE (opt-in via `smooth`): turn-rate-limit the committed heading so a
+  // patroller rounding a fence corner — where steerAround can flip its tangent tick to
+  // tick as the body drifts across a probe boundary — can't reverse in one tick. The
+  // caller passes a `{ angle }` box holding its last committed heading angle (or
+  // `undefined` on the first move); smoothHeading seeds it on the first move and
+  // limits the turn thereafter. When `smooth` is omitted the legacy unsmoothed heading
+  // is used verbatim (byte-identical), so existing tests/callers are unaffected. A
+  // boxed-in {0,0} heading stays {0,0} (no smoothing of "don't move") and holds the angle.
+  let angle: number | undefined;
+  if (smooth) {
+    if (heading.dirX !== 0 || heading.dirY !== 0) {
+      const sm = smoothHeading(heading.dirX, heading.dirY, smooth.angle);
+      heading = { dirX: sm.dirX, dirY: sm.dirY };
+      angle = sm.angle;
+    } else {
+      angle = smooth.angle; // boxed in this tick — hold the committed angle
+    }
+  }
 
   const pos = { x: entity.x, y: entity.y };
   if (heading.dirX !== 0 || heading.dirY !== 0) {
     moveWithCollision(pos, heading.dirX, heading.dirY, dt, speed, collision, mapW, mapH, tile, radius);
   }
-  return { x: pos.x, y: pos.y, index: idx, dirX: heading.dirX, dirY: heading.dirY, arrived };
+  return { x: pos.x, y: pos.y, index: idx, dirX: heading.dirX, dirY: heading.dirY, arrived, angle };
 }
 
 /** The outcome of one {@link chainFollowStep}. */
@@ -387,6 +413,7 @@ export function wanderAvoid(
   tile: number,
   radius: number,
   bounds: Bounds = WORLD,
+  smooth?: { angle: number | undefined },
 ): void {
   let { dirX, dirY } = wanderVec(entity.id, tick);
   // Bias inward near a soft bound (sign forced by position only → stays pure) so
@@ -399,8 +426,19 @@ export function wanderAvoid(
   // Bias the probe fan toward the (post-edge-bias) wander heading itself so a
   // boxed-in wanderer commits to one slide direction rather than flip-flopping.
   const biasAngle = Math.atan2(dirY, dirX);
-  const heading = steerAround(entity, dirX, dirY, dt, speed, collision, mapW, mapH, tile, radius, biasAngle);
+  let heading = steerAround(entity, dirX, dirY, dt, speed, collision, mapW, mapH, tile, radius, biasAngle);
   if (heading.dirX === 0 && heading.dirY === 0) return; // boxed in this tick
+
+  // ANTI-BOUNCE (opt-in via `smooth`): turn-rate-limit the committed heading so a
+  // wanderer rounding a corner can't reverse it tick to tick. The caller passes a
+  // `{ angle }` box (its last committed heading angle, or undefined on the first move);
+  // smoothHeading seeds then limits it. Omitted → legacy unsmoothed heading (byte-
+  // identical), preserving the existing wanderAvoid callers/tests.
+  if (smooth) {
+    const sm = smoothHeading(heading.dirX, heading.dirY, smooth.angle);
+    heading = { dirX: sm.dirX, dirY: sm.dirY };
+    smooth.angle = sm.angle;
+  }
 
   // Integrate, then HOLD if it was only a sub-MIN_STEP micro-slide (corner grind).
   const bx = entity.x;

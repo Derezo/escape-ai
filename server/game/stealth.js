@@ -408,6 +408,12 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
     scratch,
     followPathToGoal,
     clearPath,
+    // Anti-bounce: a guard robot wanders its aux building via the SAME A*-to-an-
+    // interior-target machinery the pen animals use (reactive wanderAvoid paces e↔w in
+    // a tiny building). The picker is keyed per-(room, building) so its free-cell pool
+    // is cached; the guard branch calls it with its own guardBounds.
+    pickGuardTarget: (robot, bounds, tick) =>
+      bounds ? pickContainedTarget(`guard::${roomName}::${robot.id}`, bounds, robot, rm, tick) : null,
   };
 
   // Disguise prop follows its carrier: each tick, if the prop has a carrierId,
@@ -960,13 +966,11 @@ const homeCentersForRoom = perRoomCache(world.getHomeCentersBySpecies);
  * Keyed `roomName::species`. Returns `[]` for a species with no bounds / no free interior
  * (degenerate); the caller falls back to the home center then ambient drift.
  */
-const penInteriorCellsCache = new Map();
-function penInteriorCells(roomName, species, rm) {
-  const key = `${roomName}::${species}`;
-  let cells = penInteriorCellsCache.get(key);
+const interiorCellsCache = new Map();
+function interiorFreeCells(cacheKey, bounds, rm) {
+  let cells = interiorCellsCache.get(cacheKey);
   if (cells !== undefined) return cells;
   cells = [];
-  const bounds = homeBoundsForRoom(roomName).get(species);
   if (bounds) {
     // Inclusive tile span of the interior containment rect. Match interiorInsetBounds:
     // bounds are world-unit inset, so floor/ceil to the tiles fully inside them.
@@ -979,7 +983,7 @@ function penInteriorCells(roomName, species, rm) {
         if (tx < 0 || ty < 0 || tx >= rm.w || ty >= rm.h) continue;
         if (rm.collision[ty * rm.w + tx] === 1) continue;
         // Radius-clear so the picked target is a tile the body can actually occupy
-        // (excludes a 1-tile nook flush against the deep core / fence).
+        // (excludes a 1-tile nook flush against the deep core / fence / wall).
         const cx = tx * rm.tile + rm.tile / 2;
         const cy = ty * rm.tile + rm.tile / 2;
         if (shared.boxHitsSolid(cx, cy, ROBOT_RADIUS, rm.collision, rm.w, rm.h, rm.tile)) continue;
@@ -987,23 +991,35 @@ function penInteriorCells(roomName, species, rm) {
       }
     }
   }
-  penInteriorCellsCache.set(key, cells);
+  interiorCellsCache.set(cacheKey, cells);
   return cells;
 }
 
+/** The free-interior cell pool of a species' pen (per room+species cache). */
+function penInteriorCells(roomName, species, rm) {
+  return interiorFreeCells(`pen::${roomName}::${species}`, homeBoundsForRoom(roomName).get(species), rm);
+}
+
 /**
- * The deterministic pen-wander destination tile for an animal this tick: a reachable
- * interior cell chosen by hashing (id : slow-bucket) over the species' raster-ordered
- * free-interior pool, so the target HOLDS for PEN_TARGET_TICKS then re-rolls. Returns
- * null when the species has no usable interior (caller falls back). Pure + deterministic
- * (hash32 over a fixed cell list) — same (id, tick, room) → same tile on every server.
+ * The deterministic CONTAINED-WANDER destination tile for an entity this tick: a
+ * reachable interior cell of `bounds` chosen by hashing (id : slow-bucket) over the
+ * raster-ordered free-interior pool, so the target HOLDS for PEN_TARGET_TICKS then
+ * re-rolls. Returns null when there's no usable interior (caller falls back). Pure +
+ * deterministic (hash32 over a fixed cell list) — same (id, tick, bounds) → same tile
+ * on every server. Used for BOTH pen animals (their species pen) and guard robots
+ * (their aux-building interior), so the anti-bounce A*-target wander is shared.
  */
-function pickPenTarget(roomName, species, entity, rm, currentTick) {
-  const cells = penInteriorCells(roomName, species, rm);
+function pickContainedTarget(cacheKey, bounds, entity, rm, currentTick) {
+  const cells = interiorFreeCells(cacheKey, bounds, rm);
   if (cells.length === 0) return null;
   const bucket = Math.floor(currentTick / config.PATHFIND.PEN_TARGET_TICKS);
   const ord = shared.hash32(`${entity.id}:${bucket}`) % cells.length;
   return cells[ord];
+}
+
+/** The deterministic pen-wander target for an animal (its species pen interior). */
+function pickPenTarget(roomName, species, entity, rm, currentTick) {
+  return pickContainedTarget(`pen::${roomName}::${species}`, homeBoundsForRoom(roomName).get(species), entity, rm, currentTick);
 }
 
 /** Per-room reusable A* scratch buffer (sized to the room's grid). One per room,
