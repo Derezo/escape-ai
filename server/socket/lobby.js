@@ -62,7 +62,7 @@ function register(socket, deps) {
 
     const room = typeof payload.room === 'string' && payload.room.trim()
       ? payload.room.trim()
-      : 'default';
+      : config.DEFAULT_ROOM;
 
     // Identity: an authenticated socket's username (set by auth.js on auth:login)
     // is authoritative — it overrides whatever name the payload carries. An

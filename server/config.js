@@ -13,6 +13,12 @@ module.exports = {
   PORT: parseInt(process.env.PORT, 10) || 3000,
   HOST: process.env.HOST || '0.0.0.0',
 
+  // The room a joiner lands in when it sends no (or a blank) room name — the
+  // single source of truth for the lobby fallback AND the boot warm-up (engine.init
+  // pre-generates this room so the first joiner doesn't pay world-gen on the event
+  // loop). Keep lobby.js's fallback and the warm-up reading this one constant.
+  DEFAULT_ROOM: process.env.DEFAULT_ROOM || 'default',
+
   // Persistence: SQLite file for username-only accounts + per-user stats. A
   // relative path is resolved against the server dir (see db.js); the data/
   // directory is created on boot and gitignored.

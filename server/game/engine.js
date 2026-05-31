@@ -80,6 +80,15 @@ async function init(socketIo, players, roomsMap, dbModule) {
   // Load + cache the shared world generator once, before any room is created —
   // getOrCreateRoomWorld throws if a room is requested before this resolves.
   await world.loadSharedWorld();
+  // WARM the default room at boot: generateWorld() (the 128x128 tile fill +
+  // collision + reachability carve, ~5-13ms) runs SYNCHRONOUSLY inside the
+  // lobby:join handler the first time a room is created, which blocks the event
+  // loop — stalling every other room's tick/snapshot mid-join. Pre-building the
+  // common room here (idempotent: getOrCreateRoomWorld caches per room) moves that
+  // cost off the join path so the first joiner spawns without the hitch. Seed +
+  // WORLD_GEN_VERSION are identical whether built now or lazily, so determinism /
+  // client parity are unchanged. Non-default rooms still build lazily on first join.
+  world.getOrCreateRoomWorld(config.DEFAULT_ROOM);
 }
 
 function start() {

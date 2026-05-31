@@ -4,6 +4,24 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.110: **Join-lag: warm the default room at server boot.** `generateWorld()` (the 128×128 tile
+  fill + collision + reachability carve, ~5–13ms) ran SYNCHRONOUSLY inside the `lobby:join` handler
+  the first time a room was created, blocking the event loop and stalling every other room's
+  tick/snapshot mid-join. `engine.init()` now pre-builds the default room (`world.getOrCreateRoomWorld(
+  config.DEFAULT_ROOM)`) right after `loadSharedWorld()`, moving that cost off the join path so the
+  first joiner spawns without the hitch. Idempotent + deterministic (same seed + WORLD_GEN_VERSION
+  whether built at boot or lazily), so client parity is unchanged. Added `config.DEFAULT_ROOM` as the
+  single source of truth for the lobby fallback room name (was a bare `'default'` literal in lobby.js).
+
+- 0.2.109: **Capture race fix — two robots can no longer capture the same NPC in one tick.** The
+  per-tick animals list is gathered once, so two robots both touching the same NPC this tick each
+  reached the capture block; the second overwrote the first's `capturedBy` link, orphaning the first
+  robot (its return dispatch then cleared the stale ref next tick — a ghost capture). The capture
+  trigger in `stepRobots` now guards on `!npc.capturedBy`, so the first robot in the iteration wins
+  and a later one simply doesn't capture (as if the animal were just out of reach). `gatherAnimals`
+  already hid a captured NPC on subsequent ticks; this closes the same-tick window. Found by the
+  multi-agent review.
+
 - 0.2.108: **Capture consistency fix — a captured NPC can no longer be re-fed/re-leashed out of a
   robot's grip.** Plan-validation review found `feedNearbyAnimal` (`server/game/follow.js`) lacked
   the `capturedBy` guard the other two captured-animal consumers already have

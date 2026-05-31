@@ -556,7 +556,14 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
         // Capturing an NPC does NOT feed panic (pursuingRobots/catches stay player-only).
         if (shared.dist2(robot, target) <= touchR2) {
           const npc = worldEntities.find((e) => e.id === target.id && e.kind === 'animal');
-          if (npc) {
+          // The animals list is gathered ONCE per tick, so two robots that both touch the
+          // same NPC this tick would each reach here — the second would overwrite the
+          // first's capturedBy link, orphaning the first robot (its return dispatch clears
+          // the stale ref next tick = a ghost capture). Guard on !npc.capturedBy so the
+          // FIRST robot in the iteration wins; a later one simply doesn't capture (as if
+          // the animal were just out of reach). gatherAnimals already hides a captured NPC
+          // on SUBSEQUENT ticks; this closes the same-tick window.
+          if (npc && !npc.capturedBy) {
             const species = penSpeciesOf(npc.id) || npc.species;
             const penBounds = species ? homeBoundsForRoom(roomName).get(species) : undefined;
             const penGoalTile = species ? homeGateForRoom(roomName).get(species) : undefined;
