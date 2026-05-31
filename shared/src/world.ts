@@ -77,8 +77,20 @@ import { TILE_INDEX, TILE_SIZE, isSolidIndex } from './tiles.js';
  *  open non-solid DIRT on W/E/S so a player-radius body can slide off. This flips a
  *  handful of deco cells per den home (collision-relevant: ROCKY_DEN_WALL is solid),
  *  so the collision hash AND entitySpec hash re-pin (den anchors/quest tiles are
- *  unaffected geometrically but the parity hashes cover the full grid). */
-export const WORLD_GEN_VERSION = 17;
+ *  unaffected geometrically but the parity hashes cover the full grid).
+ *  v18: WADEABLE SHORELINE + ROOMIER PENS. (1) Shallow/shore water becomes PASSABLE:
+ *  WATER_SHALLOW + POND_EDGE and the full WATER_EDGE / WATER_CORNER / WATER_ICORNER shore
+ *  ring flip non-solid in tiles.ts; the final reconciliation pass now re-solidifies ONLY
+ *  the DEEP cores (isDeepWaterIndex), so the river stays bridge-or-wade only via its
+ *  continuous 2-wide deep core while the shallow margin is walkable. (2) Species pens grow:
+ *  base footprint 11x10 (was 8x8) and home caps 13x12 (was 10x9). (3) Each pen holds 5-8
+ *  animals (was 2-3): animalCountFor = clamp(5 + floor(iw*ih/40), 5, 8). (4) A 2-wide south
+ *  apron is carved straight down from every home gate before the L-bend to the spine, and
+ *  the doorway-obstacle reservation widens to cover the 2-wide gate + apron + halo. The
+ *  collision grid re-pins (shore now walkable, pens larger, aprons carved) and entitySpecs
+ *  re-pin (more anchors per pen, relocated to the larger interiors). Both proven off-solid +
+ *  reachable by the existing gates; re-pinned on purpose. */
+export const WORLD_GEN_VERSION = 18;
 
 /** Map size in tiles. 128×128 @ 32u = 4096×4096 world units (16× the old 1000²). */
 export const MAP_W = 128;
@@ -1364,8 +1376,8 @@ function stampBuilding(
   // Use most of the plot, leaving a tile of grass around it.
   const rx = plot.tx;
   const ry = plot.ty;
-  const rw = Math.min(plot.tw, 10);
-  const rh = Math.min(plot.th, 9);
+  const rw = Math.min(plot.tw, 13);
+  const rh = Math.min(plot.th, 12);
   const floors = [TILE_INDEX.FLOOR_WOOD, TILE_INDEX.FLOOR_TILE, TILE_INDEX.FLOOR_CONCRETE];
   const floor = pick(rng, floors);
 
@@ -1525,8 +1537,8 @@ function stampHousing(
   species: string,
   kind: HousingKind,
 ): PlacedHome {
-  const rw = Math.min(plot.tw, 10);
-  const rh = Math.min(plot.th, 9);
+  const rw = Math.min(plot.tw, 13);
+  const rh = Math.min(plot.th, 12);
   const rx = plot.tx;
   const ry = plot.ty;
   const ccx = rx + Math.floor(rw / 2);
@@ -1780,9 +1792,9 @@ function populateEnclosure(
   return spots;
 }
 
-/** How many NPC animals a home of interior area `iw*ih` gets: 2..3, scaled. */
+/** How many NPC animals a home of interior area `iw*ih` gets: 5..8, scaled. */
 function animalCountFor(iw: number, ih: number): number {
-  return clampInt(2 + Math.floor((iw * ih) / 24), 2, 3);
+  return clampInt(5 + Math.floor((iw * ih) / 40), 5, 8);
 }
 
 /** Whether a tile is free grass suitable for scattering nature (no road/structure). */
@@ -2115,6 +2127,12 @@ export function generateWorld(seed: number): WorldMap {
     }
   }
   const reachTargets: { tx: number; ty: number }[] = [];
+  // The SOUTH-EDGE gate/door reach target of each species home (placed.reachTargets[0]
+  // — index 1 is the interior center, which must NOT get a south apron). Collected
+  // separately because the flat reachTargets list interleaves gate + center entries
+  // and the apron (Edit E) + the doorway obstacle reservation (Edit F) apply ONLY to
+  // the gate entries. Deterministic (roster order, no rng).
+  const homeGates: { tx: number; ty: number }[] = [];
   const questPos = new Map<string, { tx: number; ty: number }>();
   const animalSpots = new Map<string, AnimalSpot[]>(); // per species: NPC animal slots
   // Every cell that belongs to a pen/building FOOTPRINT (interior + wall ring). The
@@ -2147,11 +2165,12 @@ export function generateWorld(seed: number): WorldMap {
     const kind = SPECIES_HOUSING[species];
     const zone = zoneFor(zones, species);
 
-    // Varied footprint: jitter w/h, but keep interior ≥6×6 (CRIT-2 containment —
-    // a smaller box collapses the wander bias zone and freezes animals). Two rng
-    // draws per species, unconditionally, so the stream is fixed.
-    const tw = 8 + randInt(rng, 0, 3); // 8..11 → interior 6..9
-    const th = 8 + randInt(rng, 0, 2); // 8..10 → interior 6..8
+    // Varied footprint: jitter w/h, but keep interior generous (CRIT-2 containment —
+    // a smaller box collapses the wander bias zone and freezes animals; the bigger
+    // base also gives 5..8 animals room to spread). Two rng draws per species,
+    // unconditionally, so the stream is fixed — only the base constant changed.
+    const tw = 11 + randInt(rng, 0, 3); // 11..14 → interior 9..12
+    const th = 10 + randInt(rng, 0, 2); // 10..12 → interior 8..10
 
     // Find a free rect in the species' zone; fall back to any zone, then to a
     // coarse interior scan, so placement never silently drops a species.
@@ -2202,6 +2221,9 @@ export function generateWorld(seed: number): WorldMap {
       }
     }
     for (const rt of placed.reachTargets) reachTargets.push(rt);
+    // The home's south-edge gate/door is reachTargets[0] (center is [1]). Track it for
+    // the south apron + doorway obstacle reservation below.
+    if (placed.reachTargets.length > 0) homeGates.push(placed.reachTargets[0]);
     questPos.set(species, { tx: placed.questTx, ty: placed.questTy });
 
     // Phase C: pick this home's NPC-animal spawn slots NOW (interior is fully
@@ -2394,18 +2416,39 @@ export function generateWorld(seed: number): WorldMap {
   // with a SHORT straight L-stub (no rng). reachTargets[0..] are the gate/door tiles.
   // protectedTiles + waterMargin keep these stubs off pen footprints and away from
   // water. The reachability backstop guarantees connectivity if a stub gets blocked.
+  //
+  // EDIT E — SOUTH APRON: every home GATE sits on the home's SOUTH edge, so a path
+  // should meet it from below, not from the side/above (carveStraightPath does the
+  // horizontal leg first when |dx|>=|dy|, which can otherwise tuck the corridor up
+  // against the gate's flank). For each gate target, first pave a 2-wide apron
+  // straight DOWN from the gate (2 tiles), then run the L-bend to the spine FROM THE
+  // APRON END instead of from the gate. The apron is keyed off homeGates (the gate
+  // entries only) — interior-center reach targets keep the gate-to-spine L-bend as-is.
+  // All axis-aligned + rng-free; carveStraightPath no-ops protected/water/off-map cells.
+  const gateSet = new Set(homeGates);
   for (const rt of reachTargets) {
+    // The origin the L-bend runs from. For a south-edge gate this is the apron END
+    // (2 tiles below the gate); for everything else it is the target itself.
+    let originTx = rt.tx;
+    let originTy = rt.ty;
+    if (gateSet.has(rt)) {
+      // 2-wide apron straight down from the gate (rt.tx-1..rt.tx covers the 2-wide
+      // gate opening) for 2 tiles, so a path approaches the door from due south.
+      carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, rt.tx, rt.ty, rt.tx, rt.ty + 2);
+      carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, rt.tx - 1, rt.ty, rt.tx - 1, rt.ty + 2);
+      originTy = rt.ty + 2;
+    }
     let best: { tx: number; ty: number } | null = null;
     let bestD = Infinity;
     for (const sp of spineTiles) {
-      const d = Math.abs(sp.tx - rt.tx) + Math.abs(sp.ty - rt.ty);
+      const d = Math.abs(sp.tx - originTx) + Math.abs(sp.ty - originTy);
       if (d < bestD) {
         bestD = d;
         best = sp;
       }
     }
     if (best) {
-      carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, rt.tx, rt.ty, best.tx, best.ty);
+      carveStraightPath(ground, riverDeep, protectedTiles, waterMargin, originTx, originTy, best.tx, best.ty);
     }
   }
   bridgeRiverCrossings(ground, riverDeep, riverRows, spineY);
@@ -2414,6 +2457,23 @@ export function generateWorld(seed: number): WorldMap {
   // tile touching pavement — demote any such tile to shallow (deep-only-beside-
   // shallow). Run before buildCollision so collision reflects the final water.
   enforceWaterCohesion(ground);
+
+  // EDIT F — keep obstacles ≥2 tiles clear of every doorway. scatterNature avoids the
+  // `reserved` set, so before it runs we reserve a box around each home GATE + its
+  // south apron: columns rt.tx-1..rt.tx+1 (the 2-wide gate opening + 1 halo) by rows
+  // rt.ty..rt.ty+3 (the gate row, the 2-tile apron, + 1 halo). This stops trees/
+  // bushes/props landing in the pathing funnel (the "tree in the middle of the path"
+  // artifact). Deterministic (no rng); off-map cells are skipped.
+  for (const g of homeGates) {
+    for (let dy = 0; dy <= 3; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tx = g.tx + dx;
+        const ty = g.ty + dy;
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+        reserved.add(tileIndex(w, tx, ty));
+      }
+    }
+  }
 
   // 7. Scatter nature on the leftover grass (biome-aware; uses the unused tiles).
   scatterNature(ground, deco, w, h, reserved, zones, rng);
@@ -2508,7 +2568,8 @@ export function generateWorld(seed: number): WorldMap {
       // Phase C: extra NPC animals (pen-${species}-2..N) at the populateEnclosure
       // slots, so each enclosure reads as inhabited. One penAnchor per slot; the
       // server materializes each via the SAME penAnchor case (no new spec kind).
-      // animalCountFor already capped the total at 2..3, so we emit (n-1) extras.
+      // animalSpots already holds exactly (n-1) slots (animalCountFor → 5..8 total,
+      // canonical anchor is animal 1), so this loop emits the full (n-1) extras.
       const spots = animalSpots.get(species) ?? [];
       let an = 1;
       for (const spot of spots) {
@@ -2521,7 +2582,7 @@ export function generateWorld(seed: number): WorldMap {
           species,
           meta: { kind: kindMeta },
         });
-        if (an >= 3) break; // hard cap: at most 3 animals/home (1 canonical + 2)
+        if (an >= 8) break; // hard cap: at most 8 animals/home (1 canonical + up to 7)
       }
     }
     // Food source: one per species, now DISPERSED into the auxiliary buildings
@@ -2639,23 +2700,24 @@ export function generateWorld(seed: number): WorldMap {
   //     so the two passes are independent.
   blendGroundEdges(ground);
 
-  // 11. FINAL collision reconciliation — make the whole river a SOLID barrier.
+  // 11. FINAL collision reconciliation — keep the river's DEEP CORE a solid barrier.
   //     ORDERING NOTE: buildCollision (step 8) ran BEFORE blendGroundEdges, so the
   //     shore-blend tiles (WATER_EDGE_*/WATER_CORNER_*/WATER_ICORNER_*) that the
   //     blend just painted over the river bank are NOT reflected in the collision
-  //     grid — collision is never re-derived, only mutated. Those repainted cells
-  //     were former GRASS (walkable), so without this pass the shore ring stays
-  //     walkable and robots/players stand in the river. Here we re-solidify EVERY
-  //     ground cell whose tile is now a water-family tile (deep, shallow, pond, or
-  //     any shore-blend tile). Keyed strictly off the GROUND TILE being water — a
-  //     PAVED corridor cell is PAVED (not water), so it stays walkable; bridge decks
-  //     are BRIDGE_* (not water), so they stay the only crossings. This runs AFTER
-  //     the food/gate re-stamps (steps 9/9b): those force collision=0 on NON-water
+  //     grid — collision is never re-derived, only mutated. The INVARIANT now: deep
+  //     water is the barrier; the shallow margin + shore ring are WADEABLE shoreline.
+  //     So this pass re-solidifies ONLY the DEEP cores (WATER_DEEP/POND_DEEP) and
+  //     leaves the shallow + shore cells walkable. The river is still bridge-or-wade
+  //     only at the crossings because its deep core is continuous and 2 tiles wide —
+  //     a player can wade the shallow bank up to the deep edge but cannot cross the
+  //     deep channel. Keyed strictly off the GROUND TILE being DEEP water — a PAVED
+  //     corridor cell is PAVED (not water), so it stays walkable; bridge decks are
+  //     BRIDGE_* (not water), so they remain dry crossings. This runs AFTER the
+  //     food/gate re-stamps (steps 9/9b): those force collision=0 on NON-deep-water
   //     glyphs (TROUGH_FOOD, gate/door), so this pass never touches them — running
-  //     last is belt-and-suspenders. Only the deep cores were solid before this
-  //     change; the shallow margin + shore ring become solid now.
+  //     last is belt-and-suspenders.
   for (let i = 0; i < collision.length; i++) {
-    if (isWaterFamilyIndex(ground.data[i])) collision[i] = 1;
+    if (isDeepWaterIndex(ground.data[i])) collision[i] = 1;
   }
 
   // 11b. Re-open every gate THRESHOLD. The river-solidify pass above can solidify a

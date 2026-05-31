@@ -22,15 +22,19 @@ import { TILE_INDEX } from '../dist/tiles.js';
 // --- Pinned values (regenerate intentionally + bump WORLD_GEN_VERSION if these
 // must change; they are computed from generateWorld(123)). -------------------
 const PIN_SEED = 123;
-// v17: DEN SPAWN-TRAP FIX. The three ROCKY_DEN_WALL tiles in each 'den' enclosure
-// (skunk/mole/fox) move from flanking the spawn-center mound on W/E + N to a back-row
-// backdrop on the (ccy-1) row, so the mound keeps open non-solid DIRT on W/E/S and a
-// player AABB can slide off (was a 1-tile south-only pocket the body wedged into).
-// ROCKY_DEN_WALL is solid, so the per-den cells that flip walkability move → the
-// collision hash re-pins. The entitySpec hash also re-pins (the full-grid JSON shifts
-// with the relocated deco). Both recomputed from generateWorld(123).
-const PINNED_COLLISION_HASH = 3946684960;
-const PINNED_ENTITYSPEC_HASH = 2090828514;
+// v18: WADEABLE SHORELINE + ROOMIER PENS. (1) WATER_SHALLOW/POND_EDGE + the full
+// WATER_EDGE_*/WATER_CORNER_*/WATER_ICORNER_* shore ring flip NON-solid; the final
+// reconciliation pass now re-solidifies ONLY the DEEP cores (isDeepWaterIndex), so the
+// shallow margin is walkable and the river is crossable only at its 2-wide deep core
+// (bridges) — i.e. bridge-or-wade-to-the-edge. (2) Pens grow: base footprint 11x10
+// (was 8x8), caps 13x12 (was 10x9). (3) Each pen now holds 5–8 animals (was 2–3):
+// animalCountFor = clamp(5 + floor(iw*ih/40), 5, 8). (4) A 2-wide south apron is carved
+// straight down from each home gate before its L-bend, and the doorway-obstacle
+// reservation widens to cover the 2-wide gate + apron + halo. The collision grid re-pins
+// (shore walkable, larger pens, carved aprons) and entitySpecs re-pin (more anchors per
+// pen in larger interiors). Both recomputed from generateWorld(123).
+const PINNED_COLLISION_HASH = 3725580923;
+const PINNED_ENTITYSPEC_HASH = 221062765;
 
 /** Hash the collision grid bytes (the cross-side movement-parity surface). */
 function collisionHash(map) {
@@ -94,10 +98,12 @@ test('drift tripwire: pinned hashes (bump WORLD_GEN_VERSION if these change)', (
 });
 
 test('version: WORLD_GEN_VERSION is the expected value (bump deliberately)', () => {
-  // v17: the den spawn-trap fix relocates each den's ROCKY_DEN_WALL backdrop, which
-  // flips per-den collision cells. The bump is the deliberate cache-bust so old
-  // clients (which assert msg.version === WORLD_GEN_VERSION) fail loud not desync.
-  assert.equal(WORLD_GEN_VERSION, 17, 'version pinned at 17');
+  // v18: wadeable shoreline (only deep cores stay solid) + roomier pens (11x10 base,
+  // 13x12 caps), 5–8 animals/pen, south gate aprons, widened doorway reservation. These
+  // flip the collision grid (shore now walkable) + entitySpecs (more anchors). The bump
+  // is the deliberate cache-bust so old clients (which assert msg.version ===
+  // WORLD_GEN_VERSION) fail loud, not desync.
+  assert.equal(WORLD_GEN_VERSION, 18, 'version pinned at 18');
   assert.equal(generateWorld(PIN_SEED).version, WORLD_GEN_VERSION, 'map.version tracks the constant');
 });
 
@@ -291,19 +297,32 @@ test('water feature: no reach target sits on or adjacent to deep water', () => {
   }
 });
 
-test('water is a SOLID barrier: every water-family ground tile is solid, every bridge is walkable', () => {
-  // v15 invariant: the river/pond is impassable EXCEPT across bridges. Every
-  // water-family ground tile — the DEEP/SHALLOW/POND cores AND the WATER_EDGE_* /
-  // WATER_CORNER_* / WATER_ICORNER_* shore-blend ring blendGroundEdges paints over
-  // the bank — must have collision === 1, so no robot/player can stand in the water.
-  // The ONLY walkable water-crossing tiles are BRIDGE_H / BRIDGE_V. This is the
-  // durable proof the shore ring (which is painted AFTER buildCollision) gets
-  // re-solidified by the final reconciliation pass. The ONE sanctioned exception:
-  // a gate-THRESHOLD cell directly inside a (south-facing) enclosure gate may be a
-  // solidified shore tile that is force-reopened so the gate still works — those are
-  // whitelisted here (they connect to the home interior, not the open river).
-  const WATER_FAMILY = new Set([
-    TILE_INDEX.WATER_DEEP, TILE_INDEX.WATER_SHALLOW, TILE_INDEX.POND_DEEP, TILE_INDEX.POND_EDGE,
+test('water barrier (v18): only the DEEP cores are solid; shallow + shore are wadeable; bridges walkable', () => {
+  // v18 changed the water model. Previously (v15) the ENTIRE water family — DEEP +
+  // SHALLOW + the WATER_EDGE_*/WATER_CORNER_*/WATER_ICORNER_* shore ring — was solid,
+  // so the river was crossable ONLY across bridges. Now the shallow margin and the
+  // shore ring are WADEABLE: only WATER_DEEP / POND_DEEP (the deep cores) stay solid.
+  // The deep core is the barrier; a player can wade the shallow shoreline up to its
+  // edge, and bridges remain the dry crossings over the deep channel.
+  //
+  // The durable invariant this encodes:
+  //   (1) EVERY WATER_DEEP / POND_DEEP tile is solid — the final reconciliation pass
+  //       (isDeepWaterIndex) re-solidifies the deep cores after blendGroundEdges paints
+  //       the (now-non-solid) shore ring. This is what keeps the river uncrossable
+  //       except at the deep edge.
+  //   (2) The map actually HAS a real deep-water river (so the test bites).
+  //   (3) At least one BRIDGE_H/BRIDGE_V deck exists and is walkable.
+  //
+  // WHY NOT a far-bank flood-fill disconnection assertion: with the shoreline now
+  // wadeable, the deep core no longer fully partitions the map — a flood-fill with
+  // bridges treated as solid loses access to ONLY the 16 bridge deck cells themselves
+  // (verified: reachable-with-bridge minus reachable-without-bridge === bridge count
+  // across seeds). The far bank stays reachable by wading around the deep channel,
+  // which is the intended "bridge-OR-wade" behavior. So the robust deterministic proof
+  // is the deep-cores-solid + bridge-exists pair, not a bank-separation flood-fill.
+  const DEEP = new Set([TILE_INDEX.WATER_DEEP, TILE_INDEX.POND_DEEP]);
+  const SHORE = new Set([
+    TILE_INDEX.WATER_SHALLOW, TILE_INDEX.POND_EDGE,
     TILE_INDEX.WATER_EDGE_N, TILE_INDEX.WATER_EDGE_E, TILE_INDEX.WATER_EDGE_S, TILE_INDEX.WATER_EDGE_W,
     TILE_INDEX.WATER_CORNER_NE, TILE_INDEX.WATER_CORNER_NW, TILE_INDEX.WATER_CORNER_SE, TILE_INDEX.WATER_CORNER_SW,
     TILE_INDEX.WATER_ICORNER_NE, TILE_INDEX.WATER_ICORNER_NW, TILE_INDEX.WATER_ICORNER_SE, TILE_INDEX.WATER_ICORNER_SW,
@@ -311,30 +330,33 @@ test('water is a SOLID barrier: every water-family ground tile is solid, every b
   const BRIDGE = new Set([TILE_INDEX.BRIDGE_H, TILE_INDEX.BRIDGE_V]);
   for (const seed of [0, 1, 2, 7, 123, 777, 9999, 424242]) {
     const map = generateWorld(seed);
-    // The whitelisted gate-threshold cells: directly inside each home's south gate.
-    const gateInside = new Set();
-    for (const hh of map.housing) {
-      const gx = hh.rx + Math.floor(hh.rw / 2);
-      const gy = hh.ry + hh.rh - 1;
-      gateInside.add((gy - 1) * map.w + gx);
-      gateInside.add((gy - 1) * map.w + (gx - 1));
-    }
-    let waterCells = 0, bridgeCells = 0;
+    let deepCells = 0, shoreCells = 0, shoreWadeable = 0, bridgeCells = 0;
     for (let i = 0; i < map.collision.length; i++) {
       const g = map.ground.data[i];
-      if (WATER_FAMILY.has(g)) {
-        waterCells++;
-        if (gateInside.has(i)) continue; // sanctioned gate-threshold reopen
-        assert.equal(map.collision[i], 1, `seed ${seed}: water tile ${g} at index ${i} is walkable (should be solid)`);
+      if (DEEP.has(g)) {
+        deepCells++;
+        assert.equal(map.collision[i], 1, `seed ${seed}: deep core tile ${g} at index ${i} is walkable (must be solid)`);
+      }
+      if (SHORE.has(g)) {
+        shoreCells++;
+        if (map.collision[i] === 0) shoreWadeable++;
       }
       if (BRIDGE.has(g)) {
         bridgeCells++;
-        assert.equal(map.collision[i], 0, `seed ${seed}: bridge tile ${g} at index ${i} is solid (should be walkable)`);
+        assert.equal(map.collision[i], 0, `seed ${seed}: bridge tile ${g} at index ${i} is solid (must be walkable)`);
       }
     }
-    // Sanity: the map actually HAS water and at least one bridge (so the test bites).
-    assert.ok(waterCells > 50, `seed ${seed}: expected a real river (got ${waterCells} water cells)`);
+    // Sanity: the map actually HAS a deep river and at least one bridge (so the test bites).
+    assert.ok(deepCells > 50, `seed ${seed}: expected a real deep-water river (got ${deepCells} deep cells)`);
     assert.ok(bridgeCells > 0, `seed ${seed}: expected at least one bridge deck (got ${bridgeCells})`);
+    // The shoreline is genuinely wadeable now (most/all shore cells are non-solid;
+    // a sliver may still be solid only where it coincides with a wall/deco override).
+    if (shoreCells > 0) {
+      assert.ok(
+        shoreWadeable > shoreCells * 0.5,
+        `seed ${seed}: expected the shore ring to be wadeable (only ${shoreWadeable}/${shoreCells} non-solid)`,
+      );
+    }
   }
 });
 
@@ -521,7 +543,10 @@ function homeRectOf(map, species) {
   return null;
 }
 
-test('animals: every species gets 2–3 pen anchors (NPC animals), scaled', () => {
+test('animals: every species gets 5–8 pen anchors (NPC animals), scaled', () => {
+  // v18 enlarged the pens (base 11x10, caps 13x12) and bumped the per-pen population to
+  // 5–8: animalCountFor = clamp(5 + floor(iw*ih/40), 5, 8). populateEnclosure scans the
+  // larger interior for distinct walkable spots, so each species fields 5–8 NPC animals.
   for (const seed of [0, 7, 123, 9999, 424242]) {
     const map = generateWorld(seed);
     const counts = new Map();
@@ -530,7 +555,7 @@ test('animals: every species gets 2–3 pen anchors (NPC animals), scaled', () =
     }
     for (const key of SPECIES_KEYS) {
       const c = counts.get(key) ?? 0;
-      assert.ok(c >= 2 && c <= 3, `seed ${seed}: species ${key} has ${c} animals (want 2..3)`);
+      assert.ok(c >= 5 && c <= 8, `seed ${seed}: species ${key} has ${c} animals (want 5..8)`);
     }
   }
 });

@@ -76,8 +76,8 @@ export const TILES = {
   SAND_RIPPLE: t(13, 'ground'),
   MUD: t(14, 'ground'),
   MUD_PUDDLE: t(15, 'ground'),
-  WATER_DEEP: t(16, 'ground', true), // solid: can't wade into deep water
-  WATER_SHALLOW: t(17, 'ground', true), // solid: the river is a barrier — cross only by bridge
+  WATER_DEEP: t(16, 'ground', true), // solid: deep water is the only barrier — can't wade into it
+  WATER_SHALLOW: t(17, 'ground'), // non-solid: shallow water is wadeable shoreline (only the deep core blocks)
   FLOOR_WOOD: t(18, 'ground'),
   FLOOR_WOOD_DARK: t(19, 'ground'),
   FLOOR_TILE: t(20, 'ground'),
@@ -100,21 +100,23 @@ export const TILES = {
   PATH_ICORNER_NW: t(34, 'ground'),
   PATH_ICORNER_SE: t(35, 'ground'),
   PATH_ICORNER_SW: t(36, 'ground'),
-  // Land↔water shoreline: same 12-tile pattern. ALL solid — these are the visual
-  // shore ring painted over the river bank by blendGroundEdges; the river is a
-  // barrier, so the shore is solid too (only BRIDGE_H/BRIDGE_V cross water).
-  WATER_EDGE_N: t(37, 'ground', true),
-  WATER_EDGE_E: t(38, 'ground', true),
-  WATER_EDGE_S: t(39, 'ground', true),
-  WATER_EDGE_W: t(40, 'ground', true),
-  WATER_CORNER_NE: t(41, 'ground', true),
-  WATER_CORNER_NW: t(42, 'ground', true),
-  WATER_CORNER_SE: t(43, 'ground', true),
-  WATER_CORNER_SW: t(44, 'ground', true),
-  WATER_ICORNER_NE: t(45, 'ground', true),
-  WATER_ICORNER_NW: t(46, 'ground', true),
-  WATER_ICORNER_SE: t(47, 'ground', true),
-  WATER_ICORNER_SW: t(48, 'ground', true),
+  // Land↔water shoreline: same 12-tile pattern. ALL non-solid — these are the visual
+  // shore ring painted over the river/pond bank by blendGroundEdges, and the shore is
+  // WADEABLE shoreline. Only WATER_DEEP/POND_DEEP block movement; the river stays
+  // uncrossable because its 2-wide deep core is solid (bridges are still the dry
+  // crossings, but a player can now wade the shallow margin up to the deep edge).
+  WATER_EDGE_N: t(37, 'ground'),
+  WATER_EDGE_E: t(38, 'ground'),
+  WATER_EDGE_S: t(39, 'ground'),
+  WATER_EDGE_W: t(40, 'ground'),
+  WATER_CORNER_NE: t(41, 'ground'),
+  WATER_CORNER_NW: t(42, 'ground'),
+  WATER_CORNER_SE: t(43, 'ground'),
+  WATER_CORNER_SW: t(44, 'ground'),
+  WATER_ICORNER_NE: t(45, 'ground'),
+  WATER_ICORNER_NW: t(46, 'ground'),
+  WATER_ICORNER_SE: t(47, 'ground'),
+  WATER_ICORNER_SW: t(48, 'ground'),
 
   // --- Nature (49..74) -------------------------------------------------------
   // Trees are a TRUNK (solid, on deco below mobile) + a CANOPY (ysort:'behind',
@@ -199,8 +201,8 @@ export const TILES = {
   ENCLOSURE_WALL_LOW: t(119, 'deco', true),
   ENCLOSURE_GLASS: t(120, 'deco', true),
   MOAT_EDGE: t(121, 'deco', true),
-  POND_DEEP: t(122, 'ground', true),
-  POND_EDGE: t(123, 'ground', true), // solid: pond shore is a barrier like the river shore
+  POND_DEEP: t(122, 'ground', true), // solid: deep pond water is the barrier (like WATER_DEEP)
+  POND_EDGE: t(123, 'ground'), // non-solid: pond shore is wadeable shoreline; only POND_DEEP blocks
   AVIARY_MESH: t(124, 'deco', true),
   AVIARY_FRAME: t(125, 'deco', true),
   ROCKY_DEN_MOUTH: t(126, 'deco', true),

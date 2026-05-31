@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.147: **World gen v18 — wadeable shoreline + roomier pens (version bump + re-pin).**
+  Completes the tiles.ts/world.ts generator edits: shallow + shore water (WATER_SHALLOW,
+  POND_EDGE and the full WATER_EDGE / WATER_CORNER / WATER_ICORNER ring) are now PASSABLE —
+  the final collision reconciliation re-solidifies ONLY the deep cores (`isDeepWaterIndex`),
+  so the river is bridge-or-wade. Pens grow (base 11x10, caps 13x12) and field 5–8 animals
+  each (`animalCountFor = clamp(5 + floor(iw*ih/40), 5, 8)`), with a 2-wide south apron
+  carved from each home gate and a widened doorway-obstacle reservation. `WORLD_GEN_VERSION`
+  bumped 17 → 18; `PINNED_COLLISION_HASH`/`PINNED_ENTITYSPEC_HASH` re-pinned (3725580923 /
+  221062765). The CJS tile-art mirror `scripts/tiles/contract.js` flips the six water-family
+  solid flags to match `tiles.ts` (verify-tileset green). The v15 "water is a SOLID barrier"
+  test is rewritten as "water barrier (v18): only the DEEP cores are solid; shallow + shore
+  are wadeable; bridges walkable" — proving deep-core-solid + a real river + a walkable
+  bridge across seeds (a far-bank flood-fill disconnection assertion is not used: with the
+  shore wadeable, removing bridges loses only the bridge deck cells, so the deep-solid +
+  bridge-exists pair is the robust deterministic proof). The 2–3 animals test becomes 5–8.
+  `shared` build + 90-test suite green; verify-tileset + check-facing green.
+
 - 0.2.146: **Docs — clarify the widened `EntityView.body` type.** Adds a comment on
   `EntityView.body` (now `Shape | Sprite | Container`) recording the invariant a
   plan-validation review flagged: the `Shape`/`Sprite` casts in `restyle`/`updateAnimation`
