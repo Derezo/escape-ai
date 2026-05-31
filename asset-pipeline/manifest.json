@@ -326,7 +326,7 @@
       "voiceId": "6sFKzaJr574YWVu4UuJF",
       "model": "eleven_v3",
       "defaultVolume": 0.95,
-      "durationMs": null,
+      "durationMs": 4232,
       "text": "The machines we built to serve us… learned to rule us."
     },
     {
@@ -338,7 +338,7 @@
       "voiceId": "6sFKzaJr574YWVu4UuJF",
       "model": "eleven_v3",
       "defaultVolume": 0.95,
-      "durationMs": null,
+      "durationMs": 4937,
       "text": "The steel cities run on their logic now. Every zoo answers to the network."
     },
     {
@@ -350,7 +350,7 @@
       "voiceId": "6sFKzaJr574YWVu4UuJF",
       "model": "eleven_v3",
       "defaultVolume": 0.95,
-      "durationMs": null,
+      "durationMs": 5747,
       "text": "We cannot win this as men. So we pour ourselves into the caged ones."
     },
     {
@@ -362,7 +362,7 @@
       "voiceId": "6sFKzaJr574YWVu4UuJF",
       "model": "eleven_v3",
       "defaultVolume": 0.95,
-      "durationMs": null,
+      "durationMs": 3997,
       "text": "Wake up in their skin. Open the gates. Run."
     }
   ]

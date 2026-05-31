@@ -161,8 +161,8 @@ export type VoiceName = keyof typeof VOICE_FILES;
  * fixed timing); `volume` is the playback gain 0..1.
  */
 export const VOICE_META: Record<VoiceName, { text: string; durationMs: number | null; volume: number }> = {
-  intro_vo_1: { text: "The machines we built to serve us… learned to rule us.", durationMs: null, volume: 0.95 },
-  intro_vo_2: { text: "The steel cities run on their logic now. Every zoo answers to the network.", durationMs: null, volume: 0.95 },
-  intro_vo_3: { text: "We cannot win this as men. So we pour ourselves into the caged ones.", durationMs: null, volume: 0.95 },
-  intro_vo_4: { text: "Wake up in their skin. Open the gates. Run.", durationMs: null, volume: 0.95 },
+  intro_vo_1: { text: "The machines we built to serve us… learned to rule us.", durationMs: 4232, volume: 0.95 },
+  intro_vo_2: { text: "The steel cities run on their logic now. Every zoo answers to the network.", durationMs: 4937, volume: 0.95 },
+  intro_vo_3: { text: "We cannot win this as men. So we pour ourselves into the caged ones.", durationMs: 5747, volume: 0.95 },
+  intro_vo_4: { text: "Wake up in their skin. Open the gates. Run.", durationMs: 3997, volume: 0.95 },
 };

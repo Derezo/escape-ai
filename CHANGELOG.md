@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.125: **Intro voice narration — generated clips + baked durations.** The four ElevenLabs narration
+  clips are generated and committed (`assets/voice/intro_vo_1..4.mp3`, voice `6sFKzaJr574YWVu4UuJF`, model
+  `eleven_v3`). `generate-voice.py` measured each clip and baked its `durationMs` into the manifest
+  (4232/4937/5747/3997 ms), and `npm run audio` regenerated `client/src/audio.generated.ts` so the client
+  paces each subtitle by its real clip length + the 1.5s buffer. The standalone MP3 measurer agrees with
+  the baked values exactly (and with `ffprobe` to ~26ms). Drift gate green. The intro is now fully voiced:
+  each subtitle is read aloud as it appears and held for the clip's duration + 1.5s. Touched
+  `assets/voice/*.mp3` (new), `asset-pipeline/manifest.json` (baked durations),
+  `client/src/audio.generated.ts` (regenerated).
+
 - 0.2.124: **Intro voice narration — Phase V4: dynamic subtitle timeline + voice playback.** The cinematic
   now paces each subtitle by its narration clip. `audio.ts` gains a voice subsystem parallel to SFX — a
   `VoiceName`-keyed buffer cache, `preloadVoice()`, `isVoiceReady()`, `playVoice()` (one-shot, cuts the
