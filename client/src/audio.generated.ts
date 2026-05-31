@@ -7,7 +7,7 @@
 
 /**
  * All SFX keys → their asset URL.
- * Manifest SFX (18) use .mp3 paths; synth-only sounds (8) keep their .wav paths.
+ * Manifest SFX (23) use .mp3 paths; synth-only sounds (8) keep their .wav paths.
  * Synth-only keys: blip, select, pickup, jump, whoosh, thud, sparkle2, dazzle.
  */
 export const SFX_FILES = {

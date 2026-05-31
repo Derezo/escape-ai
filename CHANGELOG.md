@@ -4,6 +4,16 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.133: **Audio audit — commit untracked renders + codegen count.** A full SFX/music/voice audit
+  (manifest ↔ `audio.generated.ts` ↔ disk ↔ git, plus every call site, adversarially verified)
+  found five generated `.mp3` renders present on disk but never `git add`ed — so a clean clone / CI /
+  Capacitor bundle silently shipped their WAV fallbacks instead of the real audio. Committed
+  `assets/sfx/{chat_open,chat_receive,chat_send,intro_power,intro_spark}.mp3`. Also fixed the stale
+  hardcoded "Manifest SFX (18)" comment in the codegen source (real count is 23) — now interpolated
+  from `sfxEntries.length`/`SYNTH_ONLY_KEYS.length` so it can't drift again — and regenerated
+  `audio.generated.ts`. Drift gate green. Touched `scripts/audio/gen-bindings.js`,
+  `client/src/audio.generated.ts`, `assets/sfx/*.mp3` (5 new).
+
 - 0.2.132: **Global chat — validation remediation.** `/plan-validation-and-review` traced all 13
   requirements IMPLEMENTED + CONNECTED, found no security/logic/correctness bugs (chat text is
   rendered via `textContent` only — no XSS), confirmed the wire end-to-end (12/12 e2e assertions),

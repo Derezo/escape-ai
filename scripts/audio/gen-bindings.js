@@ -52,7 +52,7 @@ const SYNTH_ONLY_KEYS = [
 // Exported for use by verify-audio.js without re-reading the manifest.
 // ---------------------------------------------------------------------------
 function render(manifest) {
-  const sfxEntries = manifest.sfx;   // 18 manifest SFX entries
+  const sfxEntries = manifest.sfx;   // manifest SFX entries (count = sfxEntries.length)
   const musicEntries = manifest.music; // 8 manifest music entries
   const voiceEntries = manifest.voice || []; // narration clips (intro cinematic)
 
@@ -132,7 +132,7 @@ function render(manifest) {
     ``,
     `/**`,
     ` * All SFX keys → their asset URL.`,
-    ` * Manifest SFX (18) use .mp3 paths; synth-only sounds (8) keep their .wav paths.`,
+    ` * Manifest SFX (${sfxEntries.length}) use .mp3 paths; synth-only sounds (${SYNTH_ONLY_KEYS.length}) keep their .wav paths.`,
     ` * Synth-only keys: ${SYNTH_ONLY_KEYS.join(', ')}.`,
     ` */`,
     `export const SFX_FILES = {`,
