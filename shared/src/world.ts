@@ -1927,9 +1927,25 @@ function scatterNature(
   }
 }
 
-/** A deterministic 4-neighbour flood fill over non-solid tiles from `(sx,sy)`. */
-function floodReachable(collision: Uint8Array, w: number, h: number, sx: number, sy: number): Uint8Array {
-  const seen = new Uint8Array(w * h);
+/**
+ * A deterministic 4-neighbour flood fill over non-solid tiles from `(sx,sy)`.
+ *
+ * The caller supplies the `seen` scratch buffer (sized w*h) so it can be reused
+ * across the many reachability-carve iterations within one generateWorld run
+ * instead of re-allocating 16KB per call. It is cleared (`.fill(0)`) on entry,
+ * so reuse is byte-identical to a fresh allocation. The fill is purely local to
+ * this call (only consumed before the next call overwrites it), so a single
+ * shared buffer is safe — there is no nested/reentrant flood.
+ */
+function floodReachable(
+  seen: Uint8Array,
+  collision: Uint8Array,
+  w: number,
+  h: number,
+  sx: number,
+  sy: number,
+): Uint8Array {
+  seen.fill(0);
   const start = sy * w + sx;
   if (sx < 0 || sy < 0 || sx >= w || sy >= h || collision[start] === 1) return seen;
   // A flat ring queue (FIFO) keyed by flat index — order is fully determined by
@@ -2550,8 +2566,12 @@ export function generateWorld(seed: number): WorldMap {
   const startTile = spawnTiles[0] ?? { tx: gateTx - 2, ty: gateTy };
   const MAX_ITERS = required.length + 8;
   let iter = 0;
+  // One reusable 'seen' scratch for every flood pass — floodReachable clears it
+  // on entry, so this is byte-identical to a fresh per-call allocation but skips
+  // the ~16KB Uint8Array churn each iteration.
+  const seen = new Uint8Array(w * h);
   for (;;) {
-    const seen = floodReachable(collision, w, h, startTile.tx, startTile.ty);
+    floodReachable(seen, collision, w, h, startTile.tx, startTile.ty);
     let carvedAny = false;
     for (const tgt of required) {
       if (seen[tgt.ty * w + tgt.tx]) continue;
