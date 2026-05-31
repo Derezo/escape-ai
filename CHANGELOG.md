@@ -4,6 +4,40 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.150: **Return-home reliability + robot exit-pen + escape herd despawn/respawn (Phase 5).**
+  Three server-authoritative behavior fixes; no client / shared change.
+  **5A — return-home watchdog (`stealth.js`).** A returning-home animal now tracks net
+  progress toward home on server-only scratch (`returnLastProgressTick`/`returnLastD2`);
+  if it closes no measurable ground (`PATHFIND.RETURN_PROGRESS_EPS2`) for
+  `PATHFIND.RETURN_WATCHDOG_SECS` (10s, tick-based) it is hard-released — snapped to its
+  home center when that center is inside the enclosure, else stopped in place — so a body
+  wedged on a fence / aiming at an unreachable goal stops drifting forever. The normal
+  return completes well under the threshold, so the common case is unchanged. Watchdog
+  scratch is seeded on the first stalled tick and cleared (`clearReturnWatchdog`) on
+  arrival or release; a new `homeCentersForRoom` per-room cache backs the fallback target.
+  **5B — robot exit-pen handoff (`behaviors.js` + `stealth.js`).** A hauler that drops a
+  captive INSIDE a pen no longer flips straight to reactive `patrol` (which can't thread
+  the 2-wide gate back out from the interior and got stuck). It now hands off to a transient
+  `behavior='exiting'` state (`handoffToExit` stamps `exitGoalX/Y` = nearest patrol waypoint
+  OUTSIDE the pen via `nearestWaypointOutside`, plus `exitPenSpecies`). `stepRobotExit`
+  routes it via the existing A* (`moveTowardPoint`) until it's genuinely outside the pen
+  bounds, then flips to `patrol` (nearest waypoint) — or `guard` for a guard robot. stealth
+  dispatches the new state before normal perception and re-resolves `penBounds` each tick.
+  **5C — escape herd despawn + 15s respawn (`follow.js` + `engine.js`).** When a player
+  ESCAPES, `scoreEscape` now DESPAWNS each banked follower from the room (no ghost herd
+  lingering at the gate — the client sweeps the vanished view) and enqueues it on a new
+  per-room server-side RESPAWN QUEUE (`Map<roomName, {id,species,name,respawnAtTick}[]>`,
+  no `shared/types.ts` field). `engine.stepNpcs` calls `follow.stepRespawns` each tick (before
+  the idle/robot steps), which re-materializes each due animal INSIDE its home pen
+  (`world.spawnForSpecies`, deterministic jitter) as a fresh idle decoy (humanLikeness 0,
+  no follow state) after `FOLLOW.RESPAWN_SECS` (15s). SCOPE: only the escaper's live
+  followers despawn — unrelated pen animals are untouched. DISCONNECT/CATCH keep the
+  existing `releaseFollower` behavior (the herd never left the world — it drifts home in
+  place), which the escape requirement intentionally does not change. New
+  `server/test/escape-respawn.test.js` covers despawn → no-early-respawn → in-pen respawn;
+  full server suite (5 tests) + shared suite (90) green; server boots clean; `e2e-follow`
+  passes against the live server.
+
 - 0.2.149: **NPC anti-vibration — stabilized steering fan + hold-position (Phase 4).**
   Kills the residual animal/robot jitter (sprite flipping + sub-pixel body slide) in
   tight spaces. SHARED: `steerAround` takes an optional `biasAngle` reference heading —

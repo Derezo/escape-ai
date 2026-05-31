@@ -343,8 +343,10 @@ function stepRobotIdle(robot, animals, ctx) {
 function stepRobotReturn(robot, npc, ctx) {
   const { rm, worldEntities, lockdown, currentTick, dt, entersHazard, penBounds, penGoalTile, route } = ctx;
 
-  // Clear both sides' capture link + rejoin patrol at the nearest waypoint. One place
-  // so every release path (no-home, arrived) tears the capture down identically.
+  // Drop the capture link (both sides) and rejoin patrol at the nearest waypoint —
+  // used ONLY for the degenerate no-home case below. The normal arrival path instead
+  // hands off to the EXIT-PEN state (handoffToExit) so the hauler reliably threads
+  // back OUT the gate before it patrols, rather than getting wedged inside the pen.
   const release = () => {
     robot.capturedBy = undefined;
     robot.captureSpecies = undefined;
@@ -364,15 +366,21 @@ function stepRobotReturn(robot, npc, ctx) {
     return;
   }
 
-  // 2) ARRIVED: the NPC is inside the pen interior → release it home. It resumes the
-  //    normal contained wander next tick (returningHome cleared, homeX/Y dropped).
+  // 2) ARRIVED: the NPC is inside the pen interior → drop it home AND hand the robot off
+  //    to the EXIT-PEN state. The robot is now INSIDE the enclosure (it carried the NPC
+  //    through the gate), and reactive patrol can't thread the 2-wide gate back out from
+  //    in here — so instead of flipping straight to 'patrol', route it to a patrol
+  //    waypoint just OUTSIDE the pen first (stepRobotExit), THEN patrol. The captive's
+  //    return-home flags are cleared so it resumes its contained wander next tick.
   if (pathfind && pathfind.inBounds(npc.x, npc.y, penBounds)) {
     if (npc) {
       npc.returningHome = false;
       npc.homeX = undefined;
       npc.homeY = undefined;
+      npc.capturedBy = undefined;
+      npc.captureSpecies = undefined;
     }
-    release();
+    handoffToExit(robot, ctx);
     return;
   }
 
@@ -389,11 +397,114 @@ function stepRobotReturn(robot, npc, ctx) {
   npc.facing = robot.facing;
 }
 
+/**
+ * Hand a hauler off from the RETURN state (captive just dropped inside the pen) to the
+ * transient EXITING state: clear the now-spent capture link, pick an EXIT GOAL — a
+ * patrol waypoint OUTSIDE the pen (or, for a guard or a degenerate route, the
+ * gate-inside tile's world point as a coarse aim) — and stamp the pen species so
+ * stealth's dispatch can re-resolve penBounds each exit tick. stepRobotExit then
+ * routes the robot to that goal until it's clear of the pen, then flips to patrol/guard.
+ */
+function handoffToExit(robot, ctx) {
+  const { route, penGoalTile, rm } = ctx;
+  // Remember which pen we're escaping (from the now-spent capture species) so stealth
+  // can re-resolve penBounds each exit tick. Stamp it BEFORE clearing captureSpecies.
+  robot.exitPenSpecies = robot.captureSpecies;
+  // Capture link is spent — the NPC is home. Drop it before exiting.
+  robot.capturedBy = undefined;
+  robot.captureSpecies = undefined;
+  // Pick the nearest patrol waypoint that is OUTSIDE the pen as the exit goal, so the
+  // robot threads back out through the gate to a point on its loop. A guard (no usable
+  // patrol loop) or a degenerate/empty route falls back to aiming at the gate-inside
+  // tile, which still pulls it toward and through the gate; once it's clear of the pen
+  // bounds the exit completes regardless of the exact goal.
+  let goal = null;
+  if (route && route.length) {
+    const wp = nearestWaypointOutside(robot, route, ctx.penBounds);
+    if (wp) goal = { x: wp.x, y: wp.y };
+  }
+  if (!goal && penGoalTile) {
+    goal = { x: (penGoalTile.tx + 0.5) * rm.tile, y: (penGoalTile.ty + 0.5) * rm.tile };
+  }
+  robot.exitGoalX = goal ? goal.x : robot.x;
+  robot.exitGoalY = goal ? goal.y : robot.y;
+  robot.behavior = 'exiting';
+  if (ctx.clearPath) ctx.clearPath(robot); // drop the haul path before routing out
+}
+
+/** The nearest waypoint on `route` to `robot` that lies OUTSIDE `penBounds`, or null
+ *  if every waypoint is inside the pen / no bounds given. Used to pick a robot's
+ *  exit-pen goal — a point on its patrol loop beyond the enclosure walls. */
+function nearestWaypointOutside(robot, route, penBounds) {
+  let best = null;
+  let bestD2 = Infinity;
+  for (const wp of route) {
+    if (penBounds && pathfind && pathfind.inBounds(wp.x, wp.y, penBounds)) continue;
+    const dx = wp.x - robot.x;
+    const dy = wp.y - robot.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; best = wp; }
+  }
+  return best;
+}
+
+/**
+ * The robot's EXIT-PEN movement for this tick (Phase 5B). A hauler that just dropped a
+ * captive INSIDE a pen routes A* to its exit goal (a patrol waypoint outside the
+ * enclosure) until it is genuinely OUTSIDE the pen bounds, then flips to patrol (or
+ * guard, for a guard robot) at the nearest waypoint. This is the un-stick: reactive
+ * patrol can't thread the 2-wide gate back out from the pen interior, so the explicit
+ * routed exit guarantees the robot leaves rather than grinding on the inside of the gate.
+ *
+ * Reports robot.mode = 'pursue' while still exiting (renders as an active, non-idle
+ * robot — it's mid-task), and lets the patrol/guard transition set 'idle' on the flip.
+ *
+ * ctx FIELDS READ: rm, worldEntities, lockdown, currentTick, dt, entersHazard, route,
+ *   scratch, followPathToGoal, clearPath, penBounds (the pen being escaped),
+ *   guardBounds (for a guard's resume). robot.exitGoalX/Y is the routed target.
+ *
+ * @param {object} robot  mutated in place
+ * @param {object} ctx    see above
+ */
+function stepRobotExit(robot, ctx) {
+  const { rm, worldEntities, lockdown, currentTick, dt, entersHazard, route, penBounds } = ctx;
+  ensureInit(robot, route);
+
+  // CLEAR OF THE PEN: once the robot is genuinely outside the enclosure (or there's no
+  // pen bounds to test against), the exit is done — drop the transient state and resume
+  // the normal idle behavior. A guard returns to its contained 'guard' wander; a
+  // patroller rejoins the loop at the nearest waypoint (preferring the index it stored
+  // when it broke off to capture, lastPatrolIndex, if that's still the closest).
+  const outside = !penBounds || !(pathfind && pathfind.inBounds(robot.x, robot.y, penBounds));
+  if (outside) {
+    robot.exitGoalX = undefined;
+    robot.exitGoalY = undefined;
+    robot.exitPenSpecies = undefined;
+    if (ctx.clearPath) ctx.clearPath(robot);
+    if (robot.guard) {
+      robot.behavior = 'guard';
+    } else {
+      robot.behavior = 'patrol';
+      robot.patrolIndex = (route && route.length) ? nearestWaypointIndex(robot, route) : robot.lastPatrolIndex;
+    }
+    robot.mode = 'idle'; // back to the idle FSM; next tick runs normal perception
+    return;
+  }
+
+  // STILL INSIDE: route to the exit goal (a waypoint outside the pen) through the gate.
+  robot.mode = 'pursue'; // mid-task — render as an active robot, like the haul leg
+  const speed = speedFor(robot, lockdown, currentTick);
+  const goalX = Number.isFinite(robot.exitGoalX) ? robot.exitGoalX : robot.x;
+  const goalY = Number.isFinite(robot.exitGoalY) ? robot.exitGoalY : robot.y;
+  moveTowardPoint(robot, goalX, goalY, dt, speed, rm, worldEntities, entersHazard, ctx);
+}
+
 module.exports = {
   setShared,
   isReady,
   speedFor,
   stepRobotIdle,
   stepRobotReturn,
+  stepRobotExit,
   pickInvestigateTarget,
 };

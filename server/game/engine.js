@@ -247,6 +247,11 @@ function stepNpcs(dt) {
     // Sweep expired temporary entities (skunk hazards, fox decoys) before anyone
     // perceives them this tick, so a lapsed effect stops influencing the sim.
     world.pruneExpired(roomName, currentTick);
+    // Re-materialize any escaped-herd animals whose 15s respawn timer has elapsed,
+    // back inside their home pen, BEFORE the idle/robot steps so a freshly respawned
+    // animal is perceived + drifts this same tick (no one-tick lag, mirrors how
+    // stepIdleAnimals runs before stepRobots). A no-op when the room's queue is empty.
+    follow.stepRespawns(roomName, currentTick);
     // Drift the idle decoy animals first so robots perceive them at this tick's
     // positions (no one-tick lag) when stepRobots runs its Three-Laws decision.
     // stepIdleAnimals SKIPS active followers (follow.isFollower) so they aren't

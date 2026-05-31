@@ -100,7 +100,17 @@ module.exports = {
     // Kept BELOW 1 so the body targets the immediate next tile center (an
     // axis-aligned step the sliding integrator threads cleanly) instead of skipping
     // ahead to a diagonal waypoint that would clip a wall corner near the gate.
-    ARRIVE_TILES: parseFloat(process.env.PATHFIND_ARRIVE_TILES) || 0.6
+    ARRIVE_TILES: parseFloat(process.env.PATHFIND_ARRIVE_TILES) || 0.6,
+    // Return-home WATCHDOG (Phase 5A): seconds a returning-home animal may go WITHOUT
+    // net progress toward its enclosure before it is hard-released at its home center
+    // (so a stuck-on-a-fence animal stops drifting forever). The normal return
+    // completes in a few seconds, far under this; a stalled one trips it. Converted to
+    // ticks server-side. Progress is "got measurably closer to home since last check".
+    RETURN_WATCHDOG_SECS: parseFloat(process.env.PATHFIND_RETURN_WATCHDOG_SECS) || 10,
+    // Squared world-unit distance a returning animal must close since its last
+    // progress checkpoint to count as "making progress" (resets the watchdog clock).
+    // Below this it's considered stalled and the watchdog timer keeps running.
+    RETURN_PROGRESS_EPS2: parseFloat(process.env.PATHFIND_RETURN_PROGRESS_EPS2) || 64
   },
 
   // Species abilities (Phase 4). Each species has one edge-triggered power fired
@@ -199,7 +209,11 @@ module.exports = {
     // follower (worth more — the competitive theft payoff).
     SCORE_OWN: parseFloat(process.env.SCORE_OWN) || 100,
     SCORE_FOLLOWER: parseFloat(process.env.SCORE_FOLLOWER) || 50,
-    SCORE_STOLEN: parseFloat(process.env.SCORE_STOLEN) || 120
+    SCORE_STOLEN: parseFloat(process.env.SCORE_STOLEN) || 120,
+    // Seconds after a player ESCAPES before the herd it led out (its followers,
+    // despawned at the gate so no one sees a ghost herd) reappears back inside its
+    // home pen. Converted to ticks server-side via secsToTicks (deterministic).
+    RESPAWN_SECS: parseFloat(process.env.FOLLOW_RESPAWN_SECS) || 15
   },
 
   // Environment helpers

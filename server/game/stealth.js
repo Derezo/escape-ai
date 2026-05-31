@@ -475,6 +475,21 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       robot.captureSpecies = undefined;
     }
 
+    // EXITING THE PEN (Phase 5B): a hauler that just dropped its captive INSIDE the pen
+    // is threading back OUT through the gate to its exit goal (a patrol waypoint just
+    // outside the enclosure). Until it's clear of the pen it ignores normal perception
+    // and routes to that goal via A*; once outside + near the route it flips to patrol.
+    // This keeps the robot from getting wedged inside the pen by reactive patrol, which
+    // can't thread the 2-wide gate back out from the interior.
+    if (robot.behavior === 'exiting') {
+      idleCtx.guardBounds = robot.guard ? guardBoundsById.get(robot.id) : undefined;
+      idleCtx.penBounds = robot.exitPenSpecies ? homeBoundsForRoom(roomName).get(robot.exitPenSpecies) : undefined;
+      behaviors.stepRobotExit(robot, idleCtx);
+      // stepRobotExit reports robot.mode itself ('pursue' while exiting, 'idle' once
+      // it has flipped to patrol/guard this tick); either way it owns this tick.
+      continue;
+    }
+
     const decision = shared.robotDecision(robot, animals, lockdown);
     robot.mode = decision.mode;
     robot.targetId = decision.targetId;
@@ -661,9 +676,52 @@ function stepIdleAnimals(dt, roomName, currentTick) {
         e.returningHome = false;
         e.homeX = undefined;
         e.homeY = undefined;
+        clearReturnWatchdog(e);
         clearPath(e);
         // fall through to the normal contained wander below this tick.
       } else {
+        // WATCHDOG (Phase 5A): a returning animal that makes NO net progress toward
+        // home for RETURN_WATCHDOG_SECS is hard-released at its home center, so a
+        // body wedged on a fence / an unreachable goal stops drifting forever (the
+        // normal return completes in a few seconds, well under the threshold). The
+        // home target is the drift-home point stamped by releaseToHome (homeX/Y),
+        // falling back to the species home center. Distance-to-home is tracked on
+        // server-only scratch fields, reset whenever the animal closes RETURN_PROGRESS_EPS2.
+        const homeTarget =
+          (Number.isFinite(e.homeX) && Number.isFinite(e.homeY))
+            ? { x: e.homeX, y: e.homeY }
+            : (homeSpecies && homeCentersForRoom(roomName).get(homeSpecies));
+        if (homeTarget) {
+          const hdx = homeTarget.x - e.x;
+          const hdy = homeTarget.y - e.y;
+          const d2 = hdx * hdx + hdy * hdy;
+          if (e.returnLastProgressTick === undefined) {
+            // First watchdog tick for this return: seed the progress checkpoint.
+            e.returnLastProgressTick = currentTick;
+            e.returnLastD2 = d2;
+          } else if (d2 + config.PATHFIND.RETURN_PROGRESS_EPS2 < (e.returnLastD2 || Infinity)) {
+            // Closed measurable ground toward home → reset the stall clock.
+            e.returnLastProgressTick = currentTick;
+            e.returnLastD2 = d2;
+          } else if (currentTick - e.returnLastProgressTick >= secsToTicks(config.PATHFIND.RETURN_WATCHDOG_SECS)) {
+            // STALLED past the threshold with no progress → hard-release at the home
+            // center. SNAP it home only if the center sits inside the enclosure
+            // (it's world-gen-proven non-solid + inside); otherwise stop the futile
+            // drift in place so it reverts to a contained/ambient wander next tick.
+            const center = homeSpecies && homeCentersForRoom(roomName).get(homeSpecies);
+            if (center && homeBounds && pathfind.inBounds(center.x, center.y, homeBounds)) {
+              e.x = center.x;
+              e.y = center.y;
+            }
+            e.returningHome = false;
+            e.homeX = undefined;
+            e.homeY = undefined;
+            clearReturnWatchdog(e);
+            clearPath(e);
+            continue; // released this tick; it wanders contained next tick
+          }
+        }
+
         const bx = e.x;
         const by = e.y;
         const waypoint = goalTile
@@ -812,6 +870,11 @@ const auxInteriorRectsForRoom = perRoomCache(world.getAuxInteriorRects);
  *  target — one tile inside the enclosure gate / building door). Built once per room. */
 const homeGateForRoom = perRoomCache(world.getHomeGateInsideBySpecies);
 
+/** Per-room cache of species → home CENTER (world units) — the return-home watchdog's
+ *  fallback target + the snap-home destination when a return-home stalls. Built once
+ *  per room (world-gen proves every center is non-solid + inside its enclosure). */
+const homeCentersForRoom = perRoomCache(world.getHomeCentersBySpecies);
+
 /** Per-room reusable A* scratch buffer (sized to the room's grid). One per room,
  *  reused across every findPath call there so a search allocates nothing per call.
  *  Lazily built once the pathfinder + room map are available. */
@@ -898,6 +961,14 @@ function clearPath(entity) {
   entity.pathGoalTx = undefined;
   entity.pathGoalTy = undefined;
   entity.pathRepathTick = 0;
+}
+
+/** Clear an entity's return-home WATCHDOG scratch (on arrival / hard-release) so the
+ *  next return-home starts a fresh progress clock. Server-only fields (returnLast*),
+ *  undefined when no return is in flight, never serialized. */
+function clearReturnWatchdog(entity) {
+  entity.returnLastProgressTick = undefined;
+  entity.returnLastD2 = undefined;
 }
 
 /**

@@ -362,7 +362,7 @@ const STUCK_EPS2 = 1; // ~1 world unit of progress
 /** Re-roll window (ticks) for the deterministic anti-stuck jitter heading. */
 const JITTER_BUCKET_TICKS = 10;
 
-// --- scoring + release ------------------------------------------------------
+// --- follower queries -------------------------------------------------------
 
 /** Every ACTIVE follower of a player in a room (followerOf===playerId, live). */
 function gatherFollowersOf(roomName, playerId, currentTick) {
@@ -375,12 +375,111 @@ function gatherFollowersOf(roomName, playerId, currentTick) {
   return out;
 }
 
+// --- escape respawn queue (Phase 5C) ----------------------------------------
+
+/**
+ * Per-room queue of animals that DESPAWNED when a player escaped (the herd it led
+ * out the gate) and are scheduled to reappear inside their home pen after a delay.
+ * A server-side queue (NOT a field on the entity — the entity no longer exists once
+ * despawned) keeps this off the net contract: no new shared/types.ts field. Each
+ * entry: { id, species, name, respawnAtTick }. Map<roomName, entry[]>.
+ *
+ * Rationale: when a player escapes, the followers it was leading must VANISH from the
+ * world (otherwise other players see a ghost herd parked at the gate, since the old
+ * releaseFollower left the now-ownerless entities lingering there). They then respawn
+ * fresh inside their home pen after RESPAWN_SECS, restocking the zoo for the next run.
+ */
+const respawnQueueByRoom = new Map(); // Map<roomName, {id,species,name,respawnAtTick}[]>
+
+/** This room's respawn queue array (created lazily). */
+function respawnQueueFor(roomName) {
+  let q = respawnQueueByRoom.get(roomName);
+  if (!q) {
+    q = [];
+    respawnQueueByRoom.set(roomName, q);
+  }
+  return q;
+}
+
+/**
+ * Despawn one escaped follower animal NOW and schedule its return to its home pen.
+ * Removes the entity from the room's live entity Map (the next snapshot delta drops
+ * it → the client sweeps its view, see phaser.ts upsert's `seen` set), then enqueues
+ * a fresh-respawn record keyed by id+species so stepRespawns can re-materialize the
+ * exact same animal later. Idempotent-safe: an animal with no home pen is still
+ * despawned (the queue's re-spawn falls back to the home center, which world-gen
+ * proves walkable + inside; a species with no home at all is dropped permanently —
+ * it had no pen to return to, same as a transient decoy).
+ * @param {object} entity   the follower animal to despawn (must be in the room)
+ * @param {string} roomName
+ * @param {number} respawnAtTick
+ */
+function despawnFollowerForRespawn(entity, roomName, respawnAtTick) {
+  if (!entity) return;
+  // Snapshot the identity BEFORE we drop the entity, so the re-spawn re-creates the
+  // same animal (same id keeps the client/delta-diff identity stable across the gap).
+  const record = { id: entity.id, species: entity.species, name: entity.name, respawnAtTick };
+  const rw = world.getOrCreateRoomWorld(roomName);
+  rw.entities.delete(entity.id);
+  // Only queue a return if the species has a home pen to return to; a homeless
+  // species (a transient decoy) just stays gone. Most followers are pen animals.
+  if (world.getHomeCentersBySpecies(roomName).get(entity.species)) {
+    respawnQueueFor(roomName).push(record);
+  }
+}
+
+/**
+ * Process this room's escape-respawn queue for the current tick: re-materialize every
+ * queued animal whose respawnAtTick has arrived, INSIDE its home pen, as a fresh idle
+ * decoy (humanLikeness 0, facing 's', no follow state). Re-inserts it into the room's
+ * live entity Map so the next snapshot delta re-adds the entity for every client.
+ * Called once per active room from engine.stepNpcs each tick. Deterministic: integer
+ * tick comparison, deterministic spawn jitter (world.spawnForSpecies keyed by id).
+ * @param {string} roomName
+ * @param {number} currentTick
+ */
+function stepRespawns(roomName, currentTick) {
+  const q = respawnQueueByRoom.get(roomName);
+  if (!q || q.length === 0) return;
+  const rw = world.getOrCreateRoomWorld(roomName);
+  // Walk back-to-front so a splice doesn't skip the next entry.
+  for (let i = q.length - 1; i >= 0; i--) {
+    const rec = q[i];
+    if (currentTick < rec.respawnAtTick) continue;
+    q.splice(i, 1);
+    // A pen interior spot (deterministic, jittered, clamped inside the pen bounds) —
+    // world-gen proves the pen center is non-solid + reachable, so this is guaranteed
+    // walkable + inside. Re-create the animal as a clean idle decoy.
+    const at = world.spawnForSpecies(roomName, rec.species, rec.id);
+    rw.entities.set(rec.id, {
+      id: rec.id,
+      x: at.x,
+      y: at.y,
+      name: rec.name || rec.species,
+      kind: 'animal',
+      species: rec.species,
+      humanLikeness: 0,
+      facing: 's'
+    });
+  }
+}
+
+/** Drop a room's respawn queue (room emptied / removed). Keeps the Map from growing
+ *  unboundedly across room churn. Safe to call for a room with no queue. */
+function clearRespawnQueue(roomName) {
+  respawnQueueByRoom.delete(roomName);
+}
+
+// --- scoring + release ------------------------------------------------------
+
 /**
  * Score a player's escape and bank the herd. Called from stealth.checkEscape on the
  * escape edge. Awards SCORE_OWN for the player's own animal + per-follower (more for
  * a stolen one), credits escaped-by-species for the player AND each follower, then
- * RELEASES every follower (back to idle drift). Stamps player.lastScore (the client
- * toast) and bumps player.scoreTotal (the running round score, persists respawn).
+ * DESPAWNS every follower (it left out the gate with the player — see
+ * despawnFollowerForRespawn) and schedules each to reappear in its home pen after
+ * FOLLOW.RESPAWN_SECS. Stamps player.lastScore (the client toast) and bumps
+ * player.scoreTotal (the running round score, persists respawn).
  * @param {object} player
  * @param {string} roomName
  * @param {number} currentTick
@@ -390,6 +489,7 @@ function scoreEscape(player, roomName, currentTick) {
   let points = config.FOLLOW.SCORE_OWN;
   let stolenCount = 0;
   bumpEscapedSpecies(player, player.species); // your own animal out, by species
+  const respawnAtTick = currentTick + secsToTicks(config.FOLLOW.RESPAWN_SECS);
   for (const f of followers) {
     if (f.stolen) {
       points += config.FOLLOW.SCORE_STOLEN;
@@ -398,7 +498,10 @@ function scoreEscape(player, roomName, currentTick) {
       points += config.FOLLOW.SCORE_FOLLOWER;
     }
     bumpEscapedSpecies(player, f.species); // each follower out, by its species
-    releaseFollower(f);                    // released at the gate → back to idle
+    // The herd left WITH the player: despawn it from the world (no ghost herd at the
+    // gate) and queue it to reappear in its home pen after RESPAWN_SECS. This clears
+    // its follow state implicitly by removing the entity — no releaseFollower needed.
+    despawnFollowerForRespawn(f, roomName, respawnAtTick);
   }
   player.lastScore = { points, herd: followers.length, stolen: stolenCount, tick: currentTick };
   player.scoreTotal = (player.scoreTotal || 0) + points;
@@ -472,4 +575,6 @@ module.exports = {
   releaseFollower,
   releaseToHome,
   releaseFollowersOf,
+  stepRespawns,
+  clearRespawnQueue,
 };
