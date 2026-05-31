@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.144: **Quest hint — skip used/locked terminals, advance to the next.** For
+  `activate`/`order` steps the direction arrow now routes to the nearest terminal that is
+  still a usable target, instead of always the absolute nearest. It skips terminals the
+  player has already counted this step (`me.quest.activatedIds`) and terminals currently
+  locked green by another player (`entity.activatedBy` set to someone else) — so after you
+  tap the first console the arrow moves on to the next. If every terminal is filtered out
+  (all done/locked) it falls back to the nearest so the cue never vanishes mid-step. Touched
+  `client/src/main.ts` (`questGuideFor`).
+
 - 0.2.143: **Terminals — outdoor-console sprite + status LED.** The flat green square is
   replaced by a composed outdoor computer terminal (Phaser Container: steel housing, dark
   inset screen, keypad strip, standing post) with a top-corner status LED. The LED reads

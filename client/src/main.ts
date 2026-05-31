@@ -869,9 +869,11 @@ function sfxForFx(kind: string): SfxName | undefined {
  * step's mechanic (server sets quest.type = steps[stepIndex].kind); the server owns
  * completion, this only chooses where the cosmetic arrow points for that step:
  *   - 'fetch'/'escort' → the perimeter gate (courier the prop / lead a herd out).
- *   - 'activate'/'order' → the NEAREST keeper terminal. The client can't see which
- *               terminals were already tapped (server-side Set), so it points at the
- *               closest console and turns off once that step completes.
+ *   - 'activate'/'order' → the nearest keeper terminal still USABLE for me: the
+ *               server forwards my own counted ids (quest.activatedIds) and each
+ *               terminal's shared lock (entity.activatedBy), so the arrow skips
+ *               consoles I've already tapped or that another player holds, advancing
+ *               to the next one (falls back to nearest if all are done/locked).
  *   - 'collect'  → the NEAREST food source.
  *   - 'recruit'  → the NEAREST feedable other-species animal not already yours.
  *   - 'ability'  → no waypoint (self-contained; the arrow points at the player itself
@@ -927,17 +929,37 @@ function questGuideFor(
     }
     if (!goal) goal = localMap?.gate; // fallback to the static map's gate point
   } else if (kind === 'activate' || kind === 'order') {
-    // 'activate' or 'order' → the NEAREST keeper terminal. The client can't see
-    // which were already tapped; it points at the closest and turns off once done.
+    // 'activate' or 'order' → the nearest keeper terminal that is still a USABLE
+    // target for me, so the arrow advances to the next console as I work through
+    // the step. The server now tells us enough to filter two classes out:
+    //   - terminals I've ALREADY counted this step (quest.activatedIds — my own
+    //     per-step distinct-terminal tally, forwarded on my entity); and
+    //   - terminals currently LOCKED green by ANOTHER player (entity.activatedBy
+    //     set to someone else, within the server's 15s window) — I can't use those
+    //     right now, so don't route there.
+    // If every terminal is filtered out (all done/locked) we fall back to the
+    // nearest terminal regardless, so the arrow never vanishes mid-step.
+    const mineDone = new Set(me.quest?.activatedIds ?? []);
     let nearestD2 = Infinity;
+    let fallbackD2 = Infinity;
+    let fallbackGoal: { x: number; y: number } | undefined;
     for (const e of entities.values()) {
       if (e.kind !== 'terminal' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
       const d2 = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
+      if (d2 < fallbackD2) {
+        fallbackD2 = d2;
+        fallbackGoal = { x: e.x, y: e.y };
+      }
+      // Skip terminals I already tapped this step, or that someone else holds.
+      if (mineDone.has(e.id)) continue;
+      const lockedByOther = typeof e.activatedBy === 'string' && e.activatedBy !== myId;
+      if (lockedByOther) continue;
       if (d2 < nearestD2) {
         nearestD2 = d2;
         goal = { x: e.x, y: e.y };
       }
     }
+    if (!goal) goal = fallbackGoal; // all done/locked → keep pointing at the nearest
   } else if (kind === 'collect') {
     // 'collect' → the NEAREST food source entity.
     let nearestD2 = Infinity;
