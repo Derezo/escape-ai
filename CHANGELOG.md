@@ -4,6 +4,14 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.145: **Test — terminal-lock activation/auto-deactivate integration test.** Adds
+  `server/test/terminal-lock.test.js` (zero-dep `node:test`) covering the five lock
+  invariants end-to-end through the real `quests.js`/`world.js` and the actual
+  `world.pruneExpired` sweep: activation stamps the lock + counts it, another player is
+  blocked while it's held, the activator's re-tap is idempotent, the 15s sweep releases the
+  lock without touching anyone's quest tally/progress, and the freed terminal becomes
+  claimable. Server suite now 4/4.
+
 - 0.2.144: **Quest hint — skip used/locked terminals, advance to the next.** For
   `activate`/`order` steps the direction arrow now routes to the nearest terminal that is
   still a usable target, instead of always the absolute nearest. It skips terminals the
