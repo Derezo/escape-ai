@@ -31,6 +31,9 @@ export const SFX_FILES = {
   confirm: './sfx/confirm.mp3',
   intro_power: './sfx/intro_power.mp3',
   intro_spark: './sfx/intro_spark.mp3',
+  chat_receive: './sfx/chat_receive.mp3',
+  chat_send: './sfx/chat_send.mp3',
+  chat_open: './sfx/chat_open.mp3',
   blip: './sfx/blip.wav',
   select: './sfx/select.wav',
   pickup: './sfx/pickup.wav',
@@ -68,6 +71,9 @@ export const SFX_FALLBACK: Partial<Record<SfxName, string>> = {
   confirm: './sfx/confirm.wav',
   intro_power: './sfx/electric_hum.wav',
   intro_spark: './sfx/electric_spark.wav',
+  chat_receive: './sfx/blip.wav',
+  chat_send: './sfx/confirm.wav',
+  chat_open: './sfx/blip.wav',
 };
 
 /**
@@ -94,6 +100,9 @@ export const SFX_VOLUME: Record<SfxName, number> = {
   confirm: 0.7,
   intro_power: 0.45,
   intro_spark: 0.6,
+  chat_receive: 0.45,
+  chat_send: 0.5,
+  chat_open: 0.5,
   blip: 0.6,
   select: 0.6,
   pickup: 0.6,

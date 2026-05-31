@@ -313,6 +313,37 @@
       "placeholder": "electric_spark",
       "defaultVolume": 0.6,
       "descriptor": "a sharp electrical spark crack, a high-voltage arc snapping between conduits as the consciousness transfer fires"
+    },
+
+    {
+      "key": "chat_receive",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:chat-receive",
+      "output": "assets/sfx/chat_receive.mp3",
+      "placeholder": "blip",
+      "defaultVolume": 0.45,
+      "descriptor": "a soft short incoming-message blip, a single gentle cool synthetic tick, unobtrusive"
+    },
+    {
+      "key": "chat_send",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:chat-send",
+      "output": "assets/sfx/chat_send.mp3",
+      "placeholder": "confirm",
+      "defaultVolume": 0.5,
+      "descriptor": "a light outgoing-message click, a quick clean upward synthetic tick, crisp and quiet"
+    },
+    {
+      "key": "chat_open",
+      "kind": "sfx",
+      "priority": "nice",
+      "trigger": "event:chat-open",
+      "output": "assets/sfx/chat_open.mp3",
+      "placeholder": "blip",
+      "defaultVolume": 0.5,
+      "descriptor": "a light interface transition, a soft brief synthetic swell as a panel opens"
     }
   ],
 

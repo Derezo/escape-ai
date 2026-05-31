@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.129: **Global chat — SFX manifest entries + codegen (Phase 3/5).** Added three subtle chat
+  sound effects to `asset-pipeline/manifest.json`: `chat_receive` (soft incoming blip, vol 0.45),
+  `chat_send` (light outgoing click, 0.5), `chat_open` (panel-open swell, 0.5). All `priority: nice`
+  with `blip`/`confirm` `.wav` placeholders so they're audible before the real `.mp3`s are generated
+  (user-run, spends credits — out of scope). Ran `npm run audio`; the regenerated
+  `client/src/audio.generated.ts` carries the three keys in `SFX_FILES`/`SFX_FALLBACK`/`SFX_VOLUME`
+  (so the `SfxName` union accepts them) and the drift gate is green. Touched
+  `asset-pipeline/manifest.json`, `client/src/audio.generated.ts` (regenerated).
+
 - 0.2.128: **Global chat — server handler + rate limit (Phase 2/5).** New `server/socket/chat.js`
   handles `chat:send`: it rate-limits, looks up the sender's own player record (no record / not
   joined → can't chat), sanitizes the only client-supplied field (trim + 256-char cap, drop if
