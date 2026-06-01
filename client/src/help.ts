@@ -24,6 +24,7 @@ import { SPECIES, speciesByKey } from '@shared/species';
 import { createSpeciesSprite } from './species-sprite';
 import { getLastStats } from './menu';
 import { isTypingInTextField } from './dom';
+import { formatPlayTime } from './time';
 
 /** The four tab ids, in display order. Controls is the default active tab. */
 type TabId = 'controls' | 'species' | 'more' | 'stats';
@@ -133,20 +134,6 @@ export interface HelpHandle {
 }
 
 /**
- * Format a play-time duration (seconds) compactly: "1h 23m", "12m 05s", or
- * "45s". Used by the Stats tab so playSeconds reads as wall-clock.
- */
-function formatPlayTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`;
-  return `${sec}s`;
-}
-
-/**
  * Build the help overlay, wire toggle/close keys, and return a handle. Starts
  * HIDDEN — the splash introduces the game now, not this widget.
  */
@@ -213,7 +200,7 @@ export function createHelp(): HelpHandle {
       ['Food collected', String(stats.foodCollected ?? 0)],
       ['Animals stolen', String(stats.animalsStolen ?? 0)],
       ['Quests completed', String(stats.questsCompleted ?? 0)],
-      ['Play time', formatPlayTime(stats.playSeconds)],
+      ['Play time', formatPlayTime(stats.playSeconds, { showSeconds: true })],
     ];
     pane.innerHTML = `<h2>Stats</h2>`;
     const grid = document.createElement('div');

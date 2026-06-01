@@ -20,6 +20,7 @@ import type { LeaderboardMsg, LeaderboardRow, LeaderboardSort } from '@shared/ne
 import { SPECIES, speciesByKey } from '@shared/species';
 import { createSpeciesSprite } from './species-sprite';
 import { isTypingInTextField } from './dom';
+import { formatPlayTime } from './time';
 
 /** How often (ms) to re-poll the leaderboard while the panel is OPEN. */
 const POLL_INTERVAL_MS = 4000;
@@ -43,16 +44,6 @@ interface Column {
   label: string;
   short: string;
   fmt: (r: LeaderboardRow) => string;
-}
-
-/** Format a play-time duration (seconds) compactly: "1h 23m", "12m", "45s". */
-function formatPlayTime(seconds: number): string {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m`;
-  return `${s}s`;
 }
 
 /** Thousands-separated integer, e.g. 18420 → "18,420". */

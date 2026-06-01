@@ -18,7 +18,6 @@
  */
 
 const config = require('../config');
-const world = require('./world');
 const { secsToTicks } = require('./room-utils');
 
 // Cached shared modules (handed over by stealth.loadShared via setShared).

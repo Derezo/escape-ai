@@ -1883,7 +1883,7 @@ function orderNearestRobot(player, roomName, currentTick) {
   quests.onOrder(player);
 
   // Stand the robot down for the ordered window.
-  nearest.orderedUntilTick = currentTick + Math.round(config.ORDER_DURATION_SECS * config.TICK_RATE);
+  nearest.orderedUntilTick = currentTick + secsToTicks(config.ORDER_DURATION_SECS);
   // ...but the contradiction raises its suspicion (clamped to 1). Orders help
   // now and cost you later — the core risk/reward of the stealth loop.
   nearest.suspicion = Math.min(1, (nearest.suspicion || 0) + shared.STEALTH.SUSPICION_PER_ORDER);

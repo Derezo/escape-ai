@@ -131,7 +131,6 @@ function createRateLimiter() {
 
 // The server runs a single socket layer, so a module-level singleton is the
 // simplest fit: every handler requires this same instance and keys by socket.id.
-// (createRateLimiter is exported too, for tests / isolated instances.)
 const limiter = createRateLimiter();
 
-module.exports = { createRateLimiter, limiter };
+module.exports = { limiter };

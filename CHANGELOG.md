@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.159: **Findings closeout Phase 1 — dead-code + DRY sweep.** Five verified
+  single-source / dead-code fixes. SERVER: deleted the unused `const world =
+  require('./world')` in `server/game/behaviors.js` (the binding was never read);
+  dropped the unused `createRateLimiter` export from `server/socket/rate-limit.js`
+  (only the `limiter` singleton is consumed; the function stays, it builds the
+  singleton); dropped the unused `leaveRoom` export from `server/socket/lobby.js`
+  (only called internally at line 81 via module scope; the fn stays); replaced the
+  inline `Math.round(config.ORDER_DURATION_SECS * config.TICK_RATE)` at
+  `stealth.js` `orderNearestRobot` with `secsToTicks(config.ORDER_DURATION_SECS)`
+  (byte-identical, removes the parity-drift hazard — `secsToTicks` is the single
+  source for that conversion). CLIENT: extracted the duplicated `formatPlayTime` into
+  a new `client/src/time.ts` with an opt-in `{ showSeconds }` flag — `leaderboard.ts`
+  uses the compact `"12m"` form for its dense column, `help.ts` passes
+  `{ showSeconds: true }` for the Stats-tab `"12m 05s"` form; both local copies
+  removed. 12 server tests green; client `tsc --noEmit` + `vite build` green.
+
 - 0.2.158: **Findings backlog reconcile (Phase 0 of the findings-closeout plan).**
   Audited every item in `FINDINGS_OUTSIDE_SCOPE.md` against current code (adversarially
   verified). **Deleted** the stale *"Stat-field names enumerated across four server

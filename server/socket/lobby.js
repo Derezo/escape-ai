@@ -302,4 +302,4 @@ function broadcastLobbyState(io, connectedPlayers, rooms, room) {
   io.to(room).emit(SERVER_EVENTS.LOBBY_STATE, { players });
 }
 
-module.exports = { register, broadcastLobbyState, leaveRoom };
+module.exports = { register, broadcastLobbyState };
