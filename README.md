@@ -1,24 +1,6 @@
-# TINS 2026
+# Escape AI
 
-### KINS — *KINS Is Not a Starter-kit*
-
-> (It is, though. In the grand recursive tradition of TINS Is Not SpeedHack,
-> the name denies what the repo plainly is.)
-
-A multiplayer browser game built for the [TINS 2026](https://tins.amarillion.org/2026/)
-72-hour game jam. Browser-first, with an Android build via Capacitor.
-
-TINS ("TINS Is Not SpeedHack") is a 72-hour jam where a handful of random
-**Rule-O-Matic** rules — spanning Genre, Gameplay, Graphics, Technical, Sound,
-Story, and Bonus — are announced at the start and every entry must satisfy them.
-Source code must be submitted, and entries are judged on Art / Genre / Tech.
-
-This repo began as a deliberately **game-agnostic starter kit** so that when the
-rules dropped at hour 0 we could write *gameplay*, not boilerplate (that hour-0 plan
-lives in [`docs/PLAYBOOK.md`](docs/PLAYBOOK.md)). The rules have now dropped — this is
-the game we are building.
-
-## The game — *Escape AI*
+**Play it: [escape.mittonvillage.com](https://escape.mittonvillage.com)**
 
 A **co-op multiplayer animal-escape** game for up to **20 players**. You are animals
 that have escaped your enclosures in a megazoo run by humaniform positronic
@@ -27,6 +9,13 @@ that have escaped your enclosures in a megazoo run by humaniform positronic
 First Law forbids them from touching you. Issue orders they must obey (Second Law),
 bait them away from hazards (Third Law), and watch the zoo-wide **panic meter**: let
 it **overflow** and the zoo slams into **lockdown**.
+
+Browser-first (Phaser 3 / Vite / TypeScript) on a Socket.IO authoritative server,
+with an Android build via Capacitor. Built for the
+[TINS 2026](https://tins.amarillion.org/2026/) 72-hour game jam — a jam where random
+**Rule-O-Matic** rules (Genre, Graphics, Technical, Sound, Story, Bonus) are announced
+at the start and every entry must satisfy them; entries are judged on Art / Genre / Tech.
+Here is how *Escape AI* meets its rules:
 
 ### Rule-O-Matic mapping
 
@@ -60,21 +49,15 @@ renderer swap (`PhaserRenderer` → `BabylonRenderer`), not a rewrite — see
 sides must agree on (movement integration, math) lives in `shared/` exactly once
 and is linked by client (prediction) and server (authority) alike.
 
-## Lineage — what was adapted from prior projects
+## Credits & lineage
 
-This kit distills patterns from three of the author's existing games. The netcode
-and asset pipeline are **adaptations**, not copies — game-specific logic (mining,
-combat, NPCs, persistence) was stripped, leaving a reusable skeleton.
-
-| Source repo | What was adapted into this kit |
-|-------------|--------------------------------|
-| [`Derezo/galaxy-miner`](https://github.com/Derezo/galaxy-miner) | The entire server shape: Express + Socket.IO bootstrap, the `deps`-injection socket orchestrator (`server/socket/index.js`), modular per-feature handlers, the fixed-tick authoritative engine with delta/full snapshot broadcast (`server/game/engine.js`), ping/pong latency, and disconnect cleanup. Client-side prediction + server reconciliation follows the same model. |
-| [`Derezo/Modia`](https://github.com/Derezo/Modia) | The ESM `@shared` alias pattern (shared logic imported by both client and server), the asset/audio generator approach behind `scripts/gen-placeholder-*`, and the plan-validation → remediation development discipline reflected in this changelog. |
-| [`Derezo/parasite`](https://github.com/Derezo/parasite) | The "shared core" boundary (cross-side logic lives in exactly one place), the docs-and-code-stay-in-sync rule, and the build/test pre-commit gate adapted in `scripts/hooks/`. |
-
-The galaxy-miner server in particular is the direct ancestor of `server/` — read its
-[CLAUDE.md](https://github.com/Derezo/galaxy-miner) if you want the fuller rationale
-behind the tick loop, proximity broadcasting, and shared-constants approach.
+The netcode is **adapted** from the author's [`Derezo/galaxy-miner`](https://github.com/Derezo/galaxy-miner)
+— the Express + Socket.IO bootstrap, the `deps`-injection socket orchestrator
+(`server/socket/index.js`), the fixed-tick authoritative engine with delta/full
+snapshot broadcast (`server/game/engine.js`), and the client-prediction + server-
+reconciliation model. The `@shared` single-source-of-truth boundary and the asset/audio
+generators draw on the author's [`Derezo/Modia`](https://github.com/Derezo/Modia) and
+[`Derezo/parasite`](https://github.com/Derezo/parasite). Released under the zlib license.
 
 ## Quick start (development)
 
@@ -271,7 +254,7 @@ node scripts/verify-atlas.js             # headless gate: every frame key presen
 
 `sharp` is a `scripts/`-only dev dependency; the **committed** `atlas.{png,json}` means a
 clean clone runs without it. If the atlas is missing, the renderer falls back to the
-original geometric shapes (the kit still boots with zero art). Edit a species in
+original geometric shapes (the game still boots with zero art). Edit a species in
 `scripts/sprites/species/<name>.js` (or add one + a `registry.js` line) and rerun.
 
 **Audio.** Zero-dep placeholder blips boot the game with sound on every action:

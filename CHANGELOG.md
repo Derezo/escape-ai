@@ -1,8 +1,17 @@
 # Changelog
 
-All notable changes to TINS 2026. Update this file in every commit.
+All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
+
+- 0.2.179: **Repo split + README lead-with-the-game.** Forked into its own
+  repository (`Derezo/escape-ai`), isolated from the game-agnostic starter kit it grew
+  from. `README.md` now leads with an *Escape AI* overview and the production link
+  (**escape.mittonvillage.com**); the starter-kit framing ("KINS Is Not a Starter-kit",
+  "began as a game-agnostic starter kit", the per-repo "Lineage" table) is gone, replaced
+  by a brief **Credits & lineage** note that keeps the galaxy-miner/Modia/parasite
+  attribution. Everything operational — architecture, quick start, controls, deploy,
+  Android, assets, workflow, layout — is retained unchanged.
 
 - 0.2.179: **Robots patrol designated areas via A\* — fixes the river clustering.**
   Robots used to pile into one stationary cluster by the central river instead of
