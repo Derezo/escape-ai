@@ -4,6 +4,24 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.191: **Android touch — Phase 0: platform gate + input seam + canvas hygiene.**
+  Groundwork for on-screen controls (Android is currently unplayable past login — no
+  touch input exists). New `client/src/platform.ts` exposes `isAndroid`
+  (`Capacitor.getPlatform() === 'android'`, the precise Android gate — `@capacitor/core`
+  was a dep but unused) and stamps `platform-android`/`platform-native` on `<body>` for
+  CSS. New `client/src/touch-input.ts` is the seam: a shared state object the touch
+  widgets write (an analog `{dx,dy,sprint}` vector + a queued-action sink) that
+  `main.ts`'s `inputVector()` reads — UPSTREAM of `net.sendInput`, so prediction,
+  reconciliation, and the wire contract are untouched. `inputVector()` now prefers the
+  touch vector when a finger drives it and otherwise stands exactly as before (desktop
+  keyboard is byte-for-byte identical; `getTouchVector()` is null off-Android). Movement
+  is analog in [-1,1] — safe with no server change because the server already clamps each
+  axis (`server/socket/lobby.js`). Canvas touch hygiene: `touch-action:none` +
+  no-callout/no-select on `#game`, and `user-scalable=no, maximum-scale=1` in the viewport
+  so pinch/double-tap zoom can't hijack joystick drags (touch-only; desktop zoom
+  unaffected). A `touch-controls.ts` stub keeps the seam compiling; Phase 1 fills in the
+  joystick + buttons. Build + typecheck + all 6 verify gates green.
+
 - 0.2.190: **Client: quest ⓘ info panel explains the current step (ability-step
   clarity fix).** "Hush the alarm" (owl) read as a mystery — `ability` steps show no
   guide arrow by design (the power fires anywhere, so there's nothing to point at) and

@@ -2,7 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- user-scalable=no + maximum-scale=1 stop touch pinch / double-tap zoom from
+         breaking the fixed-viewport game layout (and from hijacking joystick drags).
+         Touch-only: desktop browser zoom (Ctrl +/-) is unaffected. viewport-fit=cover
+         lets the WebView draw under the system bars; safe-area-inset CSS pads around
+         the notch / gesture nav. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
     <title>Escape AI</title>
   </head>
   <body>

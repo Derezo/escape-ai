@@ -43,6 +43,9 @@ import { createLeaderboard } from './leaderboard';
 import { createChat } from './chat';
 import { runMenu } from './menu';
 import { playIntro, preloadIntroAssets, isIntroActive } from './intro';
+import { isAndroid, applyPlatformClass } from './platform';
+import { getTouchVector, setActionSink } from './touch-input';
+import { createTouchControls } from './touch-controls';
 
 // Client prediction uses the SAME collision-aware integration as the server
 // (shared moveWithCollision against the regenerated map's grid), so prediction
@@ -60,6 +63,10 @@ const ROBOT_STRIDE = 26;
 const ROBOT_STEP_MIN_FRAME = 0.5;
 
 async function main(): Promise<void> {
+  // Mirror the platform onto <body> (platform-android / platform-native) so CSS can
+  // gate touch-only presentation the same way the JS gates touch-only behaviour.
+  applyPlatformClass();
+
   // --- Renderer (default = Phaser 2D) ---
   const renderer: IRenderer = new PhaserRenderer();
   const host = document.getElementById('game');
@@ -468,6 +475,22 @@ async function main(): Promise<void> {
     actionHeld.clear();
   });
 
+  // Touch action buttons (Android) feed the SAME `queuedAction` slot the keyboard
+  // uses — so interact/ability/feed/order ride out identically. Like the keyboard,
+  // an action while typing in chat is suppressed. The press SFX is played here too
+  // when the action is accepted, mirroring the send-loop confirmation; the send loop
+  // still plays it on drain, so we only enqueue here (no double sound — the loop owns
+  // the audio). Installed regardless of platform; only the touch UI calls it.
+  setActionSink((action) => {
+    if (chatFocused) return;
+    queuedAction = action;
+  });
+
+  // Android-only on-screen controls: floating joystick + action buttons. Built once;
+  // desktop never constructs them, so there are zero new widgets off-Android.
+  const touchControls = isAndroid ? createTouchControls() : null;
+  void touchControls; // retained for teardown symmetry; lives for the session
+
   function inputVector(): { dx: number; dy: number; sprint: boolean } {
     let dx = 0;
     let dy = 0;
@@ -476,7 +499,18 @@ async function main(): Promise<void> {
     if (keys.has('w') || keys.has('arrowup')) dy -= 1;
     if (keys.has('s') || keys.has('arrowdown')) dy += 1;
     // Shift = sprint: faster, but reads as fleeing prey (collapses the disguise).
-    const sprint = keys.has('shift');
+    let sprint = keys.has('shift');
+    // Touch (Android) overrides the keyboard vector while a finger drives the
+    // joystick: it publishes an ANALOG dx/dy in [-1,1] (proportional speed) and a
+    // stick-edge sprint. The server clamps each axis to [-1,1] already, so analog is
+    // safe with no wire change. When no finger is down getTouchVector() is null and
+    // the keyboard vector above stands unchanged (desktop is untouched).
+    const touch = getTouchVector();
+    if (touch) {
+      dx = touch.dx;
+      dy = touch.dy;
+      sprint = sprint || touch.sprint;
+    }
     return { dx, dy, sprint };
   }
 

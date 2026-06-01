@@ -25,12 +25,21 @@ body {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  /* On touch, the play surface must not interpret gestures as double-tap-zoom,
+     pinch-zoom, long-press callouts, or text selection — those would hijack the
+     virtual joystick's drags. `touch-action: none` hands all pointer events to the
+     game. No-op for mouse on desktop. */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 #game canvas {
   display: block;
   width: 100% !important;
   height: 100% !important;
+  touch-action: none;
 }
 
 /* Telemetry HUD: a designed panel pinned top-left, click-through. A title row
