@@ -1132,6 +1132,195 @@ body {
   background: #243040;
 }
 
+/* --- One-time first-login Game Tips screen (tips.ts). Same centered-modal chrome
+   as #help-overlay, but z-50 so it sits above every gameplay overlay; it only ever
+   shows AFTER the cinematic intro (z-60) tears down, and below the connection
+   overlay (z-100). Hidden until `.open`. --- */
+#tips-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 10, 0.9);
+  user-select: none;
+}
+
+#tips-overlay.open {
+  display: flex;
+}
+
+#tips-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: 720px;
+  width: 100%;
+  max-height: 92vh;
+  padding: 20px 26px 16px;
+  border-radius: 12px;
+  background: #11151d;
+  border: 1px solid #2b3340;
+  box-shadow: 0 0 48px rgba(76, 201, 240, 0.16);
+  color: #cde7ff;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+#tips-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  /* room so the absolute × doesn't overlap the first heading */
+  padding-right: 4px;
+}
+
+#tips-panel h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  letter-spacing: 1px;
+  color: #e8eef6;
+}
+
+#tips-panel h2 {
+  margin: 16px 0 6px;
+  font-size: 15px;
+  color: #4cc9f0;
+  border-bottom: 1px solid #222a35;
+  padding-bottom: 3px;
+}
+
+#tips-panel p {
+  margin: 4px 0;
+}
+
+#tips-panel ul,
+#tips-panel ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+#tips-panel ul.cols {
+  columns: 2;
+  list-style: none;
+  padding-left: 0;
+}
+
+/* Header: animated sprite beside the "You are the X" identity block. */
+.tips-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 6px;
+}
+
+.tips-sprite-slot {
+  flex: 0 0 auto;
+  width: 72px;
+  height: 72px;
+}
+
+.tips-header-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tips-premise {
+  color: #cde7ff;
+}
+
+.tips-ability {
+  color: #9aa3ad;
+}
+
+/* Quest section: the named quest + an ordered list of step (title + action hint). */
+.tips-quest-name {
+  margin: 2px 0 8px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #4cc9f0;
+}
+
+.tips-steps {
+  margin: 4px 0;
+  padding-left: 22px;
+}
+
+.tips-step {
+  margin-bottom: 8px;
+}
+
+.tips-step-title {
+  display: block;
+  font-weight: 700;
+  color: #e8eef6;
+}
+
+.tips-step-hint {
+  display: block;
+  color: #8fd6a0;
+  font-size: 12.5px;
+}
+
+/* Footer: the re-open hint + the primary "Got it" CTA. */
+#tips-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #222a35;
+}
+
+#tips-foot-hint {
+  margin: 0;
+  color: #6c7888;
+  font-size: 12px;
+}
+
+#tips-got-it {
+  flex: 0 0 auto;
+  padding: 10px 20px;
+  border: 1px solid #4cc9f0;
+  border-radius: 8px;
+  background: #4cc9f0;
+  color: #08121c;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+}
+
+#tips-got-it:hover {
+  background: #6fd6f5;
+}
+
+#tips-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #2b3340;
+  border-radius: 6px;
+  background: #1a212c;
+  color: #cde7ff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+
+#tips-close:hover {
+  background: #243040;
+}
+
 /* Species tab: a grid of animated cards (sprite + label + ability + blurb). */
 .species-grid {
   display: grid;
@@ -1168,6 +1357,34 @@ body {
   font-size: 12px;
   line-height: 1.4;
   color: #9aa3ad;
+}
+
+/* Liked-food chip on a species card: the food that recruits it as a follower. */
+.species-card-food {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #ffd166;
+}
+
+/* Shared help/tips copy: grouped-controls sub-headings + the human-vs-prey lede.
+   Scoped to the help panel and the tips panel so both surfaces render identically. */
+#help-panel .copy-subhead,
+#tips-panel .copy-subhead {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #6c7888;
+}
+
+#help-panel .copy-lede,
+#tips-panel .copy-lede {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-left: 3px solid #4cc9f0;
+  background: rgba(76, 201, 240, 0.08);
+  border-radius: 0 6px 6px 0;
+  color: #cde7ff;
 }
 
 /* Stats tab: a two-column label/value grid + the last-species sprite. */

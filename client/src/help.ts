@@ -2,12 +2,20 @@
  * The in-game help widget (toggle H or ?) — a tabbed panel that replaces the old
  * single-scroll manual. It covers the recurring TINS in-game-help requirement
  * AND carries the STORY + artistic/bonus beats so a reviewer can find them:
- *   - Controls       — the condensed key list (the default tab on open)
- *   - Species        — animated cards for all 14 @shared species + abilities
+ *   - Controls       — a full "how to play" walkthrough (the default tab on open):
+ *                       the human-vs-prey lede, the grouped key list, the goal, and
+ *                       the food/followers/robots rundown
+ *   - Species        — animated cards for all 14 @shared species + abilities, each
+ *                       with its liked-food chip (the recruit hint, @shared/food)
  *   - More           — the lore: premise, the verbatim Three Laws (rule #84,
  *                       the Asimov reference), the double-edged Sutskever-order
  *                       callout, overflow, and the "THE CAVES OF STEEL" flavour
  *   - Stats          — the logged-in player's persisted UserStats
+ *
+ * The Controls-tab copy (controls + goal + walkthrough) is single-sourced from
+ * help-copy.ts and shared verbatim with the one-time first-login Game Tips screen
+ * (tips.ts), so this persistent widget IS the re-read path for those tips and the
+ * two can never drift.
  *
  * Pure DOM + CSS; no renderer dependency. `createHelp()` builds the hidden
  * overlay, wires H/? to toggle and Esc/× to close, and returns a handle. Unlike
@@ -21,11 +29,13 @@
  */
 
 import { SPECIES, speciesByKey } from '@shared/species';
+import { foodForSpecies } from '@shared/food';
 import { createSpeciesSprite } from './species-sprite';
 import { getLastStats } from './menu';
 import { isTypingInTextField } from './dom';
 import { formatPlayTime } from './time';
 import { isAndroid } from './platform';
+import { controlsHtml, howToPlayHtml, HUMAN_VS_PREY_HTML, GOAL_HTML } from './help-copy';
 
 /** The four tab ids, in display order. Controls is the default active tab. */
 type TabId = 'controls' | 'species' | 'more' | 'stats';
@@ -50,53 +60,18 @@ const HELP_HTML = `
   </div>
 `;
 
-/** Keyboard control reference (desktop). */
-const CONTROLS_KEYBOARD_HTML = `
-  <h2>Controls</h2>
-  <ul class="cols">
-    <li><b>WASD / arrows</b> — walk (stays human)</li>
-    <li><b>Shift</b> — sprint (fast, but reads as prey)</li>
-    <li><b>E</b> — interact: terminal / prop / collect food</li>
-    <li><b>F</b> — feed the nearest animal (it joins your herd)</li>
-    <li><b>Q</b> — order a robot (Second Law)</li>
-    <li><b>Space</b> — your species ability</li>
-    <li><b>I</b> — inventory (food + who it feeds)</li>
-    <li><b>L</b> — leaderboard (top players + your score)</li>
-    <li><b>/</b> — chat with everyone in the world</li>
-    <li><b>H</b> or <b>?</b> — toggle this help</li>
-  </ul>
-`;
-
-/** Touch control reference (Android) — the on-screen controls, not keys. */
-const CONTROLS_TOUCH_HTML = `
-  <h2>Controls</h2>
-  <ul class="cols">
-    <li><b>Left thumb</b> — drag anywhere on the left to steer (a stick appears)</li>
-    <li><b>Push to the edge</b> — sprint (fast, but reads as prey)</li>
-    <li><b>Interact</b> — terminal / prop / collect food</li>
-    <li><b>Feed</b> — feed the nearest animal (it joins your herd)</li>
-    <li><b>Order</b> — order a robot (Second Law)</li>
-    <li><b>Ability</b> — your species special</li>
-    <li><b>HUD tap</b> — inventory, leaderboard, and chat icons on screen</li>
-    <li>Tap <b>×</b> to close any panel</li>
-  </ul>
-`;
-
-/** The shared Goal blurb, appended after whichever control list applies. */
-const GOAL_HTML = `
-  <h2>Goal</h2>
-  <p>Reach the <b>gate</b> at the far right edge to escape. But first, finish your
-    animal's <b>multi-step side-quest</b> — shown in the <b>HUD</b> (top-left) as
-    <em>step N/total</em>. Each species has its own arc: gather food, recruit a
-    herd-mate, use your special ability, order a keeper aside, or return home — then
-    finally <b>reach home</b> or <b>escort followers to the gate</b>. The ape couriers
-    a Clipboard found inside its building out through the gate. The gate won't open
-    until your quest reads <b>✓</b>. Walk to stay human, time your orders, and
-    don't tip the zoo into lockdown.</p>
-`;
-
-/** Controls tab — keyboard on desktop, touch on Android. */
-const CONTROLS_HTML = (isAndroid ? CONTROLS_TOUCH_HTML : CONTROLS_KEYBOARD_HTML) + GOAL_HTML;
+/**
+ * Controls tab — now a full "how to play" walkthrough, not just a key list. All
+ * copy is single-sourced from help-copy.ts so it stays in lockstep with the
+ * first-login tips screen (tips.ts). Order: the human-vs-prey lede, the grouped
+ * controls, the goal, then the food/followers/robots walkthrough.
+ */
+const CONTROLS_HTML =
+  HUMAN_VS_PREY_HTML +
+  `<h2>Controls</h2>` +
+  controlsHtml(isAndroid) +
+  GOAL_HTML +
+  howToPlayHtml(isAndroid);
 
 /**
  * "More" tab — the lore, lifted verbatim from the old manual: the premise, the
@@ -199,7 +174,13 @@ export function createHelp(): HelpHandle {
       const blurb = document.createElement('div');
       blurb.className = 'species-card-blurb';
       blurb.textContent = s.blurb;
-      card.append(sprite, name, ability, blurb);
+      // Liked-food chip: the one food that recruits this species as a follower, so
+      // the card teaches the feed/recruit mechanic too (mirrors @shared/food).
+      const food = foodForSpecies(s.key);
+      const foodChip = document.createElement('div');
+      foodChip.className = 'species-card-food';
+      foodChip.textContent = `${food.icon} likes ${food.label}`;
+      card.append(sprite, name, ability, blurb, foodChip);
       grid.appendChild(card);
     }
     pane.appendChild(grid);

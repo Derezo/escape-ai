@@ -4,6 +4,33 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.198: **Onboarding — one-time first-login Game Tips screen.** A polished, species-specific
+  walkthrough (`client/src/tips.ts`) shown ONCE to teach the game to new players. It opens after
+  the cinematic intro tears down (so a new character sees cinematic → tips → play) and is gated on
+  `isNewCharacter || !hasSeenTips()` so players who predate the feature also get it once;
+  `markTipsSeen()` stamps it. Content is fully data-driven from the shared sources of truth, so the
+  copy can never drift: the species header/ability from `@shared/species`, the **per-step quest
+  instructions** rendered from the shared quest table via `questActionHint()` (the exact "press X to
+  …" for each ordered step), the liked food from `@shared/food`, and the controls/goal/mechanic
+  walkthrough from the shared `help-copy.ts`. A resuming player (no client-side species) is skipped
+  cleanly and not stamped, so they still see it on their next fresh login. New `#tips-overlay` CSS
+  (z-50: above gameplay overlays, below the intro and connection overlay) with a "Got it — let me
+  play" CTA; closes on ×/Esc/CTA. Wired in `main.ts`. Verified by rendering ape (order→fetch),
+  cheetah (recruit→reach→escort), and owl (ability→reach) — each shows its correct steps. Client
+  build + all 6 verify gates green.
+
+- 0.2.197: **Onboarding — help-widget rework + shared teaching copy.** First in a small arc to
+  make the game legible to first-time players (feedback: it isn't intuitive). Two new
+  single-source-of-truth modules so the persistent help widget and the upcoming first-login tips
+  screen can never drift: `client/src/help-copy.ts` (controls grouped under Move/Act/Panels, a
+  "walk = human / sprint = prey" lede, the Goal blurb, and a food-followers-robots walkthrough,
+  all platform-aware for keyboard vs touch) and `client/src/tips-state.ts` (a crash-proof
+  `escapeai.tips_seen` localStorage gate, modelled on `auth.ts`, versioned so a future revamp can
+  re-show). The H/? help widget's **Controls** tab is reworked from a flat key list into a real
+  "how to play" walkthrough sourced from `help-copy.ts`, and each **Species** card now shows its
+  liked-food chip (🍌 likes Banana) from `@shared/food` so the recruit mechanic is taught on the
+  card. No behaviour change; client build + all 6 verify gates green.
+
 - 0.2.196: **Android touch — validation cleanups.** `plan-validation-and-review` of the
   touch-controls arc returned PASS (desktop-unchanged invariant + unchanged net contract both
   confirmed) with three minor dead-code findings, now fixed: removed the unused `isNative`
