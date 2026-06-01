@@ -4,6 +4,19 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.201: **Android — landscape mobile-fit pass on the overlays.** The modals were laid out for a
+  tall portrait viewport; on a short, wide landscape phone (~360px tall) their portrait-era `vh`
+  height caps would squeeze the content. Each modal's `max-height` is now
+  `min(<existing vh>, calc(100dvh - <chrome>))` — on a tall desktop the `vh` term wins (sizing
+  unchanged), on a short phone the `dvh` term wins so the panel scrolls (every one already has an
+  inner `overflow-y:auto` region) instead of clipping. Applied to `#login-panel`, `#help-panel`,
+  `#tips-panel`, `#inv-panel`, `#lb-panel`, and `#chat-panel` (the chat panel reserves ~120px for its
+  bottom anchor + soft keyboard). The leaderboard `#lb-scroll` already used `overflow:auto`, so the
+  wide table already pans both axes — no change needed there. `#hud-quest-help` max-width
+  `240px` → `min(240px, 60vw)` so the quest-info popover can't cover most of a narrow screen. All
+  changes are no-ops on desktop. Audit-clean overlays (splash, intro, connection card, banners,
+  food bar, cue) were left untouched. Client build green.
+
 - 0.2.200: **Android — lock the APK to landscape.** Changed `android:screenOrientation`
   `portrait` → `sensorLandscape` in `client/android/app/src/main/AndroidManifest.xml`, so the app
   launches and stays in landscape and accepts either landscape orientation (held either way). The
