@@ -1941,10 +1941,15 @@ body {
 }
 
 /* --- Android touch controls (#touch-controls): floating joystick + action cluster.
-   The overlay is only created on Android (main.ts gates on isAndroid), so these rules
-   apply only there. The root passes touches through to the game except on the live
-   joystick base and the buttons. Palette matches the game: cyan #4cc9f0 on navy. --- */
+   The overlay is only created on Android (main.ts gates on isAndroid). These rules are
+   ALSO scoped under body.platform-android as a second gate, so even if the overlay ever
+   existed off-Android it would stay hidden. The root passes touches through to the game
+   except on the live joystick base and the buttons. Palette: cyan #4cc9f0 on navy. --- */
 #touch-controls {
+  display: none; /* hidden unless body.platform-android (below) opts it in */
+}
+body.platform-android #touch-controls {
+  display: block;
   position: fixed;
   inset: 0;
   z-index: 30; /* above the world/HUD, below modal overlays (help/chat/lb are z=40+) */

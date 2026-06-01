@@ -4,6 +4,17 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.196: **Android touch — validation cleanups.** `plan-validation-and-review` of the
+  touch-controls arc returned PASS (desktop-unchanged invariant + unchanged net contract both
+  confirmed) with three minor dead-code findings, now fixed: removed the unused `isNative`
+  export and the `platform-native` body class from `platform.ts` (no iOS plan); captured the
+  discarded `trackKeyboard()` teardown handle in `main.ts`. The `platform-android` body class
+  is now genuinely consumed — the `#touch-controls` CSS is scoped under
+  `body.platform-android` (a second gate behind the JS `isAndroid` check, so the overlay can't
+  render off-Android even by accident). Re-verified on an Android 16 emulator: the class is set,
+  `#touch-controls` computes `display: block`, and all 4 action buttons are visible. No
+  behaviour change on desktop; all 6 verify gates green.
+
 - 0.2.195: **Android touch — Phase 4: orientation lock + IME guard + intro copy.** The
   lower-priority polish that closes the audit. **Orientation:** `MainActivity` gets
   `android:screenOrientation="portrait"` in the manifest — the game is portrait-designed and

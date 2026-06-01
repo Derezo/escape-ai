@@ -65,12 +65,14 @@ const ROBOT_STRIDE = 26;
 const ROBOT_STEP_MIN_FRAME = 0.5;
 
 async function main(): Promise<void> {
-  // Mirror the platform onto <body> (platform-android / platform-native) so CSS can
-  // gate touch-only presentation the same way the JS gates touch-only behaviour.
+  // Mirror the platform onto <body> (platform-android) so CSS can scope Android-only
+  // rules the same way the JS gates touch-only behaviour.
   applyPlatformClass();
   // Track the soft keyboard (Android): publishes --kb-inset so bottom-anchored panels
-  // lift above it. No-op off-Android.
-  trackKeyboard();
+  // lift above it. No-op off-Android. The teardown handle is retained for the session
+  // (the SPA lives until reload, which cleans up the listeners anyway).
+  const untrackKeyboard = trackKeyboard();
+  void untrackKeyboard;
 
   // --- Renderer (default = Phaser 2D) ---
   const renderer: IRenderer = new PhaserRenderer();
