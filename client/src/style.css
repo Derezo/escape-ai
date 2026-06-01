@@ -292,6 +292,19 @@ body {
   transition: opacity 0.28s ease;
 }
 
+/* The splash mounts behind the click-gate so its layout is ready, but its
+   staggered reveal must not begin until the gate is dismissed — otherwise the
+   timeline burns down while hidden and the user sees it mid-sequence (or done).
+   So every animated child starts PAUSED; menu.ts adds `.running` once the gate
+   clears, which resumes all of them from t=0 in lockstep. */
+#splash :is(#splash-word-escape, #splash-word-ai, #splash-tagline, #splash-prompt) {
+  animation-play-state: paused;
+}
+
+#splash.running :is(#splash-word-escape, #splash-word-ai, #splash-tagline, #splash-prompt) {
+  animation-play-state: running;
+}
+
 #splash.leaving {
   opacity: 0;
 }

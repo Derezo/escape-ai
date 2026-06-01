@@ -4,6 +4,18 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.164: **Splash reveal now starts at the click-gate gesture, not at page
+  load.** The "ESCAPE AI" splash sequence is CSS-timed (staggered `animation-delay`s)
+  and the splash element mounts behind the click-gate so its layout is ready. But
+  those animation timelines began the instant the element entered the DOM — so if a
+  user didn't click the gate immediately, the reveal burned down while hidden and
+  they'd surface to a half-played (or already-finished) splash. Fix: every animated
+  splash child now mounts with `animation-play-state: paused` (`client/src/style.css`);
+  `menu.ts`'s `dismissGate` adds a `.running` class on the first gesture, which
+  resumes all of them in lockstep from t=0. No JS choreography added — the CSS
+  timeline is unchanged, only its start is gated. Verified: client `tsc` + vite build
+  green.
+
 - 0.2.163: **provision-escape.sh — two-phase TLS bootstrap (fixes first-run cert
   failure).** The original flow wrote the full vhost (which references the TLS cert)
   then ran certbot — but an `ssl_certificate` line pointing at a not-yet-existent

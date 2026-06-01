@@ -94,6 +94,10 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
       // splash and login screens. playMusicState is idempotent, so later calls
       // from the main.ts guard or dismissSplash are no-ops while it's playing.
       playMusicState('title_theme');
+      // Start the splash reveal NOW — its animations are mounted paused (see
+      // style.css) so the staggered timeline begins from t=0 at this gesture
+      // rather than burning down behind the gate while the user hesitated.
+      splash.classList.add('running');
       // Fade the gate out; remove it once the transition finishes so the splash
       // (already in the DOM behind it) becomes the visible layer.
       gate.classList.add('leaving');
@@ -117,7 +121,9 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
     // The title is two separately-choreographed words: "ESCAPE" fades in slowly,
     // then "AI" pops in (flicker + shake) after a beat. Both, the tagline, and
     // the prompt start hidden and reveal on staggered CSS animation-delays — the
-    // whole sequence is timed in style.css, so there is no JS choreography here.
+    // whole sequence is timed in style.css. It mounts PAUSED and only begins when
+    // dismissGate adds `.running`, so the reveal starts at the gate gesture
+    // rather than at page load (see the #splash play-state rules in style.css).
     splash.innerHTML = `
       <div id="splash-inner">
         <h1 id="splash-title">
