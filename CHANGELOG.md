@@ -4,6 +4,19 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.172: **Connection-loss overlay — pure state machine + unit tests (phase 1/3).**
+  First slice of the "Unable to connect… retrying" feature: a DOM-free, socket-free
+  `ConnectionState` (`client/src/net/connection-state.ts`) that owns the 5-second outage
+  threshold, the socket.io reason/error → friendly-summary mapping, the monotonic attempt
+  counter, the intentional-teardown suppression, and a brief anti-flicker linger on
+  reconnect. Time is injected (`tick(nowMs)`) so the whole machine is deterministic. Kept
+  dependency-free (no `@shared` alias, no `import.meta`, no DOM) so its `.ts` test runs
+  directly under `node --test` (Node ≥ 22) with **zero new dependencies** —
+  `client/test/connection-state.test.ts`, 7 cases (threshold edges, reconnect-before-5s,
+  intentional teardown, `io server disconnect` surfacing, attempt counting, friendly+raw
+  detail, anti-flicker linger). New `client` `test` script; wired a **client tests** gate
+  into `scripts/verify.mjs`. NetClient wiring + the DOM overlay land in phases 2–3.
+
 - 0.2.171: **README accuracy pass + cross-platform honesty note.** Fact-checked the
   whole README against the code (ports, Node version, run-dev flags both bash and
   PowerShell, the by-hand steps, all 14 species + ability verbs, tick rate, quest-gated

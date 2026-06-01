@@ -46,6 +46,7 @@ const BUILD_SHARED = { name: 'build shared', cmd: 'npm', args: ['run', 'build'],
 const GATES = [
   { name: 'shared tests', cmd: 'npm', args: ['test'], cwd: join(ROOT, 'shared') },
   { name: 'server tests', cmd: 'npm', args: ['test'], cwd: join(ROOT, 'server') },
+  { name: 'client tests', cmd: 'npm', args: ['test'], cwd: join(ROOT, 'client') },
   { name: 'client typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], cwd: join(ROOT, 'client') },
   { name: 'facing determinism', cmd: 'node', args: ['check-facing.js'], cwd: SCRIPTS_DIR },
   // Asset rasterisation gates — skipped under --quick (slower; rarely change).

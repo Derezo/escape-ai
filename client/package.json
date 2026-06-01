@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "node --test test/*.test.ts",
     "preview": "vite preview",
     "cap:sync": "npm run build && npx cap sync",
     "android:add": "npx cap add android",
