@@ -4,6 +4,15 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.175: **Connection-loss overlay — validation pass cleanups.** Two small fixes from
+  `/plan-validation-and-review` of the connection-loss feature. (1) **DRY the headline:**
+  `main.ts` now imports `HEADLINE` (and the real `ConnectionView` type) from
+  `net/connection-state` instead of hardcoding the "Unable to connect… retrying" copy and an
+  inline structural type — the state machine is now the single source of truth for both the
+  copy and the view shape, so they can't drift. (2) **Cover `onReconnectFailed`:** added the
+  one missing unit test (the manager-gave-up path keeps the overlay up while still offline),
+  bringing the suite to 8/8. No behavior change; verify gate green.
+
 - 0.2.174: **Connection-loss overlay — dim screen + diagnostics + Retry now (phase 3/3).**
   The player-facing piece: if the connection is down for **5 seconds**, the screen dims and
   a centered card shows **"Unable to connect… retrying"** with a diagnostic box and a

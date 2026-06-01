@@ -100,6 +100,17 @@ test('detail carries both a friendly summary and the raw reason/error/transport'
   assert.match(v.detail, /\d+s offline/, 'offline duration');
 });
 
+test('reconnect_failed keeps the overlay up (the manager gave up; still offline)', () => {
+  const s = new ConnectionState();
+  const t0 = 0;
+  s.markConnecting(t0);
+  s.onConnect(t0);
+  s.onDisconnect(t0 + 10, 'transport close');
+  s.onReconnectFailed(t0 + 20);
+  const v = s.tick(t0 + 20 + THRESHOLD_MS);
+  assert.equal(v.showOverlay, true, 'still offline after the manager gave up');
+});
+
 test('overlay lingers briefly after reconnect, then hides (anti-flicker)', () => {
   const s = new ConnectionState();
   const t0 = 0;

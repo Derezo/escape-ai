@@ -30,6 +30,7 @@ import { PhaserRenderer } from './render/phaser';
 // Everything below (net, input, prediction, reconciliation) is unchanged.
 
 import { NetClient } from './net/client';
+import { HEADLINE as CONN_HEADLINE, type ConnectionView } from './net/connection-state';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
 import { preloadSfx, playSfx, startLoop, stopLoop, spatialGain, type SfxName } from './audio';
 import { initMusic, playMusicState } from './music';
@@ -176,9 +177,12 @@ async function main(): Promise<void> {
   // below doesn't start until after the menu, so it can't drive this on its own).
   const connOverlay = document.createElement('div');
   connOverlay.id = 'connection-overlay';
+  // Headline copy comes from the state machine (CONN_HEADLINE) so the constant is
+  // the single source of truth — the static text here is just the pre-first-render
+  // placeholder; renderConnView() overwrites it from view.headline.
   connOverlay.innerHTML = `
     <div id="connection-card">
-      <div id="connection-headline">Unable to connect… retrying</div>
+      <div id="connection-headline">${CONN_HEADLINE}</div>
       <pre id="connection-detail"></pre>
       <button id="connection-retry" type="button">Retry now</button>
     </div>
@@ -190,7 +194,7 @@ async function main(): Promise<void> {
   connRetry.addEventListener('click', () => net.retry());
   // Render a view: toggle .active via a class (never set style.opacity from JS, so
   // the CSS fade transition isn't fought) and fill in the headline + diagnostics.
-  const renderConnView = (view: { showOverlay: boolean; headline: string; detail: string }): void => {
+  const renderConnView = (view: ConnectionView): void => {
     connOverlay.classList.toggle('active', view.showOverlay);
     if (view.showOverlay) {
       connHeadline.textContent = view.headline;
