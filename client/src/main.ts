@@ -165,6 +165,44 @@ async function main(): Promise<void> {
   const net = new NetClient();
   net.connect(SERVER_URL);
 
+  // --- Connection-loss overlay (topmost, z-100) ---
+  // If the connection is down for >= 5s, dim the screen and show "Unable to
+  // connect… retrying" with a diagnostic box (the friendly reason + the raw
+  // socket.io reason/error/transport/attempt/seconds-offline) and a "Retry now"
+  // button. Built BEFORE runMenu so it also covers a first-load failure during the
+  // menu. All the threshold/diagnostic logic lives in the connection-state machine
+  // owned by NetClient (see net/connection-state.ts); here we only render the view
+  // it hands us and drive its clock on a steady interval (the rAF frame() loop
+  // below doesn't start until after the menu, so it can't drive this on its own).
+  const connOverlay = document.createElement('div');
+  connOverlay.id = 'connection-overlay';
+  connOverlay.innerHTML = `
+    <div id="connection-card">
+      <div id="connection-headline">Unable to connect… retrying</div>
+      <pre id="connection-detail"></pre>
+      <button id="connection-retry" type="button">Retry now</button>
+    </div>
+  `;
+  document.body.appendChild(connOverlay);
+  const connHeadline = connOverlay.querySelector<HTMLElement>('#connection-headline')!;
+  const connDetail = connOverlay.querySelector<HTMLElement>('#connection-detail')!;
+  const connRetry = connOverlay.querySelector<HTMLButtonElement>('#connection-retry')!;
+  connRetry.addEventListener('click', () => net.retry());
+  // Render a view: toggle .active via a class (never set style.opacity from JS, so
+  // the CSS fade transition isn't fought) and fill in the headline + diagnostics.
+  const renderConnView = (view: { showOverlay: boolean; headline: string; detail: string }): void => {
+    connOverlay.classList.toggle('active', view.showOverlay);
+    if (view.showOverlay) {
+      connHeadline.textContent = view.headline;
+      connDetail.textContent = view.detail;
+    }
+  };
+  net.onConnectionChange(renderConnView);
+  // Drive the health clock at 250ms so the 5s threshold trips and the "Ns offline"
+  // counter advances even when no socket event fires. Imperceptible granularity for
+  // a 5s gate, and cheap.
+  setInterval(() => renderConnView(net.tickConnection(Date.now())), 250);
+
   // --- Leaderboard overlay (L). Built hidden; a sortable datatable of the top
   // players by every stat + the server-computed composite score. Opening it (and
   // each sort/poll tick) requests fresh data over the wire; the server's reply

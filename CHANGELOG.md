@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.174: **Connection-loss overlay — dim screen + diagnostics + Retry now (phase 3/3).**
+  The player-facing piece: if the connection is down for **5 seconds**, the screen dims and
+  a centered card shows **"Unable to connect… retrying"** with a diagnostic box and a
+  **"Retry now"** button. The diagnostic box carries a friendly summary (e.g. "Can't reach
+  the server", "Server unresponsive", "Network connection lost") *plus* the raw socket.io
+  detail — `reason · "error" · transport · attempt N · Ns offline`. Built in `main.ts`
+  **before** the menu so it covers a first-load failure too, layered topmost (z-100, above
+  the intro=60) so it dims the menu, the game, and the cinematic alike; the dim is
+  translucent so the frozen scene stays faintly visible. Driven by a 250ms `setInterval`
+  (the rAF frame loop isn't running during the menu) reading the NetClient connection view;
+  the fade is a pure CSS class toggle and honors `prefers-reduced-motion`. "Retry now" calls
+  `net.retry()`. Verified end-to-end with a zero-dep headless-Chrome/CDP driver against the
+  real built client (12/12: hidden before 5s → active/visible/topmost after, headline +
+  populated diagnostics + labeled button) and a live-server run confirming the overlay stays
+  hidden while connected. Files: `client/src/main.ts`, `client/src/style.css`.
+
 - 0.2.173: **Connection-loss overlay — NetClient wiring + retry hardening (phase 2/3).**
   Wired the real socket.io lifecycle into the `ConnectionState` machine and fixed the one
   genuine retry gap. NetClient now handles `connect_error` (with the live transport name)

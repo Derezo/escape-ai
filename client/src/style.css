@@ -176,6 +176,111 @@ body {
   }
 }
 
+/* Connection-loss overlay: a dim full-screen backdrop + a centered card with the
+   "Unable to connect… retrying" headline, a diagnostic box, and a Retry button.
+   Topmost layer (z-100 > intro=60) so it dims the menu, the game, AND the intro
+   cinematic. Hidden until main.ts adds `.active`; the fade rides an opacity
+   transition (driven by the class, never by inline style). Built BEFORE the menu
+   so a first-load failure is covered too. */
+#connection-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Dim, not black — the frozen game/menu stays faintly visible underneath. */
+  background: rgba(6, 8, 12, 0.66);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 220ms ease,
+    visibility 0s linear 220ms;
+}
+
+#connection-overlay.active {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 220ms ease,
+    visibility 0s;
+}
+
+#connection-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: min(520px, 88vw);
+  padding: 26px 30px;
+  border-radius: 12px;
+  background: rgba(14, 18, 26, 0.94);
+  border: 1px solid rgba(120, 160, 220, 0.35);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+#connection-headline {
+  color: #e8eefc;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+/* The diagnostic box: the friendly summary line + the raw socket.io detail
+   (reason · "error" · transport · attempt N · Ns offline). Monospace, scrollable,
+   muted — developer-facing but readable. */
+#connection-detail {
+  margin: 0;
+  width: 100%;
+  max-height: 30vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(120, 160, 220, 0.18);
+  color: #9fb4d6;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
+}
+
+#connection-retry {
+  appearance: none;
+  cursor: pointer;
+  padding: 9px 22px;
+  border-radius: 8px;
+  border: 1px solid #5b8def;
+  background: #2b58b8;
+  color: #eef3ff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  transition: background 120ms ease;
+}
+
+#connection-retry:hover {
+  background: #356be0;
+}
+
+#connection-retry:active {
+  background: #234a9c;
+}
+
+/* Honor the OS reduced-motion preference (repo convention): no fade — snap the
+   overlay in/out. */
+@media (prefers-reduced-motion: reduce) {
+  #connection-overlay {
+    transition: visibility 0s;
+  }
+  #connection-overlay.active {
+    transition: visibility 0s;
+  }
+}
+
 /* Victory banner, centered, shown once the local player escapes. */
 #win-banner {
   position: fixed;
