@@ -4,6 +4,21 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.181: **Android: commit the native project, lock the appId to the prod domain.**
+  First phase of the releasable-APK work. The Capacitor `appId` is now
+  `com.mittonvillage.escape` (the reverse of the production domain
+  `escape.mittonvillage.com`, a domain we control) instead of the `org.escapeai.app`
+  placeholder — it is the permanent Android package name, so it is locked in before any
+  build. Reversed the prior "ignore the whole `client/android/` scaffold" decision: the
+  native project is now **committed** (the norm for a real shipping app — signing config,
+  generated icons, and native state are version-controlled and the reviewer APK is
+  reproducible). `.gitignore` un-ignores `client/android/` while still excluding build
+  output, copied web assets, `local.properties`, and — critically — all signing material
+  (`*.keystore`, `*.jks`, `keystore.properties`). The committed native project was
+  scaffolded from a `dist/` built with `VITE_SERVER_URL=https://escape.mittonvillage.com`;
+  the manifest carries `INTERNET` and no cleartext, `androidScheme: https` keeps the
+  WebView a secure origin.
+
 - 0.2.180: **Rename `tins2026` → `escape-ai` across the tree.** Purged the old
   project name left over from the `~/Projects/tins2026` clone. npm packages are now
   `@escape-ai/shared` / `escape-ai-server` / `escape-ai-client` / `escape-ai-scripts`

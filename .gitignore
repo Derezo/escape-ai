@@ -43,23 +43,17 @@ assets/voice/*.bak
 
 # --- Capacitor / Android ---
 #
-# DECISION (jam scaffold): we ignore the entire generated `client/android/`
-# platform folder. It is 100% regenerable from the committed Capacitor config
-# with `cd client && npx cap add android && npx cap sync` (see docs/ANDROID.md),
-# so there is nothing to lose and a lot of native boilerplate + build noise to
-# avoid in the repo. This is the right call for a 72-hour jam where the Android
-# build is a nice-to-have wrapper, not the product.
+# DECISION: the native `client/android/` project IS committed (the norm for a
+# real, shipping app — so signing config, generated icons/splash, and any custom
+# native code are version-controlled and the release APK is reproducible). The
+# project is still regenerable from the committed Capacitor config + the icon
+# generator (`cd client && npx cap sync`, `node scripts/gen-android-icons.js`),
+# but committing it pins the exact native state reviewers' builds came from.
 #
-# IF you later want to commit the native project (the norm for a real, shipping
-# app — so signing config, custom native code, and icons are version-controlled):
-# delete the `client/android/` line below. Capacitor already writes a thorough
-# `client/android/.gitignore` that excludes the actual build artifacts listed
-# here (build/, .gradle/, local.properties, *.apk/*.aab, copied web assets),
-# so committing the folder will NOT commit build output.
-client/android/
-
-# Build artifacts — kept explicit so they stay ignored even if `android/` is
-# committed (these mirror Capacitor's generated android/.gitignore):
+# Capacitor's generated `client/android/.gitignore` already excludes the real
+# build output (build/, .gradle/, local.properties, *.apk/*.aab, copied web
+# assets). The patterns below re-assert those exclusions from the repo root and,
+# critically, keep all signing material out of git.
 android/app/build/
 android/build/
 android/.gradle/
@@ -67,8 +61,14 @@ android/local.properties
 android/capacitor-cordova-android-plugins/
 *.apk
 *.aab
+
+# Signing material — MUST never be committed. Losing the keystore means you can
+# never ship an update to an already-installed/published app, so back it up
+# OUTSIDE the repo. keystore.properties holds the passwords; it is git-ignored.
 *.keystore
 *.jks
+keystore.properties
+android/keystore.properties
 
 # Claude Code session scratch (worktrees, locks) — never commit.
 # Ignore the CONTENTS (not the dir itself) so git still descends and the
