@@ -24,7 +24,14 @@ body {
   position: fixed;
   inset: 0;
   width: 100vw;
+  /* `100vh` is the *large* viewport height in a mobile WebView (computed as if the
+     toolbar/gesture-nav are retracted), so it lays out TALLER than what's actually
+     visible. Phaser's RESIZE ScaleManager then sizes the canvas backing store to that
+     too-tall box and the result reads as a stretched / wrong-aspect render on a phone.
+     `100dvh` tracks the real visible height; the `100vh` line above is the fallback for
+     any engine without dvh. Desktop is unaffected (dvh == vh there). */
   height: 100vh;
+  height: 100dvh;
   /* On touch, the play surface must not interpret gestures as double-tap-zoom,
      pinch-zoom, long-press callouts, or text selection — those would hijack the
      virtual joystick's drags. `touch-action: none` hands all pointer events to the
@@ -35,10 +42,15 @@ body {
   user-select: none;
 }
 
+/* Let Phaser's RESIZE ScaleManager OWN the canvas CSS size: it sets explicit pixel
+   width/height that match the drawing-buffer resolution (and computes the autoCenter
+   margins). Forcing `width/height:100% !important` here decouples the displayed box from
+   the backing store, so when their aspect ratios disagree (WebView startup reflow,
+   rotation, vh≠visible-height) the browser stretches a fixed-resolution buffer into a
+   wrongly-proportioned box — the stretched render seen on Android. Don't re-add the
+   `!important` sizing. */
 #game canvas {
   display: block;
-  width: 100% !important;
-  height: 100% !important;
   touch-action: none;
 }
 
