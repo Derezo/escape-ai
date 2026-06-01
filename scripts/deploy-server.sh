@@ -71,16 +71,23 @@ done
 [[ -f "${SSH_KEY}" ]] || die "SSH key not found: ${SSH_KEY} (set SSH_KEY in scripts/deploy.env)."
 
 # --- 1. build locally -------------------------------------------------------
+# These are LOCAL builds and need the devDependencies (typescript, vite) to run.
+# deploy.env sets NODE_ENV=production (correct for the *remote* runtime), and we
+# export it — which makes a bare `npm install` here omit devDeps, breaking the
+# build with "tsc: not found". Force --include=dev so the local toolchain is
+# installed regardless of the ambient NODE_ENV. (The REMOTE install in step 4
+# stays --omit=dev — production there has no business with the build tools.)
+#
 # shared/: client imports its TS source via Vite alias, server consumes dist/.
 log "Building shared/"
-( cd "${PROJECT_ROOT}/shared" && npm install && npm run build )
+( cd "${PROJECT_ROOT}/shared" && npm install --include=dev && npm run build )
 
 # client/: static bundle with VITE_SERVER_URL baked to the public origin so the
 # browser/WebView connects to https://${APP_DOMAIN} (same origin → Socket.IO and
 # assets share it; production CORS stays locked).
 log "Building client/ (VITE_SERVER_URL=https://${APP_DOMAIN})"
 ( cd "${PROJECT_ROOT}/client" \
-    && npm install \
+    && npm install --include=dev \
     && VITE_SERVER_URL="https://${APP_DOMAIN}" npm run build )
 [[ -f "${PROJECT_ROOT}/client/dist/index.html" ]] || die "client build produced no dist/index.html."
 
@@ -132,11 +139,18 @@ sudo -u '${APP_USER}' -H env PM2_HOME='${REMOTE_PATH}/.pm2' pm2 save >/dev/null
 REMOTE_SCRIPT
 
 # --- 5. health check --------------------------------------------------------
-log "Health check: https://${APP_DOMAIN}/health"
-if remote "curl -fsS --max-time 10 http://127.0.0.1:${APP_PORT}/health" >/dev/null 2>&1; then
+# A fresh `pm2 start` returns before node has opened the DB and bound the port,
+# so a single immediate curl races the cold start and false-fails. Poll the
+# loopback /health for up to ~30s (15 tries × 2s) and only fail if it never
+# comes up. On genuine failure, tail the logs inline so the operator doesn't
+# have to ssh back in to see why.
+log "Health check: http://127.0.0.1:${APP_PORT}/health (waiting for the process to come up)"
+if remote "for i in \$(seq 1 15); do curl -fsS --max-time 5 http://127.0.0.1:${APP_PORT}/health >/dev/null 2>&1 && exit 0; sleep 2; done; exit 1"; then
   log "Server is healthy on the loopback port."
 else
-  die "Health check FAILED — inspect logs:  ssh ${SSH_TARGET} \"sudo -u ${APP_USER} -H env PM2_HOME=${REMOTE_PATH}/.pm2 pm2 logs ${PM2_NAME}\""
+  printf '\033[1;31m--- last 30 log lines ---\033[0m\n' >&2
+  remote "sudo -u '${APP_USER}' -H env PM2_HOME='${REMOTE_PATH}/.pm2' pm2 logs '${PM2_NAME}' --lines 30 --nostream" >&2 || true
+  die "Health check FAILED after ~30s — see the log tail above, or:  ssh ${SSH_TARGET} \"sudo -u ${APP_USER} -H env PM2_HOME=${REMOTE_PATH}/.pm2 pm2 logs ${PM2_NAME}\""
 fi
 
 log "Done.  Live at https://${APP_DOMAIN}"

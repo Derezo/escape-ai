@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.176: **deploy-server.sh: two cold-deploy fixes (first live deploy).** Hardened the
+  deploy after the first real run to escape.mittonvillage.com exposed two bugs. (1) The
+  **local builds stripped their own toolchain**: `deploy.env` sets `NODE_ENV=production`
+  (correct for the remote runtime) and the script exports it, so the *local* `npm install`
+  in `shared/` and `client/` ran in production mode and omitted devDependencies —
+  `tsc`/`vite` vanished and the build died with "tsc: not found". Fixed by forcing
+  `--include=dev` on the two local build installs; the remote install stays `--omit=dev`.
+  (2) The **health check raced the cold start**: a fresh `pm2 start` returns before node
+  opens the DB and binds the port, so the single immediate curl false-failed even though
+  the server was fine. Now it polls loopback `/health` for ~30s (15×2s) and, on genuine
+  failure, tails the pm2 logs inline. Deploy verified end-to-end green: pm2 online,
+  loopback + public `/health` 200, static bundle + Socket.IO handshake 200, pm2 dump saved
+  and the `pm2-escape` unit enabled. Also corrected (ops, not a code change): the VPS's
+  local `systemd-resolved` was returning a stale A record for the domain (Linode upstream
+  cache); restarting it fixed on-box resolution. Public/authoritative DNS were always correct.
+
 - 0.2.175: **Connection-loss overlay — validation pass cleanups.** Two small fixes from
   `/plan-validation-and-review` of the connection-loss feature. (1) **DRY the headline:**
   `main.ts` now imports `HEADLINE` (and the real `ConnectionView` type) from
