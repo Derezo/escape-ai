@@ -15,7 +15,11 @@ the audit trail).
   (`decision.mode === 'pursue'` in `server/game/stealth.js` `stepRobots`), it steers
   straight at the live target with `steerAround` (one-tile-ahead probe). If the quarry
   rounds a wall/fence, the robot can press into the barrier and lag rather than routing
-  around to a gate. Short-range open chases (the common case) work fine.
+  around to a gate. Short-range open chases (the common case) work fine. NOTE: the
+  `return`(haul) and `exit` states ALSO set `robot.mode = 'pursue'` as a wire/HUD label,
+  but they already route A* + `smoothHeading` via `behaviors.moveTowardPoint`. Only the
+  perception-driven `decision.mode === 'pursue'` branch is the reactive/unsmoothed one —
+  a future implementer must NOT "fix" the already-correct haul/exit paths.
 - **Why deferred:** a MOVING target has no fixed goal tile, so the cached-path model
   doesn't apply directly — pursue would need a per-tick (or fast-cadence) repath to the
   target's current tile, which is more cost + risk of jittery near-corner chasing. Both
@@ -31,28 +35,10 @@ the audit trail).
   around a corner doesn't flip its heading tick-to-tick — patrol/guard/investigate/return
   already smooth via `robot.headAngle`; pursue is the one robot path left unsmoothed.
 - **Refs:** `server/game/stealth.js` `stepRobots` (the `decision.mode === 'pursue'`
-  block); `server/game/behaviors.js` `moveTowardPoint` (the pattern to mirror, including
-  its `smoothHeading` call); `shared/src/pathfind.ts` `findPath`;
+  block, ~lines 506–541); `server/game/behaviors.js` `moveTowardPoint` (the pattern to
+  mirror, including its `smoothHeading` call); `shared/src/pathfind.ts` `findPath`;
   `shared/src/movement.ts` `smoothHeading`.
 - **Effort:** M.
-
-### Stat-field names enumerated across four server files (low-priority DRY)
-- **Status:** open — deliberate deferral, low risk.
-- **Surfaced:** `/plan-validation-and-review` of the AI-Escape accounts plan, 2026-05-29
-  (dedup scan).
-- **Detail:** the per-player stat verbs `{escapes, caught, ordersIssued, abilitiesUsed}`
-  (+`playSeconds`/`games`) are listed in four places: `server/db.js` `DELTA_COLUMNS`
-  (the canonical camelCase→snake_case map), `server/game/engine.js` `flushStatsDelta`
-  (zeroing), `server/socket/connection.js` (disconnect read), and `server/game/stealth.js`
-  `bumpStat` (lazy init shape). Adding a future stat means touching all four.
-- **Why deferred:** the schema is stable (fixed game verbs), it's 4 lines × 4 sites (not
-  logic duplication), and the obvious fix — a shared field-list constant — would re-couple
-  `stealth.js` (game math) to a stats module, working against the deliberate decoupling
-  (`bumpStat` exists precisely so stealth.js imports no DB/stats schema). Revisit only if
-  the stat set grows materially.
-- **Refs:** `server/db.js` `DELTA_COLUMNS`; `server/game/engine.js` `flushStatsDelta`;
-  `server/socket/connection.js`; `server/game/stealth.js` `bumpStat`.
-- **Effort:** S.
 
 ### Cheetah escort quest has no re-feed buffer step (balance, not a hard lock)
 - **Status:** open — a balance/playtesting judgment for the game owner, not a correctness bug.
@@ -71,8 +57,8 @@ the audit trail).
   tuning), not a defect fix. The feature ships correct and playable as-is.
 - **Suggested approach if picked up:** mirror kangaroo — insert a `reach` (home) step
   between cheetah's recruit and escort, OR drop both needs to 1. Re-pin nothing (quest
-  defs are not in the world hash); update `shared/test/quests.test.mjs` if it asserts
-  cheetah's step count.
+  defs are not in the world hash); `shared/test/quests.test.mjs` permits 1..3 steps so a
+  3-step cheetah needs NO test update.
 - **Refs:** `shared/src/quests.ts` `cheetah` (and `kangaroo` as the buffered pattern);
   `server/game/follow.js` `feedNearbyAnimal` (re-leash on re-feed); `server/game/quests.js`
   `stepEscort`.
@@ -84,14 +70,18 @@ the audit trail).
   (the plan touched no client dependencies; flagged by `npm audit` in `client/`).
 - **Detail:** `npm audit` in `client/` reports 2 moderate vulns — `esbuild <=0.24.2`
   (GHSA-67mh-4wv8-2f99: a dev server can be coerced into sending requests / reading
-  responses) pulled in transitively by `vite <=6.4.1`. **Dev-only** (esbuild/Vite are
-  not in the shipped static bundle), so production exposure is nil; the risk is a
+  responses) pulled in transitively by Vite. The client is **currently on Vite 5.4.21
+  (esbuild 0.21.5)** — Vite 5.4.x never bumped its bundled esbuild past the vulnerable
+  range, so `vite@^5.4.0` cannot resolve to a patched esbuild. **Dev-only** (esbuild/Vite
+  are not in the shipped static bundle), so production exposure is nil; the risk is a
   local dev machine on an untrusted network.
-- **Fix options:** the only `npm audit fix` path is `--force`, which installs
-  `vite@8` — a **breaking major bump**. Defer to a deliberate Vite upgrade pass
-  (re-verify the client build + Capacitor `base: './'` afterward), not an auto-fix.
-- **Refs:** `client/package.json` (Vite dev dependency); advisory
-  GHSA-67mh-4wv8-2f99.
+- **Fix options:** the minimal patched target is **Vite 6** (the first major to ship
+  esbuild ≥0.25); `npm audit fix --force` jumps to `vite@8`. Either way it's a **breaking
+  major bump**. Defer to a deliberate Vite upgrade pass (re-verify the client build +
+  Capacitor `base: './'` + parent-dir `publicDir` afterward), not an auto-fix. Tracked as
+  an upstream ask in `docs/UPSTREAM_ASKS.md`.
+- **Refs:** `client/package.json` (`vite` dev dependency); `client/vite.config.ts:11`
+  (`base: './'`); advisory GHSA-67mh-4wv8-2f99.
 - **Effort:** M (major-version upgrade + build re-verification).
 
 ### Doorway depth is a marker, not an elevated wall-face render
@@ -113,28 +103,25 @@ the audit trail).
   and close this, or (b) add a render assertion/effect so south-wall door tiles read at a
   depth between the floor and the roof (entrance visible before entry).
 - **Refs:** `client/src/render/phaser.ts` (`buildDoorwayMarker`, `buildRoofTiles`,
-  `updateRoofFade`, `DEPTH_*` constants); `shared/src/tiles.ts` wall defs (75–91).
+  `updateRoofFade`, `DEPTH_*` constants); `shared/src/tiles.ts` wall defs (lines 153–161).
 - **Effort:** S.
 
-## Open
-
-### Unused `world` import in server/game/behaviors.js
-- **Status:** Open
-- **Surfaced:** 2026-05-30 (plan-validation-and-review, robot-capture plan)
-- **Pointer:** `server/game/behaviors.js:21` — `const world = require('./world');` has no `world.*` usage anywhere in the file.
-- **Why deferred:** Pre-existing (present at base commit `5880ea1`, untouched by the robot-capture plan). Out of scope per the validation skill's in-scope/out-of-scope rule — not traceable to the plan's changes.
-- **Effort:** Trivial (delete one line); verify nothing else in the file references it (confirmed none do).
-
-### `formatPlayTime()` duplicated in help.ts and leaderboard.ts (low-priority DRY)
-- **Status:** Open
-- **Surfaced:** `/plan-validation-and-review` of the global-chat plan, 2026-05-31 (dedup scan).
-- **Detail:** a play-time formatter (seconds → "1h 23m" / "12m" / "45s") is defined twice
-  with slightly different second-rendering: `client/src/leaderboard.ts:48-55` (used for the
-  `playSeconds` column) and `client/src/help.ts:138-146` (used for the Stats-tab "Play time").
-- **Why deferred:** Pre-existing — neither function was touched by the chat plan
-  (`leaderboard.ts` wasn't modified at all; `help.ts` only gained the `/` controls line). Out
-  of scope per the validation skill's in-scope/out-of-scope rule.
-- **Suggested approach if picked up:** extract one formatter to a shared client util (e.g.
-  `client/src/time.ts`) and import in both; reconcile the seconds-format difference deliberately.
-- **Refs:** `client/src/leaderboard.ts:48-55`; `client/src/help.ts:138-146`.
-- **Effort:** S.
+### Client front-end (chat/menu) has no automated test harness
+- **Status:** open — known coverage gap, larger than a single fix (no client test runner exists).
+- **Surfaced:** findings audit, 2026-05-31 (test-coverage discovery lens).
+- **Detail:** the client has no unit/integration test runner (no vitest/jest, no `test`
+  script in `client/package.json`). The socket-level `scripts/e2e-*.js` harnesses and the
+  CDP `e2e-chat-focus.js` cover the wire contract + the chat focus guard, but the
+  timer-driven chat bubble queue (3 s drain, re-entrancy guard, cancel-on-open), the
+  unread badge state, and the menu clickgate → splash → login flow (`client/src/menu.ts`,
+  356 LOC; `client/src/chat.ts`, 374 LOC) are unexercised by any committed test.
+- **Why deferred:** writing these needs a client test runner (jsdom/vitest) stood up first,
+  plus audio/timer mocking — materially more than a single bug fix, and the jam kit
+  intentionally uses script-based (not unit) client testing today.
+- **Suggested approach if picked up:** stand up vitest + jsdom in `client/`, mock the audio
+  module + fake timers, then cover: chat open clears unread + cancels bubbles; bubble queue
+  drains at `BUBBLE_MS`; menu gate dismiss on first gesture; splash gated behind the gate
+  fade.
+- **Refs:** `client/src/chat.ts`; `client/src/menu.ts`; `scripts/e2e-chat-focus.js`;
+  `client/package.json` (no test runner).
+- **Effort:** L.

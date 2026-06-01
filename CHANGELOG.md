@@ -4,6 +4,22 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.158: **Findings backlog reconcile (Phase 0 of the findings-closeout plan).**
+  Audited every item in `FINDINGS_OUTSIDE_SCOPE.md` against current code (adversarially
+  verified). **Deleted** the stale *"Stat-field names enumerated across four server
+  files"* entry — `server/game/stats-delta.js` (landed at commit e10ecd7) already
+  consolidated the accumulator shape, so the duplication it described no longer exists
+  (only `db.js DELTA_COLUMNS`, an intrinsic SQL map, still enumerates). **Merged** the
+  file's two duplicate `## Open` headers into one section and normalized every entry to
+  the rich template. **Corrected** drifted refs: the esbuild/Vite advisory now states the
+  real pin (Vite 5.4.21 / esbuild 0.21.5; minimal patched = Vite 6); the doorway entry's
+  `shared/src/tiles.ts` wall-def refs now point at lines 153–161 (not the tile indices);
+  the PURSUE entry now notes that `return`/`exit` already smooth (only the perception
+  branch is reactive) so a future implementer can't "fix" the already-correct paths. The
+  unused-`world`-import, `formatPlayTime`-dup, and cheetah-buffer items move out of the
+  "deferred" backlog because later phases of this plan resolve them; a new deferred entry
+  records the (genuinely larger) client-test-harness gap.
+
 - 0.2.157: **Secure, env-driven deploy + dev launcher.** New deploy toolchain for
   hosting the game at a public VPS domain (default `escape.example.com`) as a single
   origin behind nginx + TLS.
