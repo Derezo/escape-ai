@@ -4,6 +4,19 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.183: **Android: release signing wired (secrets stay out of git).** `app/build.gradle`
+  now reads `android/keystore.properties` (gitignored) and creates a
+  `signingConfigs.release` applied to the release build type — but only when that file
+  exists, so a fresh clone or a debug-only CI box still configures and `assembleDebug`
+  still works with zero secrets present. The keystore itself lives **outside the repo**
+  (`~/.escape-ai-signing/escape-ai-release.keystore`, RSA-2048, 10000-day validity) and
+  is referenced by absolute path; the passwords live only in the gitignored
+  `keystore.properties`. A committed `keystore.properties.example` documents the format and
+  the keytool command. Verified with `./gradlew :app:signingReport` — the release variant
+  resolves to our keystore (alias `escape-ai`) and `BUILD SUCCESSFUL`. `.gitignore` already
+  blocks `*.keystore`, `*.jks`, and `keystore.properties`; confirmed no secret or password
+  appears in the committed diff.
+
 - 0.2.182: **Android: branded launcher icon + splash (the AI optic).** New zero-dep
   generator `scripts/gen-android-icons.js` (SVG → PNG via the already-installed `sharp`,
   same pattern as `build-atlas.js`; deterministic/idempotent, no new deps) replaces the

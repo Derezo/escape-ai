@@ -1,5 +1,23 @@
 apply plugin: 'com.android.application'
 
+// --- Release signing -------------------------------------------------------
+// The signing secrets live in `android/keystore.properties` (gitignored — see
+// the repo-root .gitignore). It points at a keystore stored OUTSIDE the repo and
+// holds the passwords. If the file is absent (a fresh clone, or a CI box that
+// only builds debug), `signingConfigs.release` is simply not created and the
+// release build falls back to no signing config — so the project still
+// configures and `assembleDebug` still works without any secrets present.
+//
+// To produce a *signed* release APK, create android/keystore.properties (copy
+// keystore.properties.example) with storeFile/storePassword/keyAlias/keyPassword,
+// then run `./gradlew assembleRelease`. See docs/ANDROID.md.
+def keystorePropertiesFile = rootProject.file("keystore.properties")
+def keystoreProperties = new Properties()
+def hasReleaseSigning = keystorePropertiesFile.exists()
+if (hasReleaseSigning) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "com.mittonvillage.escape"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +34,25 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Sign release builds only when the keystore.properties is present;
+            // otherwise leave unsigned (the build still assembles).
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
