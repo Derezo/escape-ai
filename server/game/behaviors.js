@@ -116,6 +116,62 @@ function nearestWaypointIndex(robot, route) {
   return idx;
 }
 
+/**
+ * A robot's DESIGNATED AREA as a small local patrol loop: the anchor waypoint plus
+ * its two NEAREST other waypoints on the shared route, returned as ROUTE indices
+ * `[anchor, nn1, nn2]`. Each robot anchors on its own spawn waypoint, so the six
+ * patrol robots spread into six overlapping local loops that cover the map — instead
+ * of every robot grinding the same cross-map global loop. Nearest is by Manhattan
+ * distance between waypoints with a LOWER-INDEX tie-break, so the loop is fully
+ * deterministic (pure integer math over the shared route — no rng, no clock).
+ *
+ * A route shorter than 3 returns whatever's available (a length-1/2 loop); the
+ * caller's `route.length === 0` branch handles the empty case with ambient wander.
+ *
+ * @param {number} anchorIndex  the robot's home waypoint index into `route`
+ * @param {{x:number,y:number}[]} route
+ * @returns {number[]} route indices, anchor first
+ */
+function buildLocalLoop(anchorIndex, route) {
+  if (route.length <= 1) return route.length === 1 ? [anchorIndex] : [];
+  const a = route[anchorIndex];
+  // Score every OTHER waypoint by Manhattan distance to the anchor; lower index wins
+  // ties so the ordering is stable across runs/seeds.
+  const others = [];
+  for (let i = 0; i < route.length; i++) {
+    if (i === anchorIndex) continue;
+    others.push({ i, d: Math.abs(route[i].x - a.x) + Math.abs(route[i].y - a.y) });
+  }
+  others.sort((p, q) => (p.d - q.d) || (p.i - q.i));
+  return [anchorIndex, ...others.slice(0, 2).map((o) => o.i)];
+}
+
+/**
+ * The POSITION within a robot's `localLoop` (an index into the localLoop array, NOT
+ * a route index) whose waypoint is nearest the robot — the local-loop analogue of
+ * nearestWaypointIndex. Used to resume patrol in the robot's OWN area after a chase /
+ * haul / pen-exit drags it off-route, rather than snapping to the global nearest
+ * waypoint (which could belong to another robot's area). Lower position wins ties.
+ * Returns 0 for an empty loop.
+ *
+ * @param {object} robot
+ * @param {{x:number,y:number}[]} route
+ * @param {number[]} localLoop  route indices (from buildLocalLoop)
+ * @returns {number}
+ */
+function nearestLocalLoopPos(robot, route, localLoop) {
+  let pos = 0;
+  let bestD2 = Infinity;
+  for (let p = 0; p < localLoop.length; p++) {
+    const wp = route[localLoop[p]];
+    const dx = wp.x - robot.x;
+    const dy = wp.y - robot.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) { bestD2 = d2; pos = p; }
+  }
+  return pos;
+}
+
 /** Lazily initialize a robot's patrol/behavior state the first time it's stepped.
  *  A guard robot keeps its 'guard' behavior (it contains itself rather than
  *  patrolling); only a non-guard with no behavior defaults to 'patrol'. */
@@ -127,6 +183,18 @@ function ensureInit(robot, route) {
     robot.patrolIndex = route.length > 0 ? shared.hash32(robot.id) % route.length : 0;
   }
   if (typeof robot.lastPatrolIndex !== 'number') robot.lastPatrolIndex = robot.patrolIndex;
+  // DESIGNATED AREA: a patrol robot owns a small local loop anchored on its OWN spawn
+  // waypoint (the nearest route waypoint to where it spawned — robot-N spawns exactly
+  // on patrolRoute[N-1]). Computed ONCE here, not just on the resume edge, because
+  // world.js spawns the robot with behavior already 'patrol', so the resume-edge seed
+  // (stepRobotIdle) would be skipped on the very first tick and leave localLoopPos
+  // undefined. Guards never patrol → no loop. Empty route → wander fallback handles it.
+  if (!robot.guard && route.length > 0) {
+    if (!Array.isArray(robot.localLoop)) {
+      robot.localLoop = buildLocalLoop(nearestWaypointIndex(robot, route), route);
+    }
+    if (typeof robot.localLoopPos !== 'number') robot.localLoopPos = 0;
+  }
 }
 
 /**
@@ -308,18 +376,26 @@ function stepRobotIdle(robot, animals, ctx) {
     return;
   }
 
-  // RESUME PATROL. On the transition out of investigate, rejoin the loop at the
-  // NEAREST waypoint (a chase may have dragged the robot far from lastPatrolIndex).
-  // The patrol LOOP itself stays on the carved spine (patrolStep over patrolRoute) —
-  // the spine is already path-connected, so A* only ever engages for the off-route
-  // investigate goal, not the loop. Clear any stale investigate path on the edge.
+  // RESUME PATROL. On the transition out of investigate, rejoin the robot's OWN local
+  // loop at the nearest position (a chase may have dragged it far off-route). The loop
+  // is walked with GLOBAL A* (moveTowardPoint → followPathToGoal), NOT reactive
+  // patrolStep: the patrol waypoints are zone centers tens of tiles apart, and the
+  // straight chord between consecutive ones crosses the river/walls/pens — reactive
+  // ~1-tile steering wedges there and the robot stalls forever (every chord funnels
+  // through the central water, so all robots used to pile into one cluster). A*
+  // routes each leg along the carved corridors / across the bridge, so a robot
+  // actually completes its loop and patrols its designated area. Clear any stale
+  // investigate path on the edge; also re-seed localLoopPos to resume in-area.
   if (robot.behavior !== 'patrol') {
     robot.patrolIndex = route.length > 0 ? nearestWaypointIndex(robot, route) : robot.lastPatrolIndex;
+    if (Array.isArray(robot.localLoop) && robot.localLoop.length > 0) {
+      robot.localLoopPos = nearestLocalLoopPos(robot, route, robot.localLoop);
+    }
     resetPathOnTransition('patrol');
   }
   robot.behavior = 'patrol';
 
-  if (route.length === 0) {
+  if (route.length === 0 || !Array.isArray(robot.localLoop) || robot.localLoop.length === 0) {
     // Degenerate seed: no patrol loop → fall back to ambient wander-avoid.
     movement.wanderAvoid(
       robot, currentTick, dt, speedFor(robot, lockdown, currentTick),
@@ -329,22 +405,25 @@ function stepRobotIdle(robot, animals, ctx) {
   }
 
   const speed = speedFor(robot, lockdown, currentTick);
-  // Pass the robot's committed heading angle (in a box) so patrolStep turn-rate-limits
-  // the heading (anti-bounce): a patroller rounding a fence corner can't flip its
-  // facing tick to tick. patrolStep seeds the angle on the first move and returns the
-  // new angle to store back (server-only scratch).
-  const res = movement.patrolStep(
-    robot, route, robot.patrolIndex, dt, speed,
-    rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS, { angle: robot.headAngle },
-  );
-  if (res.angle !== undefined) robot.headAngle = res.angle;
-  // Hazard veto (Third Law) on the resolved destination, same as the pursue path.
-  if (!entersHazard(res.x, res.y, worldEntities)) {
-    robot.x = res.x;
-    robot.y = res.y;
-    robot.patrolIndex = res.index;
+  const loop = robot.localLoop;
+  let pos = ((robot.localLoopPos % loop.length) + loop.length) % loop.length; // defensive fold
+  let wp = route[loop[pos]];
+  // ARRIVED: within the same 48px gate patrolStep used → advance to the next leg and
+  // drop the finished leg's cached A* path so the next leg repaths to the new goal.
+  // Re-read the waypoint the SAME tick (no dead tick standing on the waypoint — mirrors
+  // patrolStep's arrive-then-retarget).
+  const arriveR = rm.tile * movement.PATROL.ARRIVE_TILES;
+  if (Math.hypot(wp.x - robot.x, wp.y - robot.y) <= arriveR) {
+    pos = (pos + 1) % loop.length;
+    if (ctx.clearPath) ctx.clearPath(robot);
+    wp = route[loop[pos]];
   }
-  robot.facing = shared.facingFromVec(res.dirX, res.dirY, robot.facing || 's');
+  robot.localLoopPos = pos;
+  // moveTowardPoint owns the A* routing, near-wall straight-steering, smoothHeading
+  // anti-bounce, the Third-Law hazard veto, and facing — the same primitive investigate
+  // / return / exit already use. Its null-path straight-fallback covers a degenerate
+  // unreachable waypoint, so a robot is never stranded.
+  moveTowardPoint(robot, wp.x, wp.y, dt, speed, rm, worldEntities, entersHazard, ctx);
 }
 
 /**
@@ -395,6 +474,12 @@ function stepRobotReturn(robot, npc, ctx) {
     }
     robot.behavior = 'patrol';
     robot.patrolIndex = (route && route.length) ? nearestWaypointIndex(robot, route) : robot.lastPatrolIndex;
+    // Resume in the robot's OWN area: re-seed the local-loop position to the nearest
+    // waypoint of its loop (set behavior='patrol' above means stepRobotIdle's resume
+    // edge won't fire next tick, so re-seed here).
+    if (Array.isArray(robot.localLoop) && robot.localLoop.length > 0) {
+      robot.localLoopPos = nearestLocalLoopPos(robot, route, robot.localLoop);
+    }
     if (ctx.clearPath) ctx.clearPath(robot);
   };
 
@@ -525,6 +610,11 @@ function stepRobotExit(robot, ctx) {
     } else {
       robot.behavior = 'patrol';
       robot.patrolIndex = (route && route.length) ? nearestWaypointIndex(robot, route) : robot.lastPatrolIndex;
+      // Resume in-area: re-seed the local-loop position (behavior is 'patrol' now, so
+      // stepRobotIdle's resume edge won't re-seed it next tick).
+      if (Array.isArray(robot.localLoop) && robot.localLoop.length > 0) {
+        robot.localLoopPos = nearestLocalLoopPos(robot, route, robot.localLoop);
+      }
     }
     robot.mode = 'idle'; // back to the idle FSM; next tick runs normal perception
     return;

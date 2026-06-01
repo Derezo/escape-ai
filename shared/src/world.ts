@@ -2407,10 +2407,14 @@ export function generateWorld(seed: number): WorldMap {
   const { junctions, spineTiles, spineY } = carveOrganicPaths(
     ground, zones, forecourt, gateTx, riverDeep, protectedTiles, waterMargin,
   );
-  // The robot patrol loop in world units: the junctions in carve order. Robots are
-  // anchored at these exact junctions (see robotSpawn specs below), so each spawns
-  // on its route; walking them in order traces the carved spine. tileCenter matches
-  // the transform used to place the robots/terminals, so the route lands on pavement.
+  // The robot patrol WAYPOINTS in world units: the junctions in carve order. Robots
+  // are anchored at these exact junctions (see robotSpawn specs below), so each spawns
+  // on a waypoint. These are zone CENTERS tens of tiles apart, NOT straight-line-
+  // walkable consecutive edges — the carved network connects them as a tree you must
+  // navigate (spine + branches), so the server walks the loop with A* (see
+  // server/game/behaviors.js stepRobotIdle), not reactive straight-line steering.
+  // tileCenter matches the transform used to place the robots/terminals, so each
+  // waypoint lands on pavement.
   const patrolRoute = junctions.map((j) => ({ x: tileCenter(j.tx, tile), y: tileCenter(j.ty, tile) }));
   // Spur each home's gate/door reach target to the NEAREST already-paved spine tile
   // with a SHORT straight L-stub (no rng). reachTargets[0..] are the gate/door tiles.

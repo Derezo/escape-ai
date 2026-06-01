@@ -4,6 +4,52 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.179: **Robots patrol designated areas via A\* — fixes the river clustering.**
+  Robots used to pile into one stationary cluster by the central river instead of
+  patrolling. Root cause (confirmed with `scripts/diag-patrol.cjs`, room `"default"`):
+  `patrolRoute` is the 6 zone-center junctions in *carve order* — waypoints 52–93 tiles
+  apart, every consecutive segment crossing the river/walls/pens — and `stepRobotIdle`
+  walked the straight chord between them with **reactive** `steerAround` (no A\*). A robot
+  can't reach a cross-river waypoint with ~1-tile-lookahead steering, the index only
+  advances within 48px of the current target, so every robot wedged at the same central
+  water and stalled permanently. The load-bearing false premise was the "the spine is
+  already path-connected" comment in `behaviors.js`/`world.ts` (the carved network is a
+  *tree you must navigate*, not straight-line-walkable edges). **Fix:** each patrol robot
+  now owns a *designated area* — a local 3-waypoint loop `[anchor, nearest1, nearest2]`
+  anchored on its own spawn waypoint — and walks it with the existing A\* path-follow
+  primitive (`moveTowardPoint` → `followPathToGoal`) the chase/investigate/return paths
+  already use, so it routes along the carved corridors / across the bridge and reliably
+  completes its loop. After a chase/haul/pen-exit it resumes in *its own* area
+  (`nearestLocalLoopPos`), not the global nearest waypoint. The six robots spread into six
+  overlapping local loops that cover the map. **Server-runtime only — no
+  `WORLD_GEN_VERSION` bump**: the new per-robot state (`localLoop`, `localLoopPos`, the
+  A\* path scratch) is server-only, never serialized; `collision`/`entitySpecs`/
+  `patrolRoute` are byte-identical (world parity drift tripwire stays green). Spawn
+  placement was already correct and is unchanged. `patrolStep` stays a shared export with
+  its tests intact (no longer the patrol caller). `scripts/diag-patrol.cjs` is now a
+  committed regression diagnostic that simulates the real patrol FSM and asserts every
+  robot cycles its designated loop — green on a 7-seed sweep (6/6 robots, 3/3 positions
+  each). Full `cd scripts && npm run verify` green (all 8 gates).
+
+- 0.2.178: **`scripts/bundle-submission.sh` — one-command competition .zip packager.**
+  Produces `escape-ai-submission.zip` (the TINS sources a reviewer needs to build and
+  run the game locally) and verifies it against the 100 MB entry limit. The bundle is
+  driven off `git ls-files`, so it inherently excludes `node_modules/`, `dist/`, `.env`,
+  and every `.gitignore` entry — then a single pure `is_excluded_path` policy additionally
+  drops dev-only material: `asset-pipeline/output/` (raw Suno/ElevenLabs samples), the
+  `.claude/` agent definitions, internal/process docs (`CLAUDE.md`,
+  `FINDINGS_OUTSIDE_SCOPE.md`, `docs/UPSTREAM_ASKS.md`, `docs/archive/`), and the local
+  `scripts/deploy.env` identity (the committed `*.example` templates still ship). Includes
+  **both** cross-platform launchers — `run-dev.sh` (Linux/macOS) and `run-dev.ps1`
+  (Windows) — and asserts the must-have entry points are present before zipping. The
+  asset-pipeline manifest/theme/README ship as the audio source-of-truth; only the
+  generated `output/` is omitted. Unit-tested in `scripts/test/bundle-submission.bats`
+  (11 new BATS cases: policy in/out, the file-list filter via an injectable `GIT_LS`
+  hook, an integration check against the real index, and the size formatter); shellcheck
+  clean; full `npm run test:shell` green (29 tests). Verified end-to-end: 64.7 M zip, 275
+  entries, both launchers in, no `node_modules`/`.claude`/`output`/secret `.env` leak.
+  `.gitignore` now ignores `*-submission.zip` so a generated bundle is never committed.
+
 - 0.2.177: **Deploy security hardening — two defense-in-depth fixes from a script audit.**
   A security review of the deploy/provision scripts found the model otherwise solid
   (nologin app user, loopback bind in prod, secrets out of git, ufw closed on the app
