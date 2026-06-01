@@ -4,6 +4,28 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.165: **Findings closeout Phase 4 — robot PURSUE routes A* around walls
+  (+ smoothed).** Closes the deferred finding: the perception-driven chase
+  (`decision.mode === 'pursue'` in `stealth.js` `stepRobots`) was the one robot
+  motion path still on the reactive one-tile-ahead `steerAround` with raw-vector
+  facing — a robot chasing a player who rounded a fence pressed into the barrier
+  and could flip facing tick-to-tick. The chase is now a HYBRID line-of-sight + A*:
+  in the OPEN (no wall between robot and target) it keeps the responsive reactive
+  `steerAround` toward the live target; when a wall is BETWEEN them (detected via
+  `boxHitsSolid` near-wall + a straight look-ahead probe) it routes A* to the
+  target's CURRENT tile via `followPathToGoal` (cadence-gated + goal-tile-change-
+  invalidated, so no per-tick A* cost) and follows the dense waypoint with the
+  near-wall-direct logic the other paths use; unreachable → falls back to reactive.
+  The committed heading is turn-rate-limited through `movement.smoothHeading`
+  (`robot.headAngle`, server-only scratch) so facing can't reverse in one tick, and
+  the cached A* path is cleared on the FSM edge into pursue. The hazard veto (Third
+  Law) and the catch (player) / capture (NPC) hooks are unchanged. Validated:
+  pursue is bit-identical across two identical runs (determinism PASS); a wall-
+  separated robot closed from 255 px → 12 px in ~2.75 s routing AROUND the wall
+  (the old reactive path would stall at the wall half-plane); 15 server + 99 shared
+  tests green; `check-facing` green. No new serialized wire field (`headAngle`/path
+  scratch were already emitted by the guard/investigate/return branches).
+
 - 0.2.164: **Splash reveal now starts at the click-gate gesture, not at page
   load.** The "ESCAPE AI" splash sequence is CSS-timed (staggered `animation-delay`s)
   and the splash element mounts behind the click-gate so its layout is ready. But

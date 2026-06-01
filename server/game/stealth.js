@@ -507,40 +507,129 @@ function stepRobots(dt, roomName, connectedPlayers, rooms, currentTick) {
       // Remember where to resume patrol when the chase ends (capture on the edge,
       // before behavior flips to 'pursue'), then mark the FSM state. behaviors
       // owns the speed table (patrol < investigate < pursue + spontaneous boost).
-      if (robot.behavior !== 'pursue') robot.lastPatrolIndex = robot.patrolIndex;
+      // On the EDGE into pursue from any other FSM state, drop the cached A* route so
+      // a stale investigate/return path can't bleed into the chase. (followPathToGoal
+      // also repaths on a goal-tile change, but an explicit clear on the edge is the
+      // robust convention used everywhere else — see stepRobotIdle.resetPathOnTransition.)
+      // The reciprocal edge OUT of pursue is already handled: the idle branch's
+      // resetPathOnTransition fires clearPath when robot.behavior is still 'pursue'.
+      if (robot.behavior !== 'pursue') {
+        robot.lastPatrolIndex = robot.patrolIndex;
+        clearPath(robot);
+      }
       robot.behavior = 'pursue';
       const speed = behaviors.speedFor(robot, lockdown, currentTick);
 
-      // Wall + hazard avoidance, both honored before committing the chase step:
-      //   - WALLS: route the chase heading through steerAround (so the robot
-      //     rounds a fence corner toward the target instead of pressing into it),
-      //     then the shared moveWithCollision integrator slides + refuses to
-      //     tunnel (OOB is solid too). Run it on a COPY so we can also veto on the
-      //     Third Law before committing.
-      //   - Third Law (HAZARD): a robot won't chase INTO a skunk stink. If the
-      //     resolved destination still lands in a hazard, it stalls this tick
-      //     (still faces the target).
-      const heading = movement.steerAround(
-        robot, decision.dirX, decision.dirY, dt, speed,
-        rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
-      );
-      // steerAround returns {0,0} only when fully boxed in; fall back to the raw
-      // pursue vector so a cornered robot still presses toward the target (slide).
-      const hx = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirX : heading.dirX;
-      const hy = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirY : heading.dirY;
+      // Hoist the live target lookup ABOVE the movement so the chase can route A* to
+      // the target's CURRENT tile (the catch/capture hooks below reuse this same ref).
+      const target = animals.find((a) => a.id === decision.targetId);
+
+      // CHASE MOVEMENT — hybrid LINE-OF-SIGHT + A*, turn-rate-smoothed (mirrors
+      // behaviors.moveTowardPoint, which every other robot motion path already uses):
+      //   - OPEN (no wall between robot and target): keep the reactive one-tile-ahead
+      //     steerAround toward the RAW decision vector. This is the common chase case
+      //     and stays responsive to a juking target — A* to a tile center would lag.
+      //   - BLOCKED (a wall is between them): route A* to the target's current tile via
+      //     followPathToGoal and follow the dense waypoint with near-wall-direct steering
+      //     (steerAround's probe fan would oscillate the body against a fence corner the
+      //     path already routes around). Unreachable → fall back to the open path.
+      //   - SMOOTHING: the committed heading is turn-rate-limited through smoothHeading
+      //     (robot.headAngle, server-only scratch) so the chase can't reverse facing in
+      //     one tick when the target rounds a corner — the same anti-bounce fix the
+      //     investigate/patrol/guard paths got.
+      //   - Third Law (HAZARD): a robot won't chase INTO a skunk stink. If the resolved
+      //     destination lands in a hazard it stalls this tick (still faces the target).
+      //
+      // LOS test (no segmentHitsSolid in shared — only boxHitsSolid): the proxy used by
+      // moveTowardPoint — the robot is NEAR a wall AND a look-ahead box straight toward
+      // the target is solid. When clear, the straight heading is wall-free so reactive
+      // steering is correct and cheaper; only the near-wall blocked case needs A*.
+      const bandPx = rm.tile * config.PATHFIND.GATE_BAND_TILES;
+      let hx;
+      let hy;
+
+      if (target) {
+        let tdx = target.x - robot.x;
+        let tdy = target.y - robot.y;
+        const tlen = Math.hypot(tdx, tdy) || 1;
+        const tux = tdx / tlen;
+        const tuy = tdy / tlen;
+
+        // Is a wall between the robot and the target? Near a wall AND the straight
+        // look-ahead toward the target lands in a solid box → route around it.
+        const look = Math.max(ROBOT_RADIUS + rm.tile * movement.STEER.LOOK_TILES, speed * dt);
+        const nearWall = shared.boxHitsSolid(
+          robot.x, robot.y, ROBOT_RADIUS + bandPx, rm.collision, rm.w, rm.h, rm.tile
+        );
+        const straightBlocked = shared.boxHitsSolid(
+          robot.x + tux * look, robot.y + tuy * look, ROBOT_RADIUS, rm.collision, rm.w, rm.h, rm.tile
+        );
+
+        let onPath = false;
+        if (nearWall && straightBlocked) {
+          // BLOCKED: A* to the target's CURRENT tile (radius-aware; cadence-gated +
+          // goal-tile-change-invalidated inside followPathToGoal — no per-tick A* cost).
+          const goalTx = Math.floor(target.x / rm.tile);
+          const goalTy = Math.floor(target.y / rm.tile);
+          const wp = followPathToGoal(
+            robot, rm, scratch, goalTx, goalTy, currentTick, { tile: rm.tile, radius: ROBOT_RADIUS }
+          );
+          if (wp) {
+            // Dense path: head STRAIGHT at the next (one-tile-away, reachable) waypoint;
+            // steerAround would re-aim it and oscillate against the fence corner.
+            const wdx = wp.x - robot.x;
+            const wdy = wp.y - robot.y;
+            const wlen = Math.hypot(wdx, wdy) || 1;
+            tdx = wdx / wlen;
+            tdy = wdy / wlen;
+            onPath = true;
+          }
+          // wp === null → unreachable: fall through to reactive steering on the raw vector.
+        }
+
+        if (onPath) {
+          // Near-wall-direct: dense path already routes around the wall.
+          hx = tdx;
+          hy = tdy;
+        } else {
+          // OPEN (LOS clear) or unreachable: reactive one-tile-ahead avoidance toward the
+          // raw pursue vector — responsive to a juking target.
+          const heading = movement.steerAround(
+            robot, decision.dirX, decision.dirY, dt, speed,
+            rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
+          );
+          // steerAround returns {0,0} only when fully boxed in; fall back to the raw
+          // pursue vector so a cornered robot still presses toward the target (slide).
+          hx = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirX : heading.dirX;
+          hy = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirY : heading.dirY;
+        }
+      } else {
+        // No target ref this tick (gathered out from under us): keep today's behavior —
+        // reactive steering toward the raw decision vector.
+        const heading = movement.steerAround(
+          robot, decision.dirX, decision.dirY, dt, speed,
+          rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
+        );
+        hx = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirX : heading.dirX;
+        hy = (heading.dirX === 0 && heading.dirY === 0) ? decision.dirY : heading.dirY;
+      }
+
+      // ANTI-BOUNCE: turn-rate-limit the committed heading (server-only headAngle), then
+      // commit through the shared slide integrator (refuses to tunnel; OOB is solid).
+      const sm = movement.smoothHeading(hx, hy, robot.headAngle);
+      robot.headAngle = sm.angle;
       const trial = { x: robot.x, y: robot.y };
       shared.moveWithCollision(
-        trial, hx, hy, dt, speed,
+        trial, sm.dirX, sm.dirY, dt, speed,
         rm.collision, rm.w, rm.h, rm.tile, ROBOT_RADIUS
       );
       if (!entersHazard(trial.x, trial.y, worldEntities)) {
         robot.x = trial.x;
         robot.y = trial.y;
       }
-      // Face the chase direction (for the directional sprite).
-      robot.facing = shared.facingFromVec(decision.dirX, decision.dirY, robot.facing || 's');
+      // Face the SMOOTHED heading (not the raw vector), so facing can't flip tick-to-tick.
+      robot.facing = shared.facingFromVec(sm.dirX, sm.dirY, robot.facing || 's');
 
-      const target = animals.find((a) => a.id === decision.targetId);
       // Panic is the alarm over the ESCAPE, so only a robot chasing a real
       // PLAYER stokes it — chasing idle scenery-animals must not, or the meter
       // would climb to overflow with no player provocation (the room's idle
