@@ -55,7 +55,7 @@ const config: CapacitorConfig = {
     //
     // Alternatively, point the WebView at a live URL (live-reload / quick demo)
     // instead of bundled assets:
-    //   url: 'https://tins.mittonvillage.com',
+    //   url: 'https://escape.example.com',
     // With `url` set, Capacitor loads that remote page directly and webDir is
     // ignored. That is effectively the TWA approach (see docs/ANDROID.md).
   },

@@ -7,7 +7,7 @@
 
 Stack recap: Vite + TS + **Phaser 3** client (Babylon 3D fallback behind
 `IRenderer`), Node + **Socket.IO** authoritative server (20 Hz tick), a `shared/`
-TS module of types + deterministic `step()`, deploy to **mittonvillage.com** VPS.
+TS module of types + deterministic `step()`, deploy to a **VPS** (env-driven).
 
 ---
 

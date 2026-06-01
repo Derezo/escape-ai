@@ -52,7 +52,7 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the binding contract.
 | Netcode | Socket.IO authoritative server, fixed 20 Hz tick | `server/` |
 | Shared | TS types + net contract + deterministic `step()` | `shared/` |
 | Android | Capacitor wraps the web build | `client/capacitor.config.ts` |
-| Deploy | mittonvillage.com VPS | `scripts/deploy-server.sh` |
+| Deploy | nginx + pm2 on a VPS (env-driven) | `scripts/provision-escape.sh`, `scripts/deploy-server.sh` |
 
 The renderer sits behind a common `IRenderer` interface, so a "3D" genre rule is a
 renderer swap (`PhaserRenderer` → `BabylonRenderer`), not a rewrite — see
@@ -80,6 +80,25 @@ behind the tick loop, proximity broadcasting, and shared-constants approach.
 
 Requires **Node 22+**.
 
+**One command** — `scripts/run-dev.sh` builds `shared/`, starts the server (`:3000`)
+and the Vite client (`:5173`) together, and tears both down on Ctrl-C:
+
+```bash
+./scripts/run-dev.sh                 # install-if-needed, then run server + client
+./scripts/run-dev.sh --clean         # also wipe local dev data (fresh accounts/stats)
+./scripts/run-dev.sh --force-install # reinstall deps even if up to date
+./scripts/run-dev.sh --server-only   # or --client-only
+SERVER_PORT=3001 CLIENT_PORT=5180 ./scripts/run-dev.sh   # override ports
+```
+
+It only runs `npm install` when `node_modules` is missing or a lockfile changed
+(no needless reinstall), and it **auto-kills** anything already on the dev ports
+before starting — so a stale process from a previous run never blocks it. Each
+service runs in its own process group, so Ctrl-C takes down `npm`'s `node --watch`
+/ `vite` grandchildren too (no orphans).
+
+<details><summary>…or run the three steps by hand</summary>
+
 ```bash
 # 1. Build the shared module (client imports its source via Vite alias; building
 #    once also produces the dist the server can consume).
@@ -92,6 +111,7 @@ cd server && npm install && npm run dev      # or: npm start
 # 3. Start the client dev server
 cd client && npm install && npm run dev
 ```
+</details>
 
 Open the printed Vite URL in **two or more browser tabs** — each joins the default
 room as an escaped animal. The manual opens on first load (toggle with **H**/**?**).
@@ -133,11 +153,63 @@ VITE_SERVER_URL=https://your-vps.example.com npm run dev
 
 ## Production build & deploy
 
-```bash
-# Client → static bundle in client/dist (relative asset paths, Capacitor-safe)
-cd client && VITE_SERVER_URL=https://your-vps.example.com npm run build
+The game deploys to a VPS as a **single origin**: nginx terminates TLS, serves the
+static client bundle from disk, and reverse-proxies only `/socket.io/` + `/health`
+to a loopback-bound node process. Because client and server share one origin there
+is **no CORS surface** — production CORS stays locked (`origin: false`). The node
+process runs under a dedicated, login-disabled (`nologin`) system user via that
+user's own pm2; the port it binds is **loopback-only and never opened in the
+firewall**.
 
-# Server → VPS (edit HOST/REMOTE_PATH at the top of the script first)
+### Configuration — `scripts/deploy.env`
+
+All host/user/domain/port values are env-driven and live in **one** gitignored
+file. Nothing about your infrastructure is hard-coded in the committed scripts —
+the host, the SSH login user, and the public domain have **no defaults** and the
+scripts error out if they are unset.
+
+```bash
+cp scripts/deploy.env.example scripts/deploy.env
+# edit scripts/deploy.env — set DEPLOY_HOST, DEPLOY_USER, APP_DOMAIN, etc.
+```
+
+| Variable | Required | Meaning |
+|----------|----------|---------|
+| `DEPLOY_HOST`  | **yes** | VPS hostname rsync/ssh connects to |
+| `DEPLOY_USER`  | **yes** | SSH **login** user (a sudoer) used to deploy |
+| `APP_DOMAIN`   | **yes** | public hostname the game is served at (nginx + TLS) |
+| `APP_USER`     | no (`escape`) | dedicated **nologin** user that owns the files & runs node |
+| `REMOTE_PATH`  | no (`/var/www/$APP_USER`) | deploy root on the VPS |
+| `APP_PORT`     | no (`3390`) | loopback port node binds; proxied by nginx, never public |
+| `PM2_NAME`     | no (`$APP_USER`) | pm2 process name (also the `pm2-$APP_USER.service` unit) |
+| `SSH_KEY`      | no (`~/.ssh/id_ed25519`) | private key for the connection |
+
+### One-time provisioning (run once on the VPS)
+
+`scripts/provision-escape.sh` is idempotent and creates everything securely:
+the `nologin` app user (no shell, no password, can't ssh in), the deploy dirs with
+tight ownership, a per-user pm2 systemd unit that resurrects the process on reboot,
+the nginx vhost (static client + socket/health proxy), a Let's Encrypt certificate,
+and the firewall rules (allows the web edge; keeps the app port closed).
+
+```bash
+# copy your scripts/deploy.env to the VPS next to the script, then, on the VPS:
+sudo bash provision-escape.sh
+# or pass values inline:
+sudo APP_DOMAIN=escape.example.com APP_USER=escape APP_PORT=3390 bash provision-escape.sh
+```
+
+> If DNS for `APP_DOMAIN` doesn't resolve to the box yet, run with `SKIP_CERTBOT=1`
+> to provision everything but TLS, then rerun once DNS is live to issue the cert.
+
+### Deploy (from your dev machine, repeatably)
+
+`scripts/deploy-server.sh` builds `shared/` + the client bundle locally (baking
+`VITE_SERVER_URL=https://$APP_DOMAIN`), rsyncs `server/`, `shared/`, and the client
+bundle to the VPS, installs production deps remotely, hands ownership to the app
+user, zero-downtime-reloads pm2, and health-checks.
+
+```bash
 ./scripts/deploy-server.sh
 ```
 

@@ -12,7 +12,7 @@
  * pixel-art pipeline like Modia's scripts/tiles), install `sharp` at hour 0 and
  * convert these SVGs — see docs/PLAYBOOK.md (GRAPHICS row).
  *
- * Ported & simplified from ~/Projects/Modia/scripts/generate-svg-icons.js
+ * Ported & simplified from Derezo/Modia's scripts/generate-svg-icons.js
  * (which uses code-defined SVG generators) — stripped of game-specific content
  * (enemies/portraits) and of the sharp PNG step.
  *

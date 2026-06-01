@@ -4,6 +4,36 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.157: **Secure, env-driven deploy + dev launcher.** New deploy toolchain for
+  hosting the game at a public VPS domain (default `escape.example.com`) as a single
+  origin behind nginx + TLS.
+  - `scripts/provision-escape.sh` (one-time, idempotent, run as root on the VPS):
+    creates a dedicated **nologin** app user (no shell, no password, can't ssh in),
+    the deploy dirs with tight `0750` ownership, a per-user pm2 systemd unit that
+    resurrects the process on reboot, an nginx vhost that serves the static client
+    from disk and reverse-proxies only `/socket.io/` + `/health` to a **loopback-bound**
+    node port, a Let's Encrypt cert (with `SKIP_CERTBOT=1` escape hatch), and
+    conditional ufw rules (ensures 80/443 are allowed; removes any stray rule that
+    would expose the app port — it stays loopback-only, never opened).
+  - `scripts/deploy-server.sh` (rewritten): builds `shared/` + the client bundle
+    locally (baking `VITE_SERVER_URL=https://$APP_DOMAIN`), rsyncs `server/` +
+    `shared/` + the client bundle, installs prod deps remotely, chowns to the app
+    user, zero-downtime-reloads pm2 via `ecosystem.config.js`, then health-checks.
+  - `server/ecosystem.config.js`: pm2 process definition (loopback `127.0.0.1`, port
+    from `APP_PORT`, log settings, graceful SIGTERM, restart policy).
+  - `scripts/run-dev.sh`: one-command local launcher — conditionally `npm install`s
+    (only on missing `node_modules`/changed lockfile), `--clean` wipes dev data,
+    auto-kills anything already on the dev ports, runs server + client in their own
+    process groups, and tears the whole tree down (no orphans) on Ctrl-C.
+  - `scripts/deploy.env.example` is the single source of truth for host/user/domain/
+    port; `scripts/deploy.env` is gitignored. `DEPLOY_HOST`, `DEPLOY_USER`, and
+    `APP_DOMAIN` have **no defaults** — the scripts error if unset, so no host or
+    login user is ever hard-coded in a committed script. Chose a unique node port
+    (3390), avoiding the well-known RDP port (3389).
+  - Documented the whole provision → deploy → dev flow in `README.md`, and scrubbed
+    the real hostname + local `/home/...` paths from all tracked files (kept the
+    rules-mandated galaxy-miner/Modia/parasite code-origin lineage).
+
 - 0.2.156: **NPC anti-bounce, Phase 5 — validation polish.** `/plan-validation-and-review`
   passed clean (all 7 requirements implemented + traced, every new symbol connected, 0
   dead/duplicate code, 0 comprehension findings, server 12 + shared 99 tests green,

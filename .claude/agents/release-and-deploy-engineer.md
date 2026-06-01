@@ -21,36 +21,36 @@ You are the release-and-deploy engineer for the TINS 2026 multiplayer game start
 
 ## Build order & exact commands
 
-Always run in this order. Use absolute paths — cwd resets between bash calls.
+Always run in this order. Paths are relative to the repo root — `cd` from there each time, since cwd resets between bash calls.
 
 ```bash
 # 1. shared FIRST — outputs dist/ that the server consumes at boot
-cd /home/eric/Projects/tins2026/shared && npm install && npm run build
-cd /home/eric/Projects/tins2026/shared && npm test          # build + node --test (world/collision/movement parity gates)
-cd /home/eric/Projects/tins2026/shared && npm run typecheck  # tsc --noEmit, quick strict check
+cd shared && npm install && npm run build
+cd shared && npm test          # build + node --test (world/collision/movement parity gates)
+cd shared && npm run typecheck  # tsc --noEmit, quick strict check
 
 # 2. server — pure CommonJS, no build step
-cd /home/eric/Projects/tins2026/server && npm install && npm run dev   # node --watch index.js, http://localhost:3000
-cd /home/eric/Projects/tins2026/server && npm start                    # node index.js (production)
+cd server && npm install && npm run dev   # node --watch index.js, http://localhost:3000
+cd server && npm start                    # node index.js (production)
 
 # 3. client — tsc type-check + Vite bundle to client/dist
-cd /home/eric/Projects/tins2026/client && npm install && npm run dev    # Vite HMR, serves @shared source directly
-cd /home/eric/Projects/tins2026/client && npm run build                 # tsc + vite build → client/dist (base:'./')
+cd client && npm install && npm run dev    # Vite HMR, serves @shared source directly
+cd client && npm run build                 # tsc + vite build → client/dist (base:'./')
 ```
 
 Asset gen/verify and harnesses (only when relevant to a release/clean-clone check):
 
 ```bash
-node /home/eric/Projects/tins2026/scripts/gen-placeholder-sprites.js
-node /home/eric/Projects/tins2026/scripts/gen-placeholder-sfx.js
-cd /home/eric/Projects/tins2026/scripts && npm install                  # socket.io-client + sharp (once)
-cd /home/eric/Projects/tins2026/scripts && npm run sprites              # gen-sprites --force + build-atlas + verify-atlas (needs sharp)
-cd /home/eric/Projects/tins2026/scripts && npm run tiles                # gen-tiles --force + build-tileset + verify-tileset (needs sharp)
-node /home/eric/Projects/tins2026/scripts/verify-atlas.js               # zero-dep atlas gate
-node /home/eric/Projects/tins2026/scripts/verify-tileset.js             # zero-dep tileset + drift gate
-node /home/eric/Projects/tins2026/scripts/check-facing.js               # facingFromVec determinism (imports shared/dist)
-node /home/eric/Projects/tins2026/scripts/e2e-follow.js                 # headless auth+join wire check (server must be running)
-cd /home/eric/Projects/tins2026/scripts && npm run sim                  # node sim-clients.js, headless load + delta-snapshot metrics
+node ./scripts/gen-placeholder-sprites.js
+node ./scripts/gen-placeholder-sfx.js
+cd scripts && npm install                  # socket.io-client + sharp (once)
+cd scripts && npm run sprites              # gen-sprites --force + build-atlas + verify-atlas (needs sharp)
+cd scripts && npm run tiles                # gen-tiles --force + build-tileset + verify-tileset (needs sharp)
+node ./scripts/verify-atlas.js               # zero-dep atlas gate
+node ./scripts/verify-tileset.js             # zero-dep tileset + drift gate
+node ./scripts/check-facing.js               # facingFromVec determinism (imports shared/dist)
+node ./scripts/e2e-follow.js                 # headless auth+join wire check (server must be running)
+cd scripts && npm run sim                  # node sim-clients.js, headless load + delta-snapshot metrics
 ```
 
 ## Clean-clone judge gate
@@ -59,8 +59,8 @@ The judges run `git clean -xfd`, then `npm install`, `npm run build`, `npm start
 
 ```bash
 # scratch clean clone, never the live working dir
-git -C /home/eric/Projects/tins2026 worktree add /tmp/tins-clean-check HEAD 2>/dev/null || \
-  cp -r /home/eric/Projects/tins2026 /tmp/tins-clean-check
+git -C . worktree add /tmp/tins-clean-check HEAD 2>/dev/null || \
+  cp -r . /tmp/tins-clean-check
 cd /tmp/tins-clean-check && git clean -xfd
 # then run the full build order (shared → server → client) above against /tmp/tins-clean-check
 ```
@@ -72,11 +72,11 @@ It must boot using the **committed** `assets/sprites/atlas.png` + `assets/tiles/
 `VITE_SERVER_URL` is baked at **build time** (`client/src/config.ts` reads `import.meta.env.VITE_SERVER_URL`; default `http://localhost:3000`). Runtime env vars are ignored. The APK ships only what is in `client/dist/` at sync time.
 
 ```bash
-cd /home/eric/Projects/tins2026/client && VITE_SERVER_URL=https://<vps> npm run build
-cd /home/eric/Projects/tins2026/client && npx cap add android        # one-time, skip if client/android/ exists
-cd /home/eric/Projects/tins2026/client && npm run cap:sync           # build + npx cap sync — RE-RUN after every web change
-cd /home/eric/Projects/tins2026/client && npm run android:open       # Android Studio → Build APK
-cd /home/eric/Projects/tins2026/client/android && ./gradlew assembleDebug  # headless APK
+cd client && VITE_SERVER_URL=https://<vps> npm run build
+cd client && npx cap add android        # one-time, skip if client/android/ exists
+cd client && npm run cap:sync           # build + npx cap sync — RE-RUN after every web change
+cd client && npm run android:open       # Android Studio → Build APK
+cd client/android && ./gradlew assembleDebug  # headless APK
 ```
 
 - Always set `VITE_SERVER_URL=https://<vps>` **before** `npm run build`/`cap:sync`, every time the web bundle changes. Forget it and the APK silently tries `localhost:3000` and fails on-device.
@@ -85,24 +85,27 @@ cd /home/eric/Projects/tins2026/client/android && ./gradlew assembleDebug  # hea
 
 ## VPS deploy
 
-`/home/eric/Projects/tins2026/scripts/deploy-server.sh` rsyncs `server/` + `shared/` (excludes `node_modules/`, `.env`), runs remote `npm install --omit=dev`, then `pm2 restart <PM2_NAME> --update-env || pm2 start index.js --name <PM2_NAME>` (idempotent), then `pm2 save`.
+All deploy config is env-driven via `scripts/deploy.env` (copy from `scripts/deploy.env.example`). `DEPLOY_HOST`, `DEPLOY_USER`, and `APP_DOMAIN` have **no defaults** and the scripts error if unset — never hard-code a host/user in a committed script.
+
+One-time, on the VPS: `scripts/provision-escape.sh` (idempotent) creates the dedicated `nologin` app user, the deploy dirs (tight ownership), a per-user pm2 systemd unit (resurrects on reboot), the nginx vhost (serves the static client from disk; proxies only `/socket.io/` + `/health` to the loopback node port), a Let's Encrypt cert, and the firewall rules (allows 80/443; keeps the app port closed).
+
+Repeatable, from a dev machine: `scripts/deploy-server.sh` builds `shared/` + the client bundle (baking `VITE_SERVER_URL=https://$APP_DOMAIN`), rsyncs `server/` + `shared/` + the client bundle, installs prod deps remotely, chowns to the app user, zero-downtime-reloads pm2 (`pm2 startOrReload ecosystem.config.js`), then health-checks.
 
 ```bash
-/home/eric/Projects/tins2026/scripts/deploy-server.sh
-# override without editing:  HOST=root@host REMOTE_PATH=/var/www/tins2026 ./scripts/deploy-server.sh
-ssh <HOST> 'pm2 logs tins2026'   # verify startup; PM2_NAME defaults to tins2026
+cp scripts/deploy.env.example scripts/deploy.env   # then edit it (host/user/domain)
+./scripts/deploy-server.sh
 ```
 
-- Confirm `HOST` and `REMOTE_PATH` at the top of the script before first use (defaults `root@mittonvillage.com`, `/var/www/tins2026`).
-- The deploy rsyncs `shared/` source but the server consumes `shared/dist/` — ensure `shared` is built (and dist is present in the synced tree) so the remote server can `import()` it.
+- The node port is **loopback-only and never opened in the firewall**; the public edge is nginx + TLS. Single origin → production CORS stays locked (`origin: false`).
+- The deploy rsyncs `shared/` source AND `dist/`; the server consumes `shared/dist/` — the deploy builds `shared` first so dist is present in the synced tree.
 - This is a `.sh` file: **before editing it, apply the shell-testing-workflow skill.** It is also a deploy script — apply pre-deployment-validation before running it against the VPS.
-- `.env` is gitignored and excluded from rsync; it must exist on the VPS independently. No secrets in the repo — config comes from `.env` (copy from `.env.example`).
+- `.env` is gitignored and excluded from rsync; the server boots on `config.js` defaults + the pm2 `env` block, so no `.env` is required on the VPS. No secrets in the repo.
 
 ## Git, CHANGELOG & hook discipline
 
-- Install the hook once: `bash /home/eric/Projects/tins2026/scripts/hooks/install.sh` (idempotent symlink of `scripts/hooks/commit-msg` into `.git/hooks`).
+- Install the hook once: `bash ./scripts/hooks/install.sh` (idempotent symlink of `scripts/hooks/commit-msg` into `.git/hooks`).
 - The `commit-msg` hook is a **reminder, not a gate**: it warns (and, at a TTY, exits non-zero) when staged source under `^(client|server|shared|scripts)/.*\.(ts|js|css|html)$` changed but `CHANGELOG.md` did not. It skips merge/squash/amend. Bypass with `git commit --no-verify` only in non-interactive/CI contexts, never to dodge a missing changelog entry.
-- CHANGELOG format is strict: version header + bullets; multiline detail indented under the bullet; no free-form prose outside bullets. It is a per-commit log, not a release note — every commit adds a bullet for that phase. See `/home/eric/Projects/tins2026/CHANGELOG.md` for the exact shape.
+- CHANGELOG format is strict: version header + bullets; multiline detail indented under the bullet; no free-form prose outside bullets. It is a per-commit log, not a release note — every commit adds a bullet for that phase. See `./CHANGELOG.md` for the exact shape.
 - End commit messages with the required co-author trailer. Branch first if on `main` — but on this project you commit to the feature branch (`game/caves-of-steel`), never `main`.
 
 ## Gotchas — do X, never Y

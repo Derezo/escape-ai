@@ -1,69 +1,143 @@
 #!/usr/bin/env bash
 #
-# deploy-server.sh — Deploy the TINS 2026 Socket.IO server to the VPS.
+# deploy-server.sh — build + deploy Escape AI (server + client) to the VPS.
 #
-# Minimal jam-grade deploy: rsync server/ + shared/ to the remote, install
-# production deps, (re)start under pm2. No nginx/SSL/backups — keep it fast.
-# (galaxy-miner's scripts/deploy-production.sh is the heavyweight reference if
-#  you later need backups/health-checks/rollback.)
+# Run from your dev machine. It builds everything locally, ships it to the VPS
+# over rsync-over-ssh, installs production deps remotely, hands ownership to the
+# dedicated nologin app user, and (re)starts the node process under that user's
+# pm2 via server/ecosystem.config.js. nginx (set up once by provision-escape.sh)
+# serves the static client from disk and proxies /socket.io/ + /health to node.
 #
-# >>> FILL THESE IN before first use <<<
-#   HOST          ssh target, e.g. root@mittonvillage.com
-#   REMOTE_PATH   absolute dir on the VPS to deploy into
-# Override any var without editing the file:  HOST=root@host ./deploy-server.sh
+# PREREQUISITE: run scripts/provision-escape.sh ONCE on the VPS first (creates
+# the app user, dirs, pm2 systemd unit, nginx vhost, TLS cert).
 #
-# Usage:  ./scripts/deploy-server.sh
+# Config is env-driven via scripts/deploy.env (copy from deploy.env.example).
+# The HOST and SSH LOGIN USER are NEVER hard-coded here — they must come from the
+# (gitignored) env file or the environment; the script errors if they are unset.
+# Override any value inline:  APP_PORT=4000 ./scripts/deploy-server.sh
+#
+# Usage:  cp scripts/deploy.env.example scripts/deploy.env && edit it, then:
+#         ./scripts/deploy-server.sh
 #
 set -euo pipefail
 
-# --- config (EDIT ME) -------------------------------------------------------
-HOST="${HOST:-root@mittonvillage.com}"        # TODO: confirm ssh user@host
-REMOTE_PATH="${REMOTE_PATH:-/var/www/tins2026}" # TODO: confirm remote dir
-PM2_NAME="${PM2_NAME:-tins2026}"
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
-NODE_ENV="${NODE_ENV:-production}"
+log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
-# --- paths ------------------------------------------------------------------
+# --- config (env-driven; load scripts/deploy.env if present) ----------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+if [[ -f "${SCRIPT_DIR}/deploy.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; . "${SCRIPT_DIR}/deploy.env"; set +a
+fi
 
+# Required, NO default: the host and login user identify your infrastructure and
+# must not live in the committed script. Set them in scripts/deploy.env.
+require_env() {
+  local name="$1"
+  [[ -n "${!name:-}" ]] || die "${name} is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in (or export ${name})."
+}
+require_env DEPLOY_USER     # the SSH login user (a sudoer) — not hard-coded
+require_env DEPLOY_HOST     # the VPS hostname — not hard-coded
+require_env APP_DOMAIN      # public hostname (also reveals the host) — not hard-coded
+
+# App-internal identity: safe, non-host-revealing defaults are fine.
+APP_USER="${APP_USER:-escape}"
+REMOTE_PATH="${REMOTE_PATH:-/var/www/${APP_USER}}"
+APP_PORT="${APP_PORT:-3390}"
+PM2_NAME="${PM2_NAME:-${APP_USER}}"
+NODE_ENV="${NODE_ENV:-production}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+
+SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
 SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
 
-echo "==> Deploying to ${HOST}:${REMOTE_PATH} (pm2 name: ${PM2_NAME})"
+# A single ssh into the box.
+remote() { ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" "$@"; }
+# rsync over the same ssh opts. Args: <src> <remote-subpath> [extra rsync args...]
+push() {
+  local src="$1" dst="$2"; shift 2
+  rsync -az --delete -e "ssh ${SSH_OPTS[*]}" "$@" \
+    "${src}" "${SSH_TARGET}:${REMOTE_PATH}/${dst}"
+}
+
+log "Deploying to ${SSH_TARGET}:${REMOTE_PATH}  (domain ${APP_DOMAIN}, app user ${APP_USER}, port ${APP_PORT})"
 
 # --- preflight --------------------------------------------------------------
-for dir in server shared; do
-  if [[ ! -d "${PROJECT_ROOT}/${dir}" ]]; then
-    echo "ERROR: ${PROJECT_ROOT}/${dir} not found — run from the repo." >&2
-    exit 1
-  fi
+for dir in server shared client; do
+  [[ -d "${PROJECT_ROOT}/${dir}" ]] || die "${PROJECT_ROOT}/${dir} not found — run from the repo."
 done
+[[ -f "${SSH_KEY}" ]] || die "SSH key not found: ${SSH_KEY} (set SSH_KEY in scripts/deploy.env)."
 
-# --- sync code --------------------------------------------------------------
-# Trailing slashes matter: copy CONTENTS of server/ and shared/ into remote
-# subdirs of the same name. node_modules/.env are excluded (installed remotely).
-echo "==> Creating remote directory"
-ssh "${SSH_OPTS[@]}" "${HOST}" "mkdir -p '${REMOTE_PATH}'"
+# --- 1. build locally -------------------------------------------------------
+# shared/: client imports its TS source via Vite alias, server consumes dist/.
+log "Building shared/"
+( cd "${PROJECT_ROOT}/shared" && npm install && npm run build )
 
-echo "==> Syncing server/ and shared/"
-rsync -az --delete \
-  --exclude 'node_modules/' \
-  --exclude '.env' \
-  -e "ssh ${SSH_OPTS[*]}" \
-  "${PROJECT_ROOT}/server/" "${HOST}:${REMOTE_PATH}/server/"
+# client/: static bundle with VITE_SERVER_URL baked to the public origin so the
+# browser/WebView connects to https://${APP_DOMAIN} (same origin → Socket.IO and
+# assets share it; production CORS stays locked).
+log "Building client/ (VITE_SERVER_URL=https://${APP_DOMAIN})"
+( cd "${PROJECT_ROOT}/client" \
+    && npm install \
+    && VITE_SERVER_URL="https://${APP_DOMAIN}" npm run build )
+[[ -f "${PROJECT_ROOT}/client/dist/index.html" ]] || die "client build produced no dist/index.html."
 
-rsync -az --delete \
-  --exclude 'node_modules/' \
-  -e "ssh ${SSH_OPTS[*]}" \
-  "${PROJECT_ROOT}/shared/" "${HOST}:${REMOTE_PATH}/shared/"
+# --- 2. ensure remote dirs exist (idempotent; provision made them, this is safe)
+log "Ensuring remote directories"
+remote "mkdir -p '${REMOTE_PATH}/server' '${REMOTE_PATH}/shared' '${REMOTE_PATH}/client' '${REMOTE_PATH}/logs' '${REMOTE_PATH}/data'"
 
-# --- install + restart ------------------------------------------------------
-echo "==> Installing production deps and (re)starting via pm2"
-ssh "${SSH_OPTS[@]}" "${HOST}" \
-  "cd '${REMOTE_PATH}/server' \
-   && npm install --omit=dev \
-   && NODE_ENV='${NODE_ENV}' pm2 restart '${PM2_NAME}' --update-env \
-      || NODE_ENV='${NODE_ENV}' pm2 start index.js --name '${PM2_NAME}' \
-   && pm2 save"
+# --- 3. sync code -----------------------------------------------------------
+# Trailing slashes copy CONTENTS into the named remote subdir. node_modules and
+# .env are installed/managed remotely, never shipped. The SQLite data/ dir is
+# runtime state — never overwrite it (no --delete reaching it; we sync into
+# sibling dirs only).
+log "Syncing server/"
+push "${PROJECT_ROOT}/server/" "server/" \
+  --exclude 'node_modules/' --exclude '.env' --exclude 'data/' --exclude 'test/'
 
-echo "==> Done. Logs:  ssh ${HOST} 'pm2 logs ${PM2_NAME}'"
+log "Syncing shared/ (src + dist; server requires dist/)"
+push "${PROJECT_ROOT}/shared/" "shared/" --exclude 'node_modules/'
+
+log "Syncing client bundle → ${REMOTE_PATH}/client (nginx serves this)"
+push "${PROJECT_ROOT}/client/dist/" "client/"
+
+# --- 4. remote: install prod deps, fix ownership, (re)start pm2 -------------
+# Everything runs as the deploy user; ownership is then handed to the nologin
+# app user, and pm2 is driven AS that user (sudo -u) so the process, its logs,
+# and PM2_HOME all belong to ${APP_USER}, never to the login/deploy user.
+log "Remote: install prod deps, chown to ${APP_USER}, reload pm2"
+remote bash -se <<REMOTE_SCRIPT
+set -euo pipefail
+cd '${REMOTE_PATH}/server'
+
+# Production deps only; the lockfile is shipped, so this is reproducible.
+npm install --omit=dev --no-audit --no-fund
+
+# Hand the whole tree to the app user with tight perms. The data/ dir keeps its
+# contents (rsync never touched it); just re-assert ownership.
+chown -R '${APP_USER}:${APP_USER}' '${REMOTE_PATH}'
+chmod 750 '${REMOTE_PATH}'
+
+# Start or reload under the app user's pm2. startOrReload is idempotent: starts
+# on first deploy, zero-downtime reloads thereafter. PORT/PM2_NAME are injected
+# so ecosystem.config.js binds the right loopback port. --update-env re-reads them.
+sudo -u '${APP_USER}' -H \
+  env PM2_HOME='${REMOTE_PATH}/.pm2' PORT='${APP_PORT}' PM2_NAME='${PM2_NAME}' NODE_ENV='${NODE_ENV}' \
+  pm2 startOrReload '${REMOTE_PATH}/server/ecosystem.config.js' --update-env
+
+# Persist the process list so the pm2-${APP_USER}.service unit resurrects it on reboot.
+sudo -u '${APP_USER}' -H env PM2_HOME='${REMOTE_PATH}/.pm2' pm2 save >/dev/null
+REMOTE_SCRIPT
+
+# --- 5. health check --------------------------------------------------------
+log "Health check: https://${APP_DOMAIN}/health"
+if remote "curl -fsS --max-time 10 http://127.0.0.1:${APP_PORT}/health" >/dev/null 2>&1; then
+  log "Server is healthy on the loopback port."
+else
+  die "Health check FAILED — inspect logs:  ssh ${SSH_TARGET} \"sudo -u ${APP_USER} -H env PM2_HOME=${REMOTE_PATH}/.pm2 pm2 logs ${PM2_NAME}\""
+fi
+
+log "Done.  Live at https://${APP_DOMAIN}"
+log "Logs:  ssh ${SSH_TARGET} \"sudo -u ${APP_USER} -H env PM2_HOME=${REMOTE_PATH}/.pm2 pm2 logs ${PM2_NAME}\""

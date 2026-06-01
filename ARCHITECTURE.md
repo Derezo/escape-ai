@@ -9,10 +9,10 @@
   common `IRenderer` interface so the genre rule only forces a renderer swap.
 - **Language/build:** TypeScript + Vite (client & shared). Server is Node + Socket.IO.
 - **Netcode:** Express + Socket.IO **authoritative server**, fixed-tick engine with
-  delta broadcast. Pattern lifted from `~/Projects/galaxy-miner/server`.
+  delta broadcast. Pattern lifted from `Derezo/galaxy-miner` `server/`.
 - **Shared:** one TS module of types + deterministic update logic used by client AND server.
 - **Android:** Capacitor wraps the Vite web build (browser-first, Android nice-to-have).
-- **Deploy:** mittonvillage.com VPS hosts the Socket.IO server.
+- **Deploy:** a VPS (nginx + pm2, env-driven) hosts the Socket.IO server — see `scripts/provision-escape.sh` + `scripts/deploy-server.sh`.
 
 ## Directory layout (agreed paths — do not deviate)
 ```
@@ -52,8 +52,8 @@ fallback: a pre-written skeleton lives in shared/BABYLON_FALLBACK.md, and the sw
 client/src/main.ts. Build it only if an hour-0 genre rule forces 3D.
 
 ## Reuse sources (copy patterns, generalize, strip game specifics)
-- Server skeleton ← `~/Projects/galaxy-miner/server/{index.js,socket/index.js,socket/connection.js,game/engine.js}`
-- Asset/audio generators ← `~/Projects/Modia/scripts/{tiles,audio,generate-icons.js}`
+- Server skeleton ← `Derezo/galaxy-miner` `server/{index.js,socket/index.js,socket/connection.js,game/engine.js}`
+- Asset/audio generators ← `Derezo/Modia` `scripts/{tiles,audio,generate-icons.js}`
 
 ## Non-goals for the scaffold
 - No actual game design — that's decided at hour 0.

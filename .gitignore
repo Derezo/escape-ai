@@ -3,6 +3,10 @@ dist/
 .env
 .DS_Store
 
+# Local deploy configuration (names your VPS host/user). Copy from
+# scripts/deploy.env.example, which IS committed as the template.
+scripts/deploy.env
+
 # Python bytecode cache (scripts/sunoapi/ — the Suno generation pipeline).
 __pycache__/
 *.pyc
