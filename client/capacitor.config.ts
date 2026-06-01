@@ -27,13 +27,13 @@ import type { CapacitorConfig } from '@capacitor/cli';
  *    before `cap sync`, or the app will try to reach http://localhost:3000,
  *    which does not exist on a phone. See docs/ANDROID.md.
  *
- * appId: reverse-domain identifier. "org.tins2026.app" is a placeholder — RENAME
+ * appId: reverse-domain identifier. "org.escapeai.app" is a placeholder — RENAME
  * it to a domain you control before any public/Play-Store release (it is the
  * permanent package name and cannot change after publishing). Renaming later in
  * a jam means deleting and re-adding the android/ platform, so pick it now.
  */
 const config: CapacitorConfig = {
-  appId: 'org.tins2026.app',
+  appId: 'org.escapeai.app',
   appName: 'Escape AI',
   webDir: 'dist',
   server: {

@@ -4,6 +4,21 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.180: **Rename `tins2026` → `escape-ai` across the tree.** Purged the old
+  project name left over from the `~/Projects/tins2026` clone. npm packages are now
+  `@escape-ai/shared` / `escape-ai-server` / `escape-ai-client` / `escape-ai-scripts`
+  (package.json + lockfiles); the asset-generator metadata (`escape-ai-build-atlas`/
+  `escape-ai-build-tileset`) and the committed `atlas.json`/`tileset.json` were updated
+  in lockstep so the verify gates stay green; the server startup log, agent docs, the
+  `ARCHITECTURE.md` directory-layout label, the `BABYLON_FALLBACK.md` example import, and
+  the `paths.py` docstrings all follow. **Fix:** the blanket replace produced an invalid
+  Android `appId` `org.escape-ai.app` (hyphens aren't legal in a Java package segment and
+  would fail the Gradle build) — corrected to `org.escapeai.app` in `capacitor.config.ts`
+  + `docs/ANDROID.md`. No real filesystem paths depended on the folder name (`paths.py`
+  resolves the repo root relatively; source imports shared via the `@shared/*` alias).
+  Validated with the full `npm run verify` (all 8 gates), client production build, and a
+  server boot.
+
 - 0.2.179: **Repo split + README lead-with-the-game.** Forked into its own
   repository (`Derezo/escape-ai`), isolated from the game-agnostic starter kit it grew
   from. `README.md` now leads with an *Escape AI* overview and the production link

@@ -109,7 +109,7 @@ async function main() {
     tilecount: maxIndex + 1, // includes the blank EMPTY slot 0
     tiles: tileMap, // NAME -> index (= grid slot)
     meta: {
-      app: 'tins2026-build-tileset',
+      app: 'escape-ai-build-tileset',
       size: { w: width, h: height },
       note: 'slot index === tile index; 16-col grid, 32px cells, no padding; index 0 = blank',
     },

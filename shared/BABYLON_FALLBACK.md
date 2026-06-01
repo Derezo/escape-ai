@@ -47,7 +47,7 @@ This keeps the same `{x, y}` contract Phaser uses; 3D only adds an optional axis
 
 ```ts
 import { Engine, Scene, ArcRotateCamera, HemisphericLight, Vector3, MeshBuilder, type Mesh } from '@babylonjs/core';
-import type { IRenderer, Entity, WorldMap } from '@tins2026/shared';
+import type { IRenderer, Entity, WorldMap } from '@escape-ai/shared';
 
 export class BabylonRenderer implements IRenderer {
   private engine!: Engine;

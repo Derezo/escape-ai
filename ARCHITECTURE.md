@@ -16,7 +16,7 @@
 
 ## Directory layout (agreed paths — do not deviate)
 ```
-tins2026/
+escape-ai/
   client/        Vite + TS + Phaser app. entry: client/src/main.ts, client/index.html
   server/        Node + Socket.IO authoritative server. entry: server/index.js (CommonJS, Node 22)
   shared/        TS package: types, net contracts, deterministic step(). import as "@shared/*"

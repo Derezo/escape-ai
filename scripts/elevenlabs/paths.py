@@ -11,7 +11,7 @@ from pathlib import Path
 
 def repo_root() -> Path:
     """
-    Resolve the tins2026 repo root by walking up from scripts/elevenlabs/.
+    Resolve the escape-ai repo root by walking up from scripts/elevenlabs/.
 
     Returns the directory that contains scripts/, assets/, client/, server/, etc.
     """

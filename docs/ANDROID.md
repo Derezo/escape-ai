@@ -163,7 +163,7 @@ you don't have/​want a full PWA — which is the default for this jam.
 - `npx cap add android` scaffolded `client/android/` (purely local file copy,
   **no SDK download**).
 - `npx cap sync` copies `dist/` → `android/app/src/main/assets/public` and bakes
-  `capacitor.config.json` (`androidScheme: https`, `appId org.tins2026.app`).
+  `capacitor.config.json` (`androidScheme: https`, `appId org.escapeai.app`).
 
 **Deferred to Android Studio (intentionally — needs the Android SDK + JDK 17,
 which we do not download here):**
@@ -175,7 +175,7 @@ which we do not download here):**
 
 ## Renaming the app id
 
-`appId` is `org.tins2026.app` (placeholder). It is the permanent Android package
+`appId` is `org.escapeai.app` (placeholder). It is the permanent Android package
 name — **change it to a domain you control before any public release**, and do so
 *early*: renaming after `android/` exists means
 `rm -rf android && npx cap add android` to regenerate with the new id.

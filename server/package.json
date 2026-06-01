@@ -1,5 +1,5 @@
 {
-  "name": "tins2026-server",
+  "name": "escape-ai-server",
   "version": "0.1.0",
   "license": "Zlib",
   "description": "Authoritative multiplayer server skeleton for the TINS 2026 game-jam starter kit.",

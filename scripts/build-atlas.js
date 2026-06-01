@@ -147,7 +147,7 @@ async function main() {
   const atlas = {
     frames,
     meta: {
-      app: 'tins2026-build-atlas',
+      app: 'escape-ai-build-atlas',
       image: 'atlas.png',
       format: 'RGBA8888',
       size: { w: width, h: height },

@@ -62,7 +62,7 @@ Promise.all([
     // --- Listen ---
     httpServer.listen(config.PORT, config.HOST, () => {
       console.log(
-        `tins2026-server listening on http://${config.HOST}:${config.PORT} ` +
+        `escape-ai-server listening on http://${config.HOST}:${config.PORT} ` +
         `(tick ${config.TICK_RATE}Hz, env ${config.NODE_ENV})`
       );
     });
