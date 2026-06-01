@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.169: **Findings closeout — documentation pass.** Documented the artifacts +
+  behavior changes from the closeout plan in the primary developer-facing docs (not just
+  CHANGELOG), per the "every commit updates docs whose behavior changed; code and docs
+  never conflict" rule. (1) The new `scripts/verify.mjs` one-command gate (`npm run
+  verify` / `verify:quick`) is now in `README.md` (Development workflow), `CLAUDE.md`
+  (Commands), and `docs/PLAYBOOK.md` (quick commands). (2) `ARCHITECTURE.md`'s Network
+  contract section was **out of date** — it listed only the original 4+4 events; it now
+  lists the full set including `leaderboard:request`/`leaderboard:data` and
+  `chat:send`/`chat:message` (the set `shared/test/net.test.mjs` now guards), references
+  that guard, and documents the room lifecycle (lazy create + reclaim on empty +
+  `sanitizeRoom`/`hasRoom`) added in Phase 3. (3) `README.md`'s `docs/` layout line now
+  lists the new `UPSTREAM_ASKS.md` + `archive/`. Docs-only — no code touched; all verify
+  gates still green.
+
 - 0.2.168: **Findings closeout — `/plan-validation-and-review` gate.** Ran the full
   validation pass over all 7 phases (gap analysis + connectivity + dedup + 3-group code
   comprehension, all adversarial; build/test/audit gates). Result: **0 in-scope issues** —

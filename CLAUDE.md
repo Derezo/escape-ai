@@ -24,6 +24,12 @@ cd server  && npm install && npm run dev      # or: npm start
 cd client  && npm install && npm run dev
 cd client  && npm run build                    # static bundle → client/dist
 
+# verify — one-command local gate (no CI): builds shared, then runs the shared +
+# server test suites, client typecheck, facingFromVec determinism, atlas/tileset
+# verifiers, and the audio drift gate. Run before claiming a change is green.
+cd scripts && npm run verify                    # all gates
+cd scripts && npm run verify:quick              # skip the slower atlas/tileset gates
+
 # assets (zero deps)
 node scripts/gen-placeholder-sprites.js
 node scripts/gen-placeholder-sfx.js

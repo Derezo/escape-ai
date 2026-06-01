@@ -27,14 +27,22 @@ tins2026/
 
 ## Network contract (shared/src/net.ts — authoritative)
 - Client → server events: `auth:login {username, token?, species?}`,
-  `lobby:join {room, name, species?}`, `input {seq, dx, dy, sprint?, action?}`, `ping {t}`
+  `lobby:join {room, name, species?}`, `input {seq, dx, dy, sprint?, action?}`,
+  `ping {t}`, `leaderboard:request {sort?, limit?}`, `chat:send {text}`
 - Server → client events: `auth:result {ok, reason?, token?, username?, stats?}`,
   `lobby:state {players}`, `snapshot {tick, entities, acks, world?}`, `pong {t}`,
-  `map {seed, version, tile, w, h}`
+  `map {seed, version, tile, w, h}`, `leaderboard:data {sort, rows, total, you}`,
+  `chat:message {senderId, senderName, senderSpecies, text, tick}`
+- The runtime event-name surface is guarded by `shared/test/net.test.mjs` (key sets,
+  uniqueness, client/server disjointness); payload shapes are enforced by `tsc --strict`.
 - Server runs a fixed tick (default 20 Hz). Client interpolates/predicts.
 - Entities are plain serializable objects `{id, x, y, ...}`; renderer-agnostic.
 - The map is sent once as a seed; the client regenerates the identical tilemap
   deterministically (no per-tile bandwidth).
+- A room's world is created lazily on first `lobby:join` and reclaimed when the room
+  empties (the pre-warmed `default` room persists); the client-supplied room name is
+  validated server-side. See `server/socket/lobby.js` (`sanitizeRoom`) +
+  `server/game/world.js` (`removeRoom`/`hasRoom`).
 
 ## Renderer interface (shared/src/renderer.ts)
 ```ts

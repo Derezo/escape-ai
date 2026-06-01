@@ -291,6 +291,17 @@ Read [`CLAUDE.md`](CLAUDE.md) before contributing. Two standing rules:
 - **After completing a plan**, run `/plan-validation-and-review` before calling the
   work done.
 
+**Verify everything in one command.** There is no CI; `scripts/verify.mjs` is the
+local gate that runs every check together — build `shared`, then the shared + server
+test suites, the client typecheck, the `facingFromVec` determinism check, the
+atlas/tileset rasterisation verifiers, and the audio drift gate. Run it before you
+claim a change is green:
+
+```bash
+cd scripts && npm run verify          # all gates
+cd scripts && npm run verify:quick    # skip the slower atlas/tileset asset gates
+```
+
 ## Layout
 
 ```
@@ -299,7 +310,7 @@ server/         Node + Socket.IO authoritative server (entry: server/index.js)
 shared/         TS types, net contract, deterministic step(), renderer interface
 scripts/        asset/audio generators, Suno pipeline (sunoapi/, audio/), deploy, hooks/
 asset-pipeline/ Suno audio contracts: theme.json + manifest.json (output/ gitignored)
-docs/           PLAYBOOK.md, AUDIO_PIPELINE.md, ANDROID.md, ASIMOV_REFERENCE.md, ACT_OF_SUTSKEVER.md
+docs/           PLAYBOOK.md, AUDIO_PIPELINE.md, ANDROID.md, ASIMOV_REFERENCE.md, ACT_OF_SUTSKEVER.md, UPSTREAM_ASKS.md, archive/
 assets/         generated sprites, tiles, sfx (+ music/ once generated)
 ```
 

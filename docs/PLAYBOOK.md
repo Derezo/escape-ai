@@ -114,6 +114,9 @@ node scripts/build-atlas.js                       # pack -> assets/sprites/atlas
 node scripts/verify-atlas.js                      # headless gate (all keys present)
 cd scripts && npm run sprites                      # all three (force regen)
 node scripts/check-facing.js                      # facingFromVec determinism check (build shared first)
+cd scripts && npm run verify                       # ALL gates in one shot (no CI): build shared,
+                                                   # shared+server tests, client tsc, facing,
+                                                   # atlas/tileset, audio drift (verify:quick skips assets)
 
 node scripts/gen-placeholder-sprites.js          # legacy static single-shape SVGs (fallback)
 node scripts/gen-placeholder-sfx.js              # WAV blips -> assets/sfx/
