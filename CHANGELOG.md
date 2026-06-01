@@ -4,6 +4,18 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.188: **Android: validation-pass cleanups (icon generator + download page).**
+  Post-implementation review (`plan-validation-and-review`) of the Android arc. Removed a
+  dead `getPNGDims()` helper from `scripts/gen-android-icons.js` (defined but never called —
+  splash sizes come from the static `SPLASH_SPECS` table, which already matches Capacitor's
+  defaults); the generator still produces byte-identical output (determinism intact).
+  Corrected the generator's splash-count comments (11 total = 1 base + 5 portrait + 5
+  landscape, was mislabelled 10/4). Added a maintenance comment on the `/android` page's
+  hardcoded `v1.0 · 68 MB` meta so it doesn't silently go stale on the next APK rebuild. No
+  behaviour change; all 6 `verify:quick` gates green. Requirements trace + connectivity +
+  signing-secret-hygiene audits all passed (6/6 implemented, no dead/duplicate code, no
+  secrets tracked).
+
 - 0.2.186: **Docs: Android build path is now real, not hypothetical.** `docs/ANDROID.md`
   rewritten to match what shipped — the committed native project, the
   `com.mittonvillage.escape` appId, the working headless `assembleDebug`/`assembleRelease`

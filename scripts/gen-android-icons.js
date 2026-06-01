@@ -22,7 +22,7 @@
  *   - ic_launcher_round.png (circle-masked variant, 5 densities)
  *
  * SPLASH SCREENS:
- *   - splash.png (10 total: 1 base + 5 portrait densities + 4 landscape variants)
+ *   - splash.png (11 total: 1 base + 5 portrait densities + 5 landscape variants)
  *   Dimensions match the existing Capacitor defaults exactly so layouts don't break.
  *
  * Usage:
@@ -189,16 +189,6 @@ function ensureDir(dir) {
   }
 }
 
-/** Read existing PNG dimensions (without pulling all pixels into memory). */
-async function getPNGDims(filePath) {
-  try {
-    const metadata = await sharp(filePath).metadata();
-    return { w: metadata.width, h: metadata.height };
-  } catch {
-    return null;
-  }
-}
-
 // --- main ---
 
 async function main() {
@@ -327,7 +317,7 @@ async function main() {
   console.log(`  Adaptive foreground (transparent): mipmap-*/ic_launcher_foreground.png`);
   console.log(`  Legacy icons (full): mipmap-*/ic_launcher.png`);
   console.log(`  Legacy round icons: mipmap-*/ic_launcher_round.png`);
-  console.log(`  Splash screens (10 total): drawable*/splash.png`);
+  console.log(`  Splash screens (11 total): drawable*/splash.png`);
 }
 
 main().catch((err) => {
