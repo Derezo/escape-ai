@@ -80,10 +80,13 @@ behind the tick loop, proximity broadcasting, and shared-constants approach.
 
 Requires **Node 22+**.
 
-**One command** — `scripts/run-dev.sh` builds `shared/`, starts the server (`:3000`)
-and the Vite client (`:5173`) together, and tears both down on Ctrl-C:
+**One command.** On **Linux / macOS** use `scripts/run-dev.sh`; on **Windows** use
+the PowerShell sibling `scripts/run-dev.ps1`. Both build `shared/`, start the
+server (`:3000`) and the Vite client (`:5173`) together, and tear both down on
+Ctrl-C:
 
 ```bash
+# Linux / macOS
 ./scripts/run-dev.sh                 # install-if-needed, then run server + client
 ./scripts/run-dev.sh --clean         # also wipe local dev data (fresh accounts/stats)
 ./scripts/run-dev.sh --force-install # reinstall deps even if up to date
@@ -91,11 +94,23 @@ and the Vite client (`:5173`) together, and tears both down on Ctrl-C:
 SERVER_PORT=3001 CLIENT_PORT=5180 ./scripts/run-dev.sh   # override ports
 ```
 
-It only runs `npm install` when `node_modules` is missing or a lockfile changed
-(no needless reinstall), and it **auto-kills** anything already on the dev ports
-before starting — so a stale process from a previous run never blocks it. Each
-service runs in its own process group, so Ctrl-C takes down `npm`'s `node --watch`
-/ `vite` grandchildren too (no orphans).
+```powershell
+# Windows (PowerShell 5.1 or 7+)
+.\scripts\run-dev.ps1                 # install-if-needed, then run server + client
+.\scripts\run-dev.ps1 -Clean          # also wipe local dev data
+.\scripts\run-dev.ps1 -ForceInstall   # reinstall deps even if up to date
+.\scripts\run-dev.ps1 -ServerOnly     # or -ClientOnly
+$env:SERVER_PORT=3001; $env:CLIENT_PORT=5180; .\scripts\run-dev.ps1   # override ports
+# If scripts are blocked: powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
+```
+
+Both run a **dependency preflight** first: if Node (>= 22) or npm is missing they
+report *every* problem at once with a platform-specific install hint (Homebrew on
+macOS, apt/nvm on Linux, winget/nvm-windows on Windows) instead of failing deep
+inside `npm`. They only run `npm install` when `node_modules` is missing or a
+lockfile changed (no needless reinstall), and they **auto-kill** anything already
+on the dev ports before starting — so a stale process never blocks them. Ctrl-C
+takes down `npm`'s `node --watch` / `vite` grandchildren too (no orphans).
 
 <details><summary>…or run the three steps by hand</summary>
 

@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.170: **Cross-platform local dev launcher + dependency preflight.** Two changes
+  toward the jam's cross-platform goal, scoped to *running the game locally* (not the
+  asset/deploy/provision scripts). (1) `scripts/run-dev.sh` now runs a **dependency
+  preflight** before it installs/builds/launches: it verifies Node (>= 22, matching the
+  `engines` field) and npm are present and reports *every* missing/too-old requirement at
+  once with an OS-tailored install hint (Homebrew on macOS, apt/nvm on Linux) instead of
+  crashing deep inside `npm`. `lsof`/`fuser`/`setsid` stay soft (warn-only; the script
+  already degrades without them, and macOS never needs `setsid`). (2) New
+  `scripts/run-dev.ps1` — a Windows PowerShell sibling (5.1 + 7) mirroring the bash
+  launcher (preflight, conditional install, port-free, build shared, launch server+client,
+  clean Ctrl-C teardown of the node/vite tree) with winget/nvm-windows/nodejs.org hints.
+  Adds BATS unit tests for the bash preflight (`npm run test:shell`, 18 cases) and
+  documents both launchers in `README.md`. The PowerShell script is parser- and
+  PSScriptAnalyzer-clean (0 errors) and was reviewed for the Windows runtime concerns we
+  can't test locally (Ctrl-C semantics, process-tree kill, `netstat` fallback, `cmd /c`
+  quoting); not yet run on a real Windows box.
+
 - 0.2.169: **Findings closeout — documentation pass.** Documented the artifacts +
   behavior changes from the closeout plan in the primary developer-facing docs (not just
   CHANGELOG), per the "every commit updates docs whose behavior changed; code and docs

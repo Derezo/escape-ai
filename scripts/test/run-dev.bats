@@ -147,3 +147,51 @@ EOF
   REQUIRED_NODE_MAJOR=20 run preflight
   [ "$status" -eq 0 ]
 }
+
+# --- OS detection + per-OS install hints ------------------------------------
+
+@test "detect_os classifies Darwin as macos and Linux as linux" {
+  # Shadow uname in the sandbox so we control what the OS reports.
+  fake_tool uname "Darwin"
+  run detect_os
+  [ "$output" = "macos" ]
+  fake_tool uname "Linux"
+  run detect_os
+  [ "$output" = "linux" ]
+}
+
+@test "node hint mentions Homebrew on macOS" {
+  HOST_OS=macos run node_hint
+  [[ "$output" == *"brew install node"* ]]
+}
+
+@test "node hint mentions apt/nvm on Linux (not Homebrew)" {
+  HOST_OS=linux run node_hint
+  [[ "$output" == *"nvm install"* ]]
+  [[ "$output" != *"brew"* ]]
+}
+
+@test "missing-node error carries the macOS hint when HOST_OS=macos" {
+  fake_tool npm "10.9.7"   # npm present, node absent
+  HOST_OS=macos run preflight
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"node not found"* ]]
+  [[ "$output" == *"brew install node"* ]]
+}
+
+@test "preflight does not nag about setsid on macOS" {
+  # macOS never has setsid and doesn't need it — no warning should appear.
+  fake_tool node "v22.22.2"
+  fake_tool npm  "10.9.7"
+  fake_tool lsof ""
+  HOST_OS=macos run preflight
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"setsid"* ]]
+}
+
+@test "lsof hint differs by OS" {
+  HOST_OS=macos run lsof_hint
+  [[ "$output" == *"ships with macOS"* ]]
+  HOST_OS=linux run lsof_hint
+  [[ "$output" == *"apt install lsof"* ]]
+}

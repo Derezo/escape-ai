@@ -44,7 +44,48 @@ err()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; }
 # Hard requirements (missing → exit 1): node (>= REQUIRED_NODE_MAJOR) and npm.
 # Soft requirements (missing → warn only): lsof/fuser (port auto-free) and
 # setsid (clean group teardown) already degrade gracefully elsewhere.
+#
+# Install hints are tailored per-OS (Homebrew on macOS, apt/nvm on Linux) so the
+# message a stuck developer reads matches the package manager they actually have.
+# Windows developers use run-dev.ps1 (the PowerShell sibling), not this script.
 REQUIRED_NODE_MAJOR="${REQUIRED_NODE_MAJOR:-22}"
+
+# Coarse host classification for tailoring install hints. Overridable in tests.
+detect_os() {
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) printf 'macos' ;;
+    Linux)  printf 'linux' ;;
+    *)      printf 'other' ;;
+  esac
+}
+HOST_OS="${HOST_OS:-$(detect_os)}"
+
+# Per-OS install hints. Each echoes a one-line suggestion for the named tool.
+node_hint() {
+  if [[ "${HOST_OS}" == "macos" ]]; then
+    printf "install Node.js >= %s: 'brew install node' (or 'nvm install %s', or https://nodejs.org)" \
+      "${REQUIRED_NODE_MAJOR}" "${REQUIRED_NODE_MAJOR}"
+  else
+    printf "install Node.js >= %s: 'nvm install %s' (or your distro's package, e.g. 'apt install nodejs', or https://nodejs.org)" \
+      "${REQUIRED_NODE_MAJOR}" "${REQUIRED_NODE_MAJOR}"
+  fi
+}
+node_upgrade_hint() {
+  if [[ "${HOST_OS}" == "macos" ]]; then
+    printf "upgrade: 'brew upgrade node' (or 'nvm install %s && nvm use %s')" \
+      "${REQUIRED_NODE_MAJOR}" "${REQUIRED_NODE_MAJOR}"
+  else
+    printf "upgrade: 'nvm install %s && nvm use %s'" \
+      "${REQUIRED_NODE_MAJOR}" "${REQUIRED_NODE_MAJOR}"
+  fi
+}
+lsof_hint() {
+  if [[ "${HOST_OS}" == "macos" ]]; then
+    printf "lsof ships with macOS — if it's missing your PATH is unusual"
+  else
+    printf "install lsof, e.g. 'apt install lsof'"
+  fi
+}
 
 # Echo the major version of `node -v` (e.g. "v22.22.2" → "22"); empty if unparseable.
 node_major() {
@@ -59,7 +100,7 @@ preflight() {
 
   # node — required, with a minimum major version.
   if ! command -v node >/dev/null 2>&1; then
-    err "node not found. Install Node.js >= ${REQUIRED_NODE_MAJOR} (https://nodejs.org or 'nvm install ${REQUIRED_NODE_MAJOR}')."
+    err "node not found. $(node_hint)."
     missing=1
   else
     local major
@@ -67,22 +108,24 @@ preflight() {
     if [[ -z "${major}" ]]; then
       warn "could not parse node version from '$(node -v 2>/dev/null)'; need >= ${REQUIRED_NODE_MAJOR}."
     elif [[ "${major}" -lt "${REQUIRED_NODE_MAJOR}" ]]; then
-      err "node $(node -v) is too old; need >= ${REQUIRED_NODE_MAJOR}. Upgrade (e.g. 'nvm install ${REQUIRED_NODE_MAJOR} && nvm use ${REQUIRED_NODE_MAJOR}')."
+      err "node $(node -v) is too old; need >= ${REQUIRED_NODE_MAJOR}. $(node_upgrade_hint)."
       missing=1
     fi
   fi
 
   # npm — required (ships with node, but can be absent on stripped installs).
   if ! command -v npm >/dev/null 2>&1; then
-    err "npm not found. It ships with Node.js — reinstall Node.js >= ${REQUIRED_NODE_MAJOR} (https://nodejs.org)."
+    err "npm not found. It ships with Node.js — $(node_hint)."
     missing=1
   fi
 
   # Soft deps: not fatal — the script degrades gracefully without them.
   if ! command -v lsof >/dev/null 2>&1 && ! command -v fuser >/dev/null 2>&1; then
-    warn "neither lsof nor fuser found — ports won't be auto-freed (install lsof, e.g. 'apt install lsof')."
+    warn "neither lsof nor fuser found — ports won't be auto-freed ($(lsof_hint))."
   fi
-  if ! command -v setsid >/dev/null 2>&1; then
+  # setsid is a Linux nicety; macOS never has it and doesn't need it (the per-PID
+  # kill + port sweep teardown path covers it), so only nudge Linux users.
+  if [[ "${HOST_OS}" != "macos" ]] && ! command -v setsid >/dev/null 2>&1; then
     warn "setsid not found — Ctrl-C teardown falls back to per-PID kill (install util-linux for setsid)."
   fi
 
