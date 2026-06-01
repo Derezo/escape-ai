@@ -657,6 +657,10 @@ async function main(): Promise<void> {
     let herdNow = 0;
     for (const e of list) {
       e._local = myId !== undefined && e.id === myId;
+      // Flag human players (vs NPC animals — both arrive as kind:'animal') so the
+      // renderer's minimap can colour them apart. `playerIds` is the lobby roster,
+      // the same set the prune above trusts; client-only, never crosses the wire.
+      e._isPlayer = playerIds.has(e.id);
       // Follow ring: active iff this animal has an owner and an un-lapsed timer.
       const until = typeof e.followUntilTick === 'number' ? e.followUntilTick : undefined;
       const since = typeof e.followSince === 'number' ? e.followSince : undefined;

@@ -26,6 +26,7 @@ import { facingFromVec, hash32, boxHitsSolid } from '@shared/step';
 import { locomotionFor } from '@shared/locomotion';
 import { TILE_BY_INDEX } from '@shared/tiles';
 import { foodByKey } from '@shared/food';
+import { minimapTileColor } from './minimap-palette';
 import {
   findPath,
   makeScratch,
@@ -152,6 +153,41 @@ const QUEST_ARROW = {
   SIZE: 16, // arrow half-length in px (the triangle reach)
   TINT: 0xff3b3b, // glowing red
 } as const;
+/** The minimap sits above everything in the world (roofs, FX, quest arrow) so it's
+ *  never occluded — it's a fixed-to-camera HUD layer, not part of the world. */
+const DEPTH_MINIMAP = DEPTH_FX + 1_000;
+
+/**
+ * Minimap tuning. A windowed, player-centred minimap pinned to the bottom-right.
+ *
+ *  - VIEW_PX: the on-screen size of the map's interior (per the spec, 70×70 px).
+ *  - WORLD_SCALE: 1/32 — one minimap pixel == 32 world units == one tile. So the
+ *    70px window shows 70 tiles (~2240 world units) of terrain around the player,
+ *    scrolling under the fixed frame as they move (a classic windowed minimap).
+ *  - MARGIN: gap from the viewport's bottom-right corner.
+ *  - The yellow rectangle is the camera's current world view (the player's visible
+ *    area), drawn at the same WORLD_SCALE so it tracks the zoom.
+ */
+const MINIMAP = {
+  VIEW_PX: 70,
+  WORLD_SCALE: 1 / 32,
+  MARGIN: 12,
+  PAD: 4, // inner padding between the border and the clipped map interior
+  BORDER: 2, // border stroke width
+  BG: 0x0b0e14, // backing fill (matches the game's letterbox colour)
+  BG_ALPHA: 0.82,
+  BORDER_COLOR: 0xe8e8f0,
+  BORDER_ALPHA: 0.9,
+  VIEWPORT_COLOR: 0xffe14a, // yellow camera-view rectangle
+  VIEWPORT_ALPHA: 0.95,
+  DOT_PLAYER_OTHER: 0x2f9bff, // bright blue — rival players
+  DOT_PLAYER_LOCAL: 0xffffff, // bright white — you (slightly larger)
+  DOT_PLAYER_LOCAL_RING: 0x29e0ff, // cyan ring around the "you are here" dot
+  DOT_ROBOT: 0xff2b2b, // bright red — keeper robots
+  DOT_ANIMAL: 0xffe400, // bright yellow — NPC animals
+  ICON_PX: 8, // pixel size of a pen/food forward-facing animal icon
+} as const;
+
 /** Kept for the legacy no-map path (shape views before a map arrives). */
 const DEPTH_PEN = -150;
 const DEPTH_PROP = 1; // terminals / gates / hazards / quest objects (Y-sorted band base)
@@ -226,6 +262,319 @@ interface EntityView {
 /** humanLikeness at/above this reads as "human" — mirrors the server freeze threshold. */
 const HUMAN_THRESHOLD = 0.6;
 
+/** One pen/enclosure to mark on the minimap with its species' forward-facing icon. */
+interface MinimapPen {
+  x: number; // world-unit center
+  y: number;
+  species: string;
+}
+
+/**
+ * The minimap HUD: a windowed, player-centred map pinned to the bottom-right that
+ * scrolls under a fixed frame as the player moves. It mirrors the tilemap at 1/32
+ * scale (one minimap pixel per tile, via the dedicated minimap palette), outlines
+ * the player's visible area as a yellow rectangle, dots other players / robots /
+ * animals in bright blue / red / yellow, and stamps a tiny forward-facing animal
+ * sprite over each food pickup and animal pen.
+ *
+ * It's a fixed-to-camera Phaser layer (scrollFactor 0), NOT part of the world, so
+ * the swappable-renderer contract is untouched: it only reads the same WorldMap +
+ * entity list the renderer already has. Everything is drawn in container-local
+ * coordinates and CLIPPED MANUALLY to the interior window (a geometry mask would
+ * track the scrolling camera, not the fixed HUD, and clip the whole thing away),
+ * so the scrolling terrain never spills past the border.
+ */
+class Minimap {
+  private readonly scene: Phaser.Scene;
+  private readonly container: Phaser.GameObjects.Container;
+  /** Immediate-mode layer: background, tiles, viewport rect, entity dots, border. */
+  private readonly g: Phaser.GameObjects.Graphics;
+  /** Atlas-frame icons for pens + food (Graphics can't blit a texture frame). */
+  private readonly iconLayer: Phaser.GameObjects.Container;
+  /** Pool of reusable icon images, grown on demand and hidden when unused. */
+  private readonly iconPool: Phaser.GameObjects.Image[] = [];
+  /**
+   * A dedicated HUD camera that renders ONLY the minimap, at zoom 1. The MAIN
+   * camera follows the player at a >1 world zoom, and a zoomed camera scales even
+   * scrollFactor(0) objects about its midpoint — which flings a corner-anchored HUD
+   * off-screen. The two-camera split (main ignores the minimap; this one ignores
+   * everything else) is Phaser's idiomatic fix: the minimap renders at a true 1:1
+   * screen scale regardless of the world zoom. See refreshCameras().
+   */
+  private readonly hudCam: Phaser.Cameras.Scene2D.Camera;
+
+  private map: WorldMap | null = null;
+  /** Precomputed pens (open-air housing + species-home buildings) to mark. */
+  private pens: MinimapPen[] = [];
+  /** Whether the atlas is loaded, so we can draw real forward-facing icons. */
+  private atlasReady = false;
+
+  /** Interior size in px (the clipped, scrolling map area). */
+  private readonly view = MINIMAP.VIEW_PX;
+  /** Outer box size including padding + border. */
+  private readonly box = MINIMAP.VIEW_PX + MINIMAP.PAD * 2;
+
+  constructor(scene: Phaser.Scene, atlasReady: boolean) {
+    this.scene = scene;
+    this.atlasReady = atlasReady;
+
+    this.g = scene.add.graphics();
+    this.iconLayer = scene.add.container(0, 0);
+    this.container = scene.add.container(0, 0, [this.g, this.iconLayer]);
+    this.container
+      .setScrollFactor(0) // fixed on screen regardless of camera scroll
+      .setDepth(DEPTH_MINIMAP);
+
+    // The HUD camera: full-viewport, zoom 1, no scroll. It renders the minimap; the
+    // main camera is told to skip the minimap. refreshCameras() maintains the split.
+    this.hudCam = scene.cameras.add(0, 0, scene.scale.width, scene.scale.height);
+    this.hudCam.setName('minimap-hud');
+    scene.cameras.main.ignore(this.container);
+
+    this.layout();
+    // Re-anchor to the bottom-right whenever the viewport changes (rotate / reflow).
+    scene.scale.on(Phaser.Scale.Events.RESIZE, this.layout, this);
+  }
+
+  /** Mark the atlas as ready (so subsequent draws use real sprite-frame icons). */
+  setAtlasReady(ready: boolean): void {
+    this.atlasReady = ready;
+  }
+
+  /**
+   * Keep the two-camera split intact: the HUD camera must render ONLY the minimap
+   * container, so it ignores every other root the scene has spawned since last call
+   * (tilemap layers, entity views, FX — all added dynamically). Cheap: the scene's
+   * root list is small, and Camera.ignore is idempotent per object. Called each
+   * frame from WorldScene.drawMinimap so newly-created world objects never leak into
+   * the HUD camera.
+   */
+  refreshCameras(): void {
+    // scene.children is a DisplayList; .list is its public GameObject[] backing array.
+    for (const obj of this.scene.children.list) {
+      if (obj !== this.container) this.hudCam.ignore(obj);
+    }
+  }
+
+  /** Receive the world map + precompute the pen list to mark. */
+  setMap(map: WorldMap): void {
+    this.map = map;
+    this.pens = [];
+    // Open-air enclosures: one mark at each housing center, by its species.
+    for (const h of map.housing) {
+      this.pens.push({ x: h.cx, y: h.cy, species: h.species });
+    }
+    // Species-home BUILDINGS (ape/owl/… live indoors): mark their footprint center.
+    // Auxiliary service buildings + the gatehouse have no species → skipped.
+    for (const b of map.buildings) {
+      if (!b.species) continue;
+      const cx = (b.rx + b.rw / 2) * map.tile;
+      const cy = (b.ry + b.rh / 2) * map.tile;
+      this.pens.push({ x: cx, y: cy, species: b.species });
+    }
+  }
+
+  /** Position the box in the bottom-right corner; keep the HUD camera full-viewport. */
+  private layout = (): void => {
+    const sw = this.scene.scale.width;
+    const sh = this.scene.scale.height;
+    const x = Math.round(sw - this.box - MINIMAP.MARGIN);
+    const y = Math.round(sh - this.box - MINIMAP.MARGIN);
+    this.container.setPosition(x, y);
+    this.hudCam.setSize(sw, sh);
+  };
+
+  destroy(): void {
+    this.scene.scale.off(Phaser.Scale.Events.RESIZE, this.layout, this);
+    this.scene.cameras.remove(this.hudCam);
+    this.container.destroy(); // destroys g + iconLayer + pooled icons (its children)
+  }
+
+  /**
+   * Redraw the whole minimap for this frame.
+   *  @param cx,cy        world-unit point to centre the window on (the local player)
+   *  @param camView      the camera's current world view rectangle (for the yellow box)
+   *  @param entities     the latest entity list (players/robots/animals/food)
+   */
+  draw(cx: number, cy: number, camView: Phaser.Geom.Rectangle, entities: Entity[]): void {
+    const map = this.map;
+    const g = this.g;
+    g.clear();
+    if (!map) {
+      // No world yet: still draw the empty framed box so the HUD reads as present.
+      this.drawFrame();
+      this.hideUnusedIcons(0);
+      return;
+    }
+
+    const view = this.view;
+    const half = view / 2;
+    const s = MINIMAP.WORLD_SCALE; // px per world unit
+    const tile = map.tile;
+    // Screen-space top-left of the interior (container-local: PAD,PAD).
+    const ox = MINIMAP.PAD;
+    const oy = MINIMAP.PAD;
+    // Map a world point → interior pixel, centred on (cx,cy).
+    const sx = (wx: number): number => ox + half + (wx - cx) * s;
+    const sy = (wy: number): number => oy + half + (wy - cy) * s;
+
+    // 1) Background fill behind the (possibly partial near world edges) terrain.
+    g.fillStyle(MINIMAP.BG, MINIMAP.BG_ALPHA).fillRect(ox, oy, view, view);
+
+    // 2) Terrain. Iterate only the tiles inside the visible window (+1 ring of
+    //    bleed) instead of the whole 128² grid, so it's cheap every frame. Deco
+    //    (structures/trees) overdraws ground where present so buildings read.
+    const tilePx = tile * s; // size of one tile on the minimap (== 1px at 1/32)
+    const drawPx = Math.ceil(tilePx) + 1; // never leave seams between cells
+    const halfWorld = half / s; // world-unit half-extent of the window
+    const tx0 = Math.max(0, Math.floor((cx - halfWorld) / tile));
+    const ty0 = Math.max(0, Math.floor((cy - halfWorld) / tile));
+    const tx1 = Math.min(map.w - 1, Math.ceil((cx + halfWorld) / tile));
+    const ty1 = Math.min(map.h - 1, Math.ceil((cy + halfWorld) / tile));
+    const ground = map.ground.data;
+    const deco = map.deco.data;
+    const w = map.w;
+    // Interior clip bounds (container-local). Manual clipping: clamp every tile rect
+    // to this box so an edge tile can't bleed past the frame (no geometry mask — that
+    // would track the scrolling camera, not this fixed HUD; see the class doc).
+    const ix0 = ox;
+    const iy0 = oy;
+    const ix1 = ox + view;
+    const iy1 = oy + view;
+    for (let ty = ty0; ty <= ty1; ty++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        const idx = ty * w + tx;
+        // Deco (structures, trees, fences) wins over ground where present, so the
+        // built zoo's outline reads; else fall back to the ground tile's colour.
+        let color = minimapTileColor(deco[idx]);
+        if (color === null) color = minimapTileColor(ground[idx]);
+        if (color === null) continue;
+        const px = ox + half + (tx * tile + tile / 2 - cx) * s - drawPx / 2;
+        const py = oy + half + (ty * tile + tile / 2 - cy) * s - drawPx / 2;
+        // Clamp the cell to the interior.
+        const rx0 = Math.max(ix0, px);
+        const ry0 = Math.max(iy0, py);
+        const rx1 = Math.min(ix1, px + drawPx);
+        const ry1 = Math.min(iy1, py + drawPx);
+        if (rx1 <= rx0 || ry1 <= ry0) continue; // fully outside the window
+        g.fillStyle(color, 1).fillRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+      }
+    }
+
+    // 3) Pen / food forward-facing animal icons (atlas frames over the terrain).
+    //    Cull icons whose center falls outside the interior so they can't spill past
+    //    the frame (icons aren't masked; we clip by visibility). Strict bounds, to
+    //    match the entity-dot culling below.
+    const inWindow = (px: number, py: number): boolean =>
+      px >= ox && px < ox + view && py >= oy && py < oy + view;
+    let iconCount = 0;
+    if (this.atlasReady) {
+      // Pens (precomputed from the map): one icon per enclosure / species home.
+      for (const pen of this.pens) {
+        const px = sx(pen.x);
+        const py = sy(pen.y);
+        if (!inWindow(px, py)) continue;
+        if (this.placeIcon(iconCount, pen.species, px, py)) iconCount++;
+      }
+      // Food pickups (live entities): kind:'food', marked by the eater's species.
+      for (const e of entities) {
+        if (e.kind !== 'food' || typeof e.species !== 'string') continue;
+        const px = sx(e.x);
+        const py = sy(e.y);
+        if (!inWindow(px, py)) continue;
+        if (this.placeIcon(iconCount, e.species, px, py)) iconCount++;
+      }
+    }
+    this.hideUnusedIcons(iconCount);
+
+    // 4) Entity dots (drawn over icons so a creature near a pen is still visible).
+    let localX: number | null = null;
+    let localY: number | null = null;
+    for (const e of entities) {
+      const dx = sx(e.x);
+      const dy = sy(e.y);
+      // Cull dots outside the interior window (manual clip — no mask).
+      if (dx < ox || dx > ox + view || dy < oy || dy > oy + view) continue;
+      if (e.kind === 'robot') {
+        g.fillStyle(MINIMAP.DOT_ROBOT, 1).fillRect(dx - 1, dy - 1, 2, 2);
+      } else if (e.kind === 'animal' || e.kind === undefined) {
+        if (e._local === true) {
+          // Defer the local player so it draws last (on top), as a bigger marker.
+          localX = dx;
+          localY = dy;
+        } else if (e._isPlayer === true) {
+          g.fillStyle(MINIMAP.DOT_PLAYER_OTHER, 1).fillRect(dx - 1, dy - 1, 2, 2);
+        } else {
+          g.fillStyle(MINIMAP.DOT_ANIMAL, 1).fillRect(dx, dy, 1, 1);
+        }
+      }
+    }
+
+    // 5) The yellow camera-view rectangle (the player's visible area). Clamp it to
+    //    the interior so, near a world edge, the box reads as flush with the frame
+    //    rather than stroking past it (manual clip — no mask).
+    const vx0 = Math.max(ix0, ox + half + (camView.x - cx) * s);
+    const vy0 = Math.max(iy0, oy + half + (camView.y - cy) * s);
+    const vx1 = Math.min(ix1, ox + half + (camView.right - cx) * s);
+    const vy1 = Math.min(iy1, oy + half + (camView.bottom - cy) * s);
+    if (vx1 > vx0 && vy1 > vy0) {
+      g.lineStyle(1, MINIMAP.VIEWPORT_COLOR, MINIMAP.VIEWPORT_ALPHA);
+      g.strokeRect(vx0, vy0, vx1 - vx0, vy1 - vy0);
+    }
+
+    // 6) The local player on top — a bright "you are here" marker: a cyan-ringed
+    //    white dot, larger than the rival-player dots so it's unmistakable.
+    if (localX !== null && localY !== null) {
+      g.lineStyle(1, MINIMAP.DOT_PLAYER_LOCAL_RING, 1);
+      g.strokeCircle(localX, localY, 3);
+      g.fillStyle(MINIMAP.DOT_PLAYER_LOCAL, 1).fillRect(localX - 1.5, localY - 1.5, 3, 3);
+    }
+
+    // 7) The polished border frame, last so nothing overdraws it.
+    this.drawFrame();
+  }
+
+  /** Draw the backing box border (the interior is clipped manually in draw()). */
+  private drawFrame(): void {
+    const g = this.g;
+    // A subtle dark backing ring behind the bright stroke, for contrast on any terrain.
+    g.lineStyle(MINIMAP.BORDER + 2, 0x000000, 0.5);
+    g.strokeRect(0, 0, this.box, this.box);
+    g.lineStyle(MINIMAP.BORDER, MINIMAP.BORDER_COLOR, MINIMAP.BORDER_ALPHA);
+    g.strokeRect(0, 0, this.box, this.box);
+  }
+
+  /**
+   * Position the pooled icon at index `i` to show `species`' forward-facing frame
+   * at interior pixel (px,py). Grows the pool as needed. Returns false (no slot
+   * consumed) if the species has no atlas frame, so the caller's count stays tight.
+   */
+  private placeIcon(i: number, species: string, px: number, py: number): boolean {
+    const frame = `${species}_idle_s_0`; // south-facing idle = "facing forward"
+    if (!this.scene.textures.get(ATLAS_KEY).has(frame)) return false;
+    let img = this.iconPool[i];
+    if (!img) {
+      img = this.scene.add.image(0, 0, ATLAS_KEY, frame);
+      this.iconPool[i] = img;
+      this.iconLayer.add(img);
+    } else {
+      img.setTexture(ATLAS_KEY, frame);
+    }
+    // Scale the 64px atlas frame down to ICON_PX, keeping it crisp and small.
+    const fw = img.frame.width || 64;
+    img.setScale(MINIMAP.ICON_PX / fw);
+    img.setPosition(px, py).setVisible(true);
+    return true;
+  }
+
+  /** Hide pooled icons beyond `used` so a frame with fewer icons clears stale ones. */
+  private hideUnusedIcons(used: number): void {
+    for (let i = used; i < this.iconPool.length; i++) {
+      this.iconPool[i].setVisible(false);
+    }
+  }
+}
+
 /**
  * The single Scene. Owns the per-entity views, loads the atlas in preload(),
  * builds directional animations in create(), and reconciles views to the latest
@@ -298,6 +647,9 @@ class WorldScene extends Phaser.Scene {
   /** While set, the arrow is in its inter-cycle beat; respawn once time passes this. */
   private questArrowRespawnAt = 0;
 
+  /** The bottom-right windowed minimap HUD (created in create(), fed in buildWorld). */
+  private minimap: Minimap | null = null;
+
   constructor() {
     super('world');
   }
@@ -329,6 +681,15 @@ class WorldScene extends Phaser.Scene {
     if (this.atlasReady) this.buildAnimations();
     this.tilesetArtReady = this.textures.exists(TILESET_ART_KEY);
     this.makeDotTexture();
+    // The minimap HUD: a fixed-to-camera layer, created up front so it shows its
+    // empty frame immediately; fed the world in buildWorld and drawn each update().
+    this.minimap = new Minimap(this, this.atlasReady);
+    // Tear down the minimap (and its game-level RESIZE listener) on scene shutdown
+    // so a scene restart can't leave a dangling minimap or duplicate listeners.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.minimap?.destroy();
+      this.minimap = null;
+    });
   }
 
   /** Generate a soft round particle texture once (a radial-ish white dot). */
@@ -410,6 +771,7 @@ class WorldScene extends Phaser.Scene {
     this.updateRoofFade();
     // Quest-direction arrow: pathfind + animate the owner-only "go this way" cue.
     this.drawQuestArrow(_time, delta / 1000);
+    this.drawMinimap();
     // Apply the coalesced camera FX once per frame (strongest shake wins; one
     // flash) so a burst of simultaneous abilities can't stack into nausea.
     if (this.pendingShake > 0) {
@@ -420,6 +782,30 @@ class WorldScene extends Phaser.Scene {
       this.cameras.main.flash(150, 255, 255, 255, false);
       this.pendingFlash = false;
     }
+  }
+
+  /**
+   * Redraw the bottom-right minimap, centred on the local player's INTERPOLATED
+   * position (so the map scrolls as smoothly as the avatar moves) with the camera's
+   * current world view as the yellow rectangle. Falls back to the camera scroll
+   * centre before the local player's view exists (e.g. the first frames after join).
+   */
+  private drawMinimap(): void {
+    if (!this.minimap) return;
+    this.minimap.setAtlasReady(this.atlasReady);
+    // Keep the HUD-camera split current (new world objects appear every frame).
+    this.minimap.refreshCameras();
+    const cam = this.cameras.main;
+    let cx: number | undefined;
+    let cy: number | undefined;
+    for (const v of this.views.values()) {
+      if (v.isLocal) { cx = v.renderX; cy = v.renderY; break; }
+    }
+    if (cx === undefined || cy === undefined) {
+      cx = cam.worldView.centerX;
+      cy = cam.worldView.centerY;
+    }
+    this.minimap.draw(cx, cy, cam.worldView, this.pending);
   }
 
   /**
@@ -569,7 +955,10 @@ class WorldScene extends Phaser.Scene {
     this.applyCameraZoom();
     this.scale.on(Phaser.Scale.Events.RESIZE, this.applyCameraZoom, this);
 
-    // 6. A reusable A* scratch so the quest arrow can pathfind on the same collision
+    // 6. Hand the map to the minimap so it can precompute pen marks + draw terrain.
+    this.minimap?.setMap(map);
+
+    // 7. A reusable A* scratch so the quest arrow can pathfind on the same collision
     //    grid the server uses (door tiles are non-solid → it threads them).
     this.pathScratch = makeScratch(map.w, map.h);
     this.clearQuestArrow();

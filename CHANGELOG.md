@@ -4,6 +4,27 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.207: **Client — a windowed minimap HUD (bottom-right).** Added a player-centred minimap that
+  scrolls under a fixed frame as you move (`client/src/render/phaser.ts` `Minimap` class +
+  `client/src/render/minimap-palette.ts`). It mirrors the tilemap at **1/32 scale** (one minimap
+  pixel per tile) in a **70×70 px** interior, using a dedicated high-contrast per-tile palette
+  (`minimapTileColor`) tuned to read at single-pixel size; deco/structure tiles overdraw ground so
+  the zoo's outline pops. The player's visible area is outlined as a **yellow rectangle** (the camera
+  world-view), with a polished bordered frame, the local player as a cyan-ringed white "you are here"
+  dot at centre, **other players bright blue**, **robots bright red**, and **NPC animals bright
+  yellow**. Animal pens (open-air `housing` + species-home `buildings`) and food pickups (`kind:'food'`
+  entities) are stamped with a **miniature forward-facing sprite icon** of the animal (`<species>_idle_s_0`).
+  Implementation notes: the minimap renders through a **dedicated zoom-1 HUD camera** (the main camera
+  follows at a >1 world zoom, which scales even `scrollFactor(0)` objects about its midpoint and would
+  fling a corner HUD off-screen); the main camera ignores the minimap container and the HUD camera
+  ignores all world objects. The scrolling interior is clipped **manually** (clamped per primitive),
+  not by a geometry mask — a mask tracks the scrolling camera, not the fixed HUD. Player-vs-NPC is
+  distinguished by a new client-only `_isPlayer` stamp in `main.ts` (same pattern as `_local`, never
+  crosses the wire). Renderer-agnostic and read-only: it consumes the same `WorldMap` + entity list the
+  renderer already has, so the swappable-renderer contract is untouched. Client typecheck + build green;
+  all 8 verify gates pass; visually confirmed in a headless browser end-to-end (spawn → minimap renders,
+  scrolls with the player, tracks the viewport).
+
 - 0.2.206: **Deploy — rebuild the Android APK as part of `deploy-server.sh`.** The deploy staged a
   pre-built APK but never rebuilt it, so the `/android` download link silently went stale (it shipped
   whatever binary happened to sit at `app/build/outputs/apk/release/`, not the code being deployed).
