@@ -112,6 +112,17 @@ lockfile changed (no needless reinstall), and they **auto-kill** anything alread
 on the dev ports before starting — so a stale process never blocks them. Ctrl-C
 takes down `npm`'s `node --watch` / `vite` grandchildren too (no orphans).
 
+> **Platform-tested status.** Development happens on **Linux**, which is the only
+> path the author runs day to day. `run-dev.sh` on Linux is exercised constantly
+> and its dependency preflight is covered by unit tests (`cd scripts && npm run
+> test:shell`). The **macOS** branch of `run-dev.sh` and the entire **Windows**
+> `run-dev.ps1` are written to be correct but **have not been run on real macOS or
+> Windows hardware** by the author — the PowerShell script is parser- and
+> PSScriptAnalyzer-clean and was reviewed against the known Windows runtime
+> gotchas (Ctrl-C teardown, process-tree kill, `netstat` parsing, `cmd /c`
+> quoting), but treat first-run on those platforms as unverified. If something
+> misbehaves there, the by-hand steps below always work, and please report it.
+
 <details><summary>…or run the three steps by hand</summary>
 
 ```bash
@@ -145,6 +156,8 @@ meter, your human-likeness, the lockdown state, and what you're carrying.
 | **Q** | Order a robot to stand down (Second Law) — but every order raises the panic meter |
 | **Space** | Your species ability (a big on-screen effect everyone sees) |
 | **I** | Inventory — collected food and which species each feeds |
+| **L** | Leaderboard — sortable standings (score, escape time, herd) |
+| **/** | Chat — talk to the other players in your room |
 | **H** / **?** | Toggle the in-game manual |
 
 **Herd & escape.** Collecting food (**E**) and feeding animals (**F**) builds a herd

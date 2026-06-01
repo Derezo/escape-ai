@@ -4,6 +4,18 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.171: **README accuracy pass + cross-platform honesty note.** Fact-checked the
+  whole README against the code (ports, Node version, run-dev flags both bash and
+  PowerShell, the by-hand steps, all 14 species + ability verbs, tick rate, quest-gated
+  gate, assets/verify/deploy tables, doc links — all verified). Two fixes: (1) the
+  Controls table was missing **L** (leaderboard) and **/** (chat), both wired in the
+  client — added them. (2) Added a **"Platform-tested status"** note making explicit that
+  development is Linux-only, that `run-dev.sh` on Linux is the only path actually
+  exercised (its preflight has unit tests), and that the **macOS** branch of `run-dev.sh`
+  and the entire **Windows** `run-dev.ps1` are written-to-be-correct and statically
+  checked but **not run on real macOS/Windows hardware** — first-run there is unverified
+  and the by-hand steps are the fallback. Docs-only.
+
 - 0.2.170: **Cross-platform local dev launcher + dependency preflight.** Two changes
   toward the jam's cross-platform goal, scoped to *running the game locally* (not the
   asset/deploy/provision scripts). (1) `scripts/run-dev.sh` now runs a **dependency
