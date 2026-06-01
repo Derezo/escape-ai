@@ -4,6 +4,17 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.186: **Docs: Android build path is now real, not hypothetical.** `docs/ANDROID.md`
+  rewritten to match what shipped — the committed native project, the
+  `com.mittonvillage.escape` appId, the working headless `assembleDebug`/`assembleRelease`
+  flow (with `JAVA_HOME` + `local.properties`), the release-signing + keystore handling
+  (secrets out of the repo, back-up warning, `apksigner` verify), the `/android` reviewer
+  download page + deploy/nginx wiring, and a "what's verified" section recording the
+  emulator smoke test (installs, connects to prod over WSS at ~22 ms, joins, renders synced
+  multiplayer). The stale "signed release is out of scope / deferred to Android Studio" and
+  `org.escapeai.app` lines are gone. `README.md`'s Android section now leads with the
+  download link and the committed-project + signing reality.
+
 - 0.2.185: **Android: `/android` download page + deploy wiring.** A polished static
   download page at `escape.mittonvillage.com/android/`, styled like the in-game title
   screen — the same `ESCAPE` cyan→white gradient fade and `AI` glitch/jitter pop (red/cyan
