@@ -216,6 +216,13 @@ function register(socket, deps) {
     // re-join in the same socket session doesn't re-apply a stale snapshot.
     if (resuming) {
       session.restore(player, savedSession);
+      // A restored snapshot position is trusted but not proven walkable: a player who
+      // logged off mid-teleport, or whose saved tile reads solid against the
+      // regenerated collision grid, would resume stuck-in-a-wall and unable to move.
+      // Snap to the nearest open tile (no-op when the saved spot is already walkable).
+      const safe = world.findWalkableNear(room, player.x, player.y);
+      player.x = safe.x;
+      player.y = safe.y;
       player.spawnSafeUntilTick = engine.getCurrentTick() + secsToTicks(config.SPAWN_GRACE_SECS);
       state.session = null;
     }

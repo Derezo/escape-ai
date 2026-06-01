@@ -366,6 +366,42 @@ function getHomeGateInsideBySpecies(roomName) {
 }
 
 /**
+ * Nearest non-solid spawn point to a preferred world-unit position, searching
+ * outward in an expanding ring of tile centres (the preferred tile first, then a
+ * widening box around it). Returns the first walkable tile's CENTRE, or the
+ * preferred point unchanged if nothing within `maxRadius` tiles is walkable (a
+ * degenerate map — better to spawn-and-let-collision-handle-it than to loop). The
+ * second guard behind world-gen's "every pen centre is walkable" proof: if a pen
+ * centre or its jittered offset ever lands on a solid tile (a tree, the pond core,
+ * a barrier seam), this nudges the player to the closest open ground instead of
+ * spawning them stuck-in-a-wall and unable to move.
+ * @param {string} roomName
+ * @param {number} px  preferred X (world units)
+ * @param {number} py  preferred Y (world units)
+ * @param {number} [maxRadius=12]  max search radius in tiles
+ * @returns {{ x: number, y: number }}
+ */
+function findWalkableNear(roomName, px, py, maxRadius = 12) {
+  const map = getOrCreateRoomWorld(roomName).map;
+  const tile = map.tile;
+  if (!isSolidAtRoom(roomName, px, py)) return { x: px, y: py };
+  const tx0 = Math.floor(px / tile);
+  const ty0 = Math.floor(py / tile);
+  const at = (tx, ty) => ({ x: (tx + 0.5) * tile, y: (ty + 0.5) * tile });
+  for (let r = 1; r <= maxRadius; r++) {
+    // Walk the ring at Chebyshev distance r; first non-solid wins (closest first).
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring edge only
+        const p = at(tx0 + dx, ty0 + dy);
+        if (!isSolidAtRoom(roomName, p.x, p.y)) return p;
+      }
+    }
+  }
+  return { x: px, y: py };
+}
+
+/**
  * The spawn point for a player of `species` in a room: the CENTER of that species'
  * OWN pen/home (world units), with a small deterministic per-player jitter so two
  * same-species players don't stack exactly. Spawning in the home pen — not the
@@ -375,7 +411,9 @@ function getHomeGateInsideBySpecies(roomName) {
  * map.spawns[0] when the species has no home (shouldn't happen for a playable
  * species). The jitter is clamped to the pen interior so it can't cross the
  * barrier ring; world-gen proves every pen center is non-solid + reachable and the
- * interior is >= 6x6 tiles, so a sub-tile offset stays walkable. No rng (hashStr).
+ * interior is >= 6x6 tiles, so a sub-tile offset stays walkable. As a final guard,
+ * the chosen point is snapped to the nearest walkable tile (findWalkableNear) so a
+ * player can never spawn stuck inside a solid tile. No rng (hashStr).
  *
  * @param {string} roomName
  * @param {string} species
@@ -386,7 +424,8 @@ function spawnForSpecies(roomName, species, jitterSeed) {
   const map = getOrCreateRoomWorld(roomName).map;
   const center = species ? getHomeCentersBySpecies(roomName).get(species) : null;
   if (!center) {
-    return (map.spawns && map.spawns[0]) || { x: 50, y: 50 };
+    const fallback = (map.spawns && map.spawns[0]) || { x: 50, y: 50 };
+    return findWalkableNear(roomName, fallback.x, fallback.y);
   }
   const bounds = getHomeBoundsBySpecies(roomName).get(species);
   let x = center.x;
@@ -398,7 +437,7 @@ function spawnForSpecies(roomName, species, jitterSeed) {
     x = Math.min(Math.max(center.x + jx, bounds.minX + 4), bounds.maxX - 4);
     y = Math.min(Math.max(center.y + jy, bounds.minY + 4), bounds.maxY - 4);
   }
-  return { x, y };
+  return findWalkableNear(roomName, x, y);
 }
 
 /**
@@ -630,6 +669,7 @@ module.exports = {
   getHomeBoundsBySpecies,
   getHomeCentersBySpecies,
   spawnForSpecies,
+  findWalkableNear,
   getHomeGateInsideBySpecies,
   getGuardBoundsByRobotId,
   getAuxInteriorRects,
