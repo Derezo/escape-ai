@@ -147,9 +147,14 @@ export function createTouchControls(): TouchControls {
     if (joyId !== null) return; // already driving the stick
     for (let i = 0; i < e.changedTouches.length; i++) {
       const t = e.changedTouches[i];
-      // Ignore touches that land on the action cluster (let the buttons own them).
-      const onButton = (t.target as HTMLElement)?.closest?.('#touch-actions');
-      if (onButton) continue;
+      // Ignore touches that land on an interactive overlay (action cluster, the
+      // bottom-left chat icon/panel, or any HUD button) — let those own the touch so
+      // the joystick doesn't hijack a tap meant for chat. The joystick only claims
+      // bare left-half touches on the play surface.
+      const onUi = (t.target as HTMLElement)?.closest?.(
+        '#touch-actions, #chat-icon, #chat-panel, button',
+      );
+      if (onUi) continue;
       if (!isLeftHalf(t.clientX)) continue;
       joyId = t.identifier;
       showBaseAt(t.clientX, t.clientY);

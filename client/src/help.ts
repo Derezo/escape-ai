@@ -25,6 +25,7 @@ import { createSpeciesSprite } from './species-sprite';
 import { getLastStats } from './menu';
 import { isTypingInTextField } from './dom';
 import { formatPlayTime } from './time';
+import { isAndroid } from './platform';
 
 /** The four tab ids, in display order. Controls is the default active tab. */
 type TabId = 'controls' | 'species' | 'more' | 'stats';
@@ -45,12 +46,12 @@ const HELP_HTML = `
       <section class="help-pane" data-tab="more"></section>
       <section class="help-pane" data-tab="stats"></section>
     </div>
-    <p class="help-hint">press H or ? to close</p>
+    <p class="help-hint">${isAndroid ? 'tap × to close' : 'press H or ? to close'}</p>
   </div>
 `;
 
-/** Controls tab — the condensed key reference. */
-const CONTROLS_HTML = `
+/** Keyboard control reference (desktop). */
+const CONTROLS_KEYBOARD_HTML = `
   <h2>Controls</h2>
   <ul class="cols">
     <li><b>WASD / arrows</b> — walk (stays human)</li>
@@ -64,6 +65,25 @@ const CONTROLS_HTML = `
     <li><b>/</b> — chat with everyone in the world</li>
     <li><b>H</b> or <b>?</b> — toggle this help</li>
   </ul>
+`;
+
+/** Touch control reference (Android) — the on-screen controls, not keys. */
+const CONTROLS_TOUCH_HTML = `
+  <h2>Controls</h2>
+  <ul class="cols">
+    <li><b>Left thumb</b> — drag anywhere on the left to steer (a stick appears)</li>
+    <li><b>Push to the edge</b> — sprint (fast, but reads as prey)</li>
+    <li><b>Interact</b> — terminal / prop / collect food</li>
+    <li><b>Feed</b> — feed the nearest animal (it joins your herd)</li>
+    <li><b>Order</b> — order a robot (Second Law)</li>
+    <li><b>Ability</b> — your species special</li>
+    <li><b>HUD tap</b> — inventory, leaderboard, and chat icons on screen</li>
+    <li>Tap <b>×</b> to close any panel</li>
+  </ul>
+`;
+
+/** The shared Goal blurb, appended after whichever control list applies. */
+const GOAL_HTML = `
   <h2>Goal</h2>
   <p>Reach the <b>gate</b> at the far right edge to escape. But first, finish your
     animal's <b>multi-step side-quest</b> — shown in the <b>HUD</b> (top-left) as
@@ -74,6 +94,9 @@ const CONTROLS_HTML = `
     until your quest reads <b>✓</b>. Walk to stay human, time your orders, and
     don't tip the zoo into lockdown.</p>
 `;
+
+/** Controls tab — keyboard on desktop, touch on Android. */
+const CONTROLS_HTML = (isAndroid ? CONTROLS_TOUCH_HTML : CONTROLS_KEYBOARD_HTML) + GOAL_HTML;
 
 /**
  * "More" tab — the lore, lifted verbatim from the old manual: the premise, the

@@ -47,8 +47,11 @@ body {
    conditionally relevant (lockdown, carrying) are hidden until `.active`. */
 #hud {
   position: fixed;
-  top: 8px;
-  left: 8px;
+  /* Pad around the notch / status bar on phones (viewport-fit=cover lets the WebView
+     draw under the system bars). env(safe-area-inset-*) is 0 on non-notched displays,
+     so max() keeps the original 8px on desktop. */
+  top: max(8px, env(safe-area-inset-top));
+  left: max(8px, env(safe-area-inset-left));
   z-index: 10;
   min-width: 180px;
   padding: 8px 12px 9px;
@@ -1294,8 +1297,9 @@ body {
    (the `.bump` class, re-triggered in foodbar.ts on every collect/feed). */
 #foodbar {
   position: fixed;
-  top: 8px;
-  right: 8px;
+  /* Safe-area padding (notch / status bar / curved right edge); 8px on desktop. */
+  top: max(8px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
   z-index: 10;
   display: none;
   flex-wrap: wrap;
@@ -1595,9 +1599,10 @@ body {
 /* Collapsed icon: a tappable rounded button, bottom-left, on the overlay tier. */
 #chat-icon {
   position: fixed;
-  left: 14px;
-  bottom: 14px;
-  z-index: 30;
+  /* Clear the bottom gesture-nav bar on Android; 14px on desktop. */
+  left: max(14px, env(safe-area-inset-left));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 35; /* above the touch-control overlay (z=30) so the joystick can't cover it */
   width: 48px;
   height: 48px;
   border-radius: 12px;
@@ -1695,9 +1700,11 @@ body {
 /* The expanded panel: anchored bottom-left above the icon, fades/slides up on .open. */
 #chat-panel {
   position: fixed;
-  left: 14px;
-  bottom: 70px;
-  z-index: 30;
+  left: max(14px, env(safe-area-inset-left));
+  /* Sit above the icon, clearing the gesture-nav bar, and lift above the soft
+     keyboard when it's up (--kb-inset is set by keyboard.ts on Android; 0 otherwise). */
+  bottom: calc(56px + max(14px, env(safe-area-inset-bottom)) + var(--kb-inset, 0px));
+  z-index: 35;
   width: 340px;
   max-width: calc(100vw - 28px);
   max-height: 56vh;
@@ -2028,4 +2035,48 @@ body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #9aa3ad;
+}
+
+/* --- Touch ergonomics (touch devices only; desktop visuals unchanged) --------
+   On touch there is no hover, so (a) every interactive element needs a press state
+   for confirmation, and (b) tap targets must clear the ~44px minimum. The size bumps
+   are scoped to `@media (hover: none)` (pointer-coarse touch screens) so mouse/desktop
+   keep their original sizes; the `:active` rules below are added in ADDITION to the
+   existing `:hover` rules, harmless on desktop. --- */
+@media (hover: none) {
+  /* Close buttons: enlarge to a 44px tap target, keep the glyph centred. */
+  #help-close,
+  #inv-close,
+  #lb-close,
+  #chat-close {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+  }
+}
+
+/* Press feedback on touch: mirror each overlay button's :hover look on :active and
+   :focus-visible, so a tap shows confirmation even though hover never fires. These
+   pair with (don't replace) the existing :hover rules. */
+#help-close:active,
+#help-close:focus-visible,
+#inv-close:active,
+#inv-close:focus-visible,
+#lb-close:active,
+#lb-close:focus-visible,
+#chat-close:active,
+#chat-close:focus-visible {
+  background: #243040;
+}
+.species-option:active,
+.species-option:focus-visible {
+  background: rgba(76, 201, 240, 0.14);
+  border-color: rgba(76, 201, 240, 0.5);
+}
+#login-play:active,
+#login-play:focus-visible {
+  filter: brightness(1.08);
 }

@@ -32,6 +32,7 @@ import type { ChatMessage } from '@shared/net';
 import { speciesByKey } from '@shared/species';
 import { createSpeciesSprite } from './species-sprite';
 import { playSfx } from './audio';
+import { focusWithKeyboard, hideKeyboard } from './keyboard';
 
 /** How long (ms) each collapsed bubble is held before the next one shows. */
 const BUBBLE_MS = 3000;
@@ -242,10 +243,14 @@ export function createChat(opts: ChatOptions): ChatHandle {
 
   const focusInput = (): void => {
     input.value = ''; // insurance: the opening '/' never lands here
-    input.focus();
+    // Raise the soft keyboard on Android (the rAF-deferred focus is outside the
+    // gesture window, so a plain .focus() often won't show it). Plain focus elsewhere.
+    focusWithKeyboard(input);
   };
   const blurInput = (): void => {
     input.blur();
+    // Drop the soft keyboard when the chat closes (Android; no-op elsewhere).
+    hideKeyboard();
   };
 
   input.addEventListener('focus', () => {

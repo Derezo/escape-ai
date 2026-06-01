@@ -4,6 +4,30 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.194: **Android touch — Phase 3: safe area + soft keyboard + touch targets.** The
+  usability polish that makes the touch build feel native. **Safe area:** the HUD, food bar,
+  and chat icon/panel now pad with `max(<orig>, env(safe-area-inset-*))` so they clear the
+  notch / status bar / gesture-nav on phones (`viewport-fit=cover` draws under the system
+  bars); insets are 0 on desktop, so visuals there are unchanged. **Soft keyboard:** new
+  `client/src/keyboard.ts` (installs `@capacitor/keyboard@8.0.3`) — `focusWithKeyboard()`
+  focuses an input AND raises the keyboard on Android (a plain rAF-deferred `.focus()` is
+  outside the gesture window and often won't show it), wired into the login name field
+  (`menu.ts`) and the chat input (`chat.ts`); `hideKeyboard()` drops it on chat-close and the
+  menu→game handoff; `trackKeyboard()` publishes the keyboard's covered height as `--kb-inset`
+  on `<body>` (via Capacitor `keyboardWillShow/Hide` + a `visualViewport` fallback) so the
+  chat panel lifts above the keyboard instead of being covered. **Touch targets:** the
+  help/inventory/leaderboard/chat close buttons enlarge to 44×44 under `@media (hover: none)`,
+  and every overlay button's `:hover` look is mirrored on `:active`/`:focus-visible` so a tap
+  shows confirmation (hover never fires on touch) — both scoped so desktop sizing/visuals are
+  untouched. **Touch-aware copy:** the help Controls tab renders the on-screen controls (left
+  thumb to steer, edge to sprint, the action buttons) instead of WASD/Shift/E/F/Q on Android,
+  and the close hint reads "tap × to close". The joystick also now ignores touches that start
+  on the chat icon/panel or any button, so a tap meant for chat isn't hijacked. **Verified on
+  an Android 16 emulator:** soft keyboard auto-raises on the login field (no extra tap); via
+  DevTools the help tab shows touch text (no WASD), the close button measures 44×44 with
+  `(hover: none)` matching, `--kb-inset`/`platform-android` are set, and the hint reads "tap ×
+  to close". Desktop unaffected (`isAndroid` / `@media (hover)` gating).
+
 - 0.2.193: **Android touch — Phase 2: background-pause lifecycle (battery).** On a phone,
   backgrounding the WebView (home / call / app-switch) left the rAF render loop, both
   `setInterval`s (connection tick + input send), the audio loops, and the Socket.IO

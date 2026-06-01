@@ -37,6 +37,7 @@ import { unlockAudio, playSfx } from './audio';
 import { playMusicState } from './music';
 import { loadAuth, saveAuth, clearAuth } from './auth';
 import { createSpeciesSprite } from './species-sprite';
+import { focusWithKeyboard } from './keyboard';
 
 /** The tagline under the splash title — the premise in one breath. */
 const SPLASH_TAGLINE = 'The zoo is under new management.';
@@ -251,7 +252,7 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
           playSfx('error');
           showManualForm();
           showError('That name is taken — try another.');
-          nameInput.focus();
+          focusWithKeyboard(nameInput);
           nameInput.select();
           break;
         case 'bad_token':
@@ -266,7 +267,7 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         default:
           showManualForm();
           showError('Enter a name.');
-          nameInput.focus();
+          focusWithKeyboard(nameInput);
           break;
       }
     });
@@ -305,7 +306,7 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
       const username = nameInput.value.trim();
       if (!username) {
         showError('Enter a name.');
-        nameInput.focus();
+        focusWithKeyboard(nameInput);
         return;
       }
       clearError();
@@ -333,7 +334,7 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
         net.login(saved.username, saved.token);
       } else {
         showManualForm();
-        nameInput.focus();
+        focusWithKeyboard(nameInput);
       }
     };
 

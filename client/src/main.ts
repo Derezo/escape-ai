@@ -47,6 +47,7 @@ import { isAndroid, applyPlatformClass } from './platform';
 import { getTouchVector, setActionSink } from './touch-input';
 import { createTouchControls } from './touch-controls';
 import { installLifecycle } from './lifecycle';
+import { trackKeyboard, hideKeyboard } from './keyboard';
 
 // Client prediction uses the SAME collision-aware integration as the server
 // (shared moveWithCollision against the regenerated map's grid), so prediction
@@ -67,6 +68,9 @@ async function main(): Promise<void> {
   // Mirror the platform onto <body> (platform-android / platform-native) so CSS can
   // gate touch-only presentation the same way the JS gates touch-only behaviour.
   applyPlatformClass();
+  // Track the soft keyboard (Android): publishes --kb-inset so bottom-anchored panels
+  // lift above it. No-op off-Android.
+  trackKeyboard();
 
   // --- Renderer (default = Phaser 2D) ---
   const renderer: IRenderer = new PhaserRenderer();
@@ -259,6 +263,9 @@ async function main(): Promise<void> {
   net.onLeaderboard((msg) => leaderboard.render(msg));
 
   const { username, species, isNewCharacter } = await runMenu(net);
+  // Leaving the login form for the world — make sure the soft keyboard is down so it
+  // can't cover the game or leak keys into movement (Android; no-op elsewhere).
+  hideKeyboard();
   // Identity: the authenticated username. The server assigns the authoritative
   // entity id; we match "our" entity by this name (roster match below).
   const myName = username;
