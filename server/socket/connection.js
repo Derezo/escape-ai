@@ -9,6 +9,8 @@ const { CLIENT_EVENTS, SERVER_EVENTS } = require('../../shared/dist/net.js');
 const { broadcastLobbyState } = require('./lobby');
 const follow = require('../game/follow');
 const session = require('../game/session');
+const world = require('../game/world');
+const config = require('../config');
 const { limiter } = require('./rate-limit');
 
 /**
@@ -83,6 +85,13 @@ function cleanup(socket, deps) {
       members.delete(socket.id);
       if (members.size === 0) {
         rooms.delete(player.room);
+        // Reclaim the now-empty room's world (generated map + entity Set +
+        // WorldState). Safe to do the same beat as the membership teardown: the
+        // engine's tick/snapshot loops iterate `rooms`, not roomWorlds, so once
+        // the room is dropped from `rooms` no tick will touch (or resurrect) it.
+        // DEFAULT_ROOM is the pre-warmed fallback — keep it resident to avoid
+        // regenerate-churn on every lobby cycle.
+        if (player.room !== config.DEFAULT_ROOM) world.removeRoom(player.room);
       } else {
         broadcastLobbyState(io, connectedPlayers, rooms, player.room);
       }

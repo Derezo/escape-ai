@@ -4,6 +4,24 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.162: **Findings closeout Phase 3 — room-name validation + room-world reclaim.**
+  Closes a verified resource leak: a client could mint an unbounded number of distinct
+  room worlds (each a generated map + entity Set + WorldState) that were NEVER reclaimed.
+  (A) `socket/lobby.js` now validates the client-supplied room name through a new
+  `sanitizeRoom` helper — safe charset `[a-zA-Z0-9_-]`, 1–32 chars, else the pre-warmed
+  `DEFAULT_ROOM` fallback — bounding how many distinct worlds a client can create.
+  (B) `world.removeRoom()` (which existed but had only test callers) is now wired into
+  BOTH room-empties paths — `socket/connection.js` disconnect cleanup and
+  `socket/lobby.js` `leaveRoom` (room switch) — so an emptied non-default room frees its
+  world. `DEFAULT_ROOM` is intentionally NOT reclaimed (it's the pre-warmed fallback;
+  reclaiming it would churn-regenerate on every lobby cycle). Safe because the engine
+  tick/snapshot loops iterate the `rooms` membership map, never `roomWorlds`, so reclaim
+  after `rooms.delete` can't race a tick. New non-mutating `world.hasRoom()` residency
+  probe (the lazy getters would mask a reclaim). New gate `server/test/room-lifecycle.test.js`
+  (3 tests: sanitizeRoom accept/reject table; create→non-last-leave-survives→last-leave-
+  reclaims through the REAL `connection.cleanup`; DEFAULT_ROOM not reclaimed). Server
+  suite 12 → 15 green; no circular require (world.js imports nothing from socket/).
+
 - 0.2.161: **provision-escape.sh now runs from the dev box.** Provisioning is no
   longer a "copy to the VPS and run as root there" step — it matches deploy-server.sh.
   The script resolves config from `scripts/deploy.env`, opens the `DEPLOY_USER` SSH

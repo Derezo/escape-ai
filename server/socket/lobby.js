@@ -49,6 +49,21 @@ function speciesRosterKeys() {
   return keys.length ? keys : SPECIES_FALLBACK;
 }
 
+// Room names are attacker-controlled (client-supplied on lobby:join) and each
+// DISTINCT name allocates a full room world (generated map + entity Set +
+// WorldState) in world.js. We constrain the name to a safe charset + bounded
+// length so a client can't (a) mint unbounded distinct rooms with junk strings
+// to grow the room-world leak surface, or (b) smuggle odd chars (paths, spaces,
+// control bytes) into logs / room keys. Anything that doesn't match falls back
+// to the pre-warmed DEFAULT_ROOM. Pure + exported so it's unit-testable without
+// a live socket.
+const ROOM_NAME_RE = /^[a-zA-Z0-9_-]{1,32}$/;
+function sanitizeRoom(raw) {
+  if (typeof raw !== 'string') return config.DEFAULT_ROOM;
+  const trimmed = raw.trim();
+  return ROOM_NAME_RE.test(trimmed) ? trimmed : config.DEFAULT_ROOM;
+}
+
 /**
  * @param {import('socket.io').Socket} socket
  * @param {object} deps  shared dependencies (see socket/index.js)
@@ -61,9 +76,9 @@ function register(socket, deps) {
     // no state change (no room churn, no extra spawn). The client may retry.
     if (!limiter.allow(socket.id, 'lobby:join')) return;
 
-    const room = typeof payload.room === 'string' && payload.room.trim()
-      ? payload.room.trim()
-      : config.DEFAULT_ROOM;
+    // Validate + clamp the client-supplied room name (see sanitizeRoom): a safe
+    // charset, 1–32 chars, else the pre-warmed DEFAULT_ROOM fallback.
+    const room = sanitizeRoom(payload.room);
 
     // Identity: an authenticated socket's username (set by auth.js on auth:login)
     // is authoritative — it overrides whatever name the payload carries. An
@@ -285,7 +300,15 @@ function leaveRoom(socket, connectedPlayers, rooms, room) {
   const members = rooms.get(room);
   if (!members) return;
   members.delete(socket.id);
-  if (members.size === 0) rooms.delete(room);
+  if (members.size === 0) {
+    rooms.delete(room);
+    // Reclaim the room's world (generated map + entity Set + WorldState) once the
+    // last member leaves — the engine's tick/snapshot loops iterate `rooms`, not
+    // roomWorlds, so removing it the same beat as the membership entry is safe (no
+    // tick resurrects it mid-step). DEFAULT_ROOM is the pre-warmed fallback; keep
+    // it resident to avoid regenerate-churn on every lobby cycle.
+    if (room !== config.DEFAULT_ROOM) world.removeRoom(room);
+  }
 }
 
 /** Emit the current player roster of a room to everyone in that room. */
@@ -302,4 +325,4 @@ function broadcastLobbyState(io, connectedPlayers, rooms, room) {
   io.to(room).emit(SERVER_EVENTS.LOBBY_STATE, { players });
 }
 
-module.exports = { register, broadcastLobbyState };
+module.exports = { register, broadcastLobbyState, sanitizeRoom };

@@ -495,6 +495,18 @@ function removeRoom(roomName) {
 }
 
 /**
+ * Whether a room's world is currently resident (has been generated and not yet
+ * reclaimed). NON-mutating — unlike getOrCreateRoomWorld it never generates a
+ * room as a side effect, so it's a safe residency probe (used by the
+ * room-lifecycle teardown test and any future eviction bookkeeping).
+ * @param {string} roomName
+ * @returns {boolean}
+ */
+function hasRoom(roomName) {
+  return roomWorlds.has(roomName);
+}
+
+/**
  * Add a (usually temporary) entity to a room's world — e.g. a skunk stink-cloud
  * hazard or a fox lure decoy. Stored in the same entity map as the static props,
  * so it rides the engine's delta diff automatically. An entity carrying an
@@ -626,6 +638,7 @@ module.exports = {
   getWorldEntities,
   getWorldState,
   removeRoom,
+  hasRoom,
   addWorldEntity,
   pruneExpired,
   nextTempId,
