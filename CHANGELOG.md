@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.163: **provision-escape.sh — two-phase TLS bootstrap (fixes first-run cert
+  failure).** The original flow wrote the full vhost (which references the TLS cert)
+  then ran certbot — but an `ssl_certificate` line pointing at a not-yet-existent
+  file makes `nginx -t` fail hard, so nginx could never be reloaded to serve the
+  HTTP-01 challenge, and certbot 404'd. Restructured into the standard two-phase
+  bootstrap: Phase A writes an HTTP-only vhost (port 80 + `.well-known/acme-challenge/`
+  webroot), reloads nginx, and runs certbot; Phase B then writes the full SSL vhost
+  and reloads. Re-runs with a cert already present skip straight to the full vhost;
+  `SKIP_CERTBOT=1` writes the HTTP-only vhost and defers TLS. Provisioned + validated
+  live on the VPS: app user (nologin/locked), 0750 dirs, pm2-escape.service enabled,
+  cert issued (auto-renew), nginx vhost live, ufw 80/443 open + app port closed,
+  public HTTPS + HTTP→HTTPS redirect confirmed (/health 502 + / 403 are correct
+  pre-deploy: node + client bundle not shipped yet).
+
 - 0.2.162: **Findings closeout Phase 3 — room-name validation + room-world reclaim.**
   Closes a verified resource leak: a client could mint an unbounded number of distinct
   room worlds (each a generated map + entity Set + WorldState) that were NEVER reclaimed.
