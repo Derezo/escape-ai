@@ -4,6 +4,18 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.206: **Deploy — rebuild the Android APK as part of `deploy-server.sh`.** The deploy staged a
+  pre-built APK but never rebuilt it, so the `/android` download link silently went stale (it shipped
+  whatever binary happened to sit at `app/build/outputs/apk/release/`, not the code being deployed).
+  Added a new step 1a: after the client `dist/` build (with `VITE_SERVER_URL` already baked), it
+  `npx cap sync android` (copies the fresh `dist/` into the native project) then assembles a signed
+  release APK via `./gradlew --no-daemon assembleRelease`. `JAVA_HOME` is auto-resolved (honors an
+  exported value, else derives from the `java` binary, else the Ubuntu JDK-17 default), and the step
+  fails loud if the JDK / SDK `local.properties` / `keystore.properties` are missing rather than
+  shipping a stale APK. `SKIP_APK_BUILD=1` skips the rebuild for hosts without the Android toolchain
+  (step 1b then stages a pre-existing APK if present). With the rebuild on (default), a missing APK at
+  staging is now a hard error. `bash -n` + shellcheck clean.
+
 - 0.2.205: **Android — runtime landscape lock backstop.** The manifest already pins the activity to
   `sensorLandscape` (0.2.200, the authoritative native lock), but a stale install or a WebView that
   ignores it could still let the page rotate to portrait. Added a dependency-free `lockLandscape()`

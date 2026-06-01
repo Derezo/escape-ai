@@ -95,27 +95,69 @@ log "Building client/ (VITE_SERVER_URL=https://${APP_DOMAIN})"
     && VITE_SERVER_URL="https://${APP_DOMAIN}" npm run build )
 [[ -f "${PROJECT_ROOT}/client/dist/index.html" ]] || die "client build produced no dist/index.html."
 
+# --- 1a. rebuild the Android APK from the FRESH dist/ -----------------------
+# The /android download link must serve an APK that matches what we just deployed,
+# not a stale binary from a prior build. We cap-sync the dist/ we built above
+# (with VITE_SERVER_URL=https://${APP_DOMAIN} already baked in) into the native
+# project, then assemble a signed release APK. This runs BEFORE staging (1b), so
+# 1b copies the freshly-built APK.
+#
+# Requires the Android toolchain on this machine: a JDK 17, the SDK
+# (client/android/local.properties → sdk.dir), and signing config
+# (client/android/keystore.properties). All are dev-machine-only and gitignored.
+# Set SKIP_APK_BUILD=1 to skip the rebuild (e.g. deploying server/web from a host
+# without the Android SDK) — 1b then stages whatever APK already exists, if any.
+if [[ "${SKIP_APK_BUILD:-0}" == "1" ]]; then
+  log "Skipping APK rebuild (SKIP_APK_BUILD=1) — step 1b stages the existing APK if present."
+else
+  # Resolve a JDK 17 home: honor an exported JAVA_HOME, else derive from the java
+  # binary on PATH, else the Ubuntu default. Fail loud if none resolves.
+  if [[ -z "${JAVA_HOME:-}" ]]; then
+    if command -v java >/dev/null 2>&1; then
+      JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")"
+    elif [[ -d /usr/lib/jvm/java-17-openjdk-amd64 ]]; then
+      JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+    fi
+  fi
+  [[ -n "${JAVA_HOME:-}" && -x "${JAVA_HOME}/bin/java" ]] \
+    || die "No JDK found for the APK build. Install JDK 17 and/or export JAVA_HOME, or pass SKIP_APK_BUILD=1."
+  [[ -f "${PROJECT_ROOT}/client/android/local.properties" ]] \
+    || die "client/android/local.properties missing (needs sdk.dir=...). See docs/ANDROID.md, or pass SKIP_APK_BUILD=1."
+  [[ -f "${PROJECT_ROOT}/client/android/keystore.properties" ]] \
+    || die "client/android/keystore.properties missing — release APK would be unsigned. See docs/ANDROID.md, or pass SKIP_APK_BUILD=1."
+
+  log "Rebuilding Android APK: cap sync (dist/ → android/) + assembleRelease (JAVA_HOME=${JAVA_HOME})"
+  ( cd "${PROJECT_ROOT}/client" && npx cap sync android )
+  ( cd "${PROJECT_ROOT}/client/android" && JAVA_HOME="${JAVA_HOME}" ./gradlew --no-daemon assembleRelease )
+
+  BUILT_APK="${PROJECT_ROOT}/client/android/app/build/outputs/apk/release/app-release.apk"
+  [[ -f "${BUILT_APK}" ]] || die "assembleRelease produced no APK at ${BUILT_APK}."
+  log "APK rebuilt: ${BUILT_APK} ($(du -h "${BUILT_APK}" | cut -f1))"
+fi
+
 # --- 1b. stage the Android APK into the bundle (for the /android download page)
 # The /android page (assets/android/ → dist/android/index.html, copied by Vite)
-# links to ./escape-ai.apk. The APK is a large, gitignored binary built
-# separately (see docs/ANDROID.md), so we copy the locally-built signed release
-# APK into the bundle just before the rsync. It then ships with the static
-# client to ${REMOTE_PATH}/client/android/escape-ai.apk and nginx serves it at
-# https://${APP_DOMAIN}/android/escape-ai.apk.
+# links to ./escape-ai.apk. We copy the release APK (freshly built in 1a unless
+# SKIP_APK_BUILD=1) into the bundle just before the rsync. It then ships with the
+# static client to ${REMOTE_PATH}/client/android/escape-ai.apk and nginx serves it
+# at https://${APP_DOMAIN}/android/escape-ai.apk.
 #
 # Path is overridable: APK_PATH=/path/to.apk ./scripts/deploy-server.sh
-# If no APK is found we WARN and continue — the page still deploys; only the
-# download link 404s until an APK is staged. Set REQUIRE_APK=1 to hard-fail.
+# With the rebuild on (default), the APK is guaranteed present, so a missing one is
+# a hard error. With SKIP_APK_BUILD=1 and no pre-existing APK we WARN and continue
+# (the page deploys; only the download link 404s). REQUIRE_APK=1 forces a hard-fail.
 APK_PATH="${APK_PATH:-${PROJECT_ROOT}/client/android/app/build/outputs/apk/release/app-release.apk}"
 if [[ -f "${APK_PATH}" ]]; then
   log "Staging Android APK → client/dist/android/escape-ai.apk ($(du -h "${APK_PATH}" | cut -f1))"
   mkdir -p "${PROJECT_ROOT}/client/dist/android"
   cp "${APK_PATH}" "${PROJECT_ROOT}/client/dist/android/escape-ai.apk"
-elif [[ "${REQUIRE_APK:-0}" == "1" ]]; then
-  die "REQUIRE_APK=1 but no APK at ${APK_PATH}. Build it first (see docs/ANDROID.md) or set APK_PATH."
+elif [[ "${REQUIRE_APK:-0}" == "1" || "${SKIP_APK_BUILD:-0}" != "1" ]]; then
+  # The rebuild ran (or REQUIRE_APK forces it): a missing APK here means the build
+  # silently failed to land — hard-fail rather than ship a stale/absent download.
+  die "No APK at ${APK_PATH} after the rebuild. assembleRelease may have failed; check the log above (or pass SKIP_APK_BUILD=1 / APK_PATH=...)."
 else
   log "WARNING: no APK at ${APK_PATH} — /android page will deploy but the download link will 404."
-  log "         Build a signed release APK (docs/ANDROID.md) or pass APK_PATH=/path/to.apk to include it."
+  log "         Rebuild was skipped (SKIP_APK_BUILD=1); build a signed release APK (docs/ANDROID.md) or pass APK_PATH=/path/to.apk."
 fi
 
 # --- 2. ensure remote dirs exist (idempotent; provision made them, this is safe)
