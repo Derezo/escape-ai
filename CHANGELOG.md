@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.173: **Connection-loss overlay — NetClient wiring + retry hardening (phase 2/3).**
+  Wired the real socket.io lifecycle into the `ConnectionState` machine and fixed the one
+  genuine retry gap. NetClient now handles `connect_error` (with the live transport name)
+  and the manager-level `reconnect_attempt`/`reconnect_failed` events, anchors the health
+  clock at `connect()` (so the 5s threshold counts on a first-load failure too), and exposes
+  `onConnectionChange(cb)`, `tickConnection(nowMs)`, `retry()`, and `get connected`.
+  **Retry fix:** when the server forcibly disconnects (`reason === 'io server disconnect'`),
+  socket.io does *not* auto-reconnect — NetClient now calls `socket.connect()` itself so the
+  client always recovers instead of hanging. **Anti-replay:** `sendInput` now emits as
+  `volatile`, so movement buffered while offline is dropped rather than flushed as a stale
+  burst on reconnect (the server is authoritative and re-prediction resumes from the next
+  snapshot). `disconnect()` marks the teardown intentional so a clean exit never flashes the
+  overlay. Typecheck + the phase-1 unit suite stay green. The DOM overlay lands in phase 3.
+
 - 0.2.172: **Connection-loss overlay — pure state machine + unit tests (phase 1/3).**
   First slice of the "Unable to connect… retrying" feature: a DOM-free, socket-free
   `ConnectionState` (`client/src/net/connection-state.ts`) that owns the 5-second outage

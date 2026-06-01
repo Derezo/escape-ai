@@ -10,6 +10,7 @@
  */
 
 import { io, type Socket } from 'socket.io-client';
+import { ConnectionState, type ConnectionView } from './connection-state';
 import {
   CLIENT_EVENTS,
   SERVER_EVENTS,
@@ -43,8 +44,22 @@ export class NetClient {
   private leaderboardCb: (msg: LeaderboardMsg) => void = () => {};
   private chatCb: (msg: ChatMessage) => void = () => {};
 
+  /**
+   * The connection-health state machine that drives the "Unable to connect…
+   * retrying" overlay. NetClient is its single owner: it feeds the real socket.io
+   * lifecycle events in, and main.ts reads views out via {@link onConnectionChange}
+   * and the {@link tickConnection} clock. See connection-state.ts.
+   */
+  private conn = new ConnectionState();
+  private connChangeCb: (view: ConnectionView) => void = () => {};
+
   /** Open the connection. Wires server->client handlers and starts the ping loop. */
   connect(url: string): void {
+    // Anchor the connection-health clock at the connect() call so the 5s overlay
+    // threshold counts from "we started trying" even on a first load that never
+    // succeeds (no disconnect has happened yet to anchor it otherwise).
+    this.conn.markConnecting(Date.now());
+
     this.socket = io(url, {
       transports: ['websocket', 'polling'],
       autoConnect: true,
@@ -91,8 +106,73 @@ export class NetClient {
       this.latencyMs = this.latencyMs < 0 ? rtt : Math.round(this.latencyMs * 0.7 + rtt * 0.3);
     });
 
-    this.socket.on('connect', () => this.startPingLoop());
-    this.socket.on('disconnect', () => this.stopPingLoop());
+    // --- Connection health (drives the "Unable to connect… retrying" overlay) ---
+    // Socket-level lifecycle: connect / connect_error / disconnect. The ping loop
+    // start/stop rides along the connect/disconnect edges (unchanged behavior).
+    this.socket.on('connect', () => {
+      this.conn.onConnect(Date.now());
+      this.startPingLoop();
+      this.emitConnChange();
+    });
+
+    this.socket.on('connect_error', (err: Error) => {
+      // Each failed connection/handshake attempt — the workhorse signal on a
+      // first-load failure, where the manager's reconnect_* events don't fire.
+      const transport = this.socket?.io?.engine?.transport?.name;
+      this.conn.onConnectError(Date.now(), err.message, transport);
+      this.emitConnChange();
+    });
+
+    this.socket.on('disconnect', (reason: string) => {
+      this.stopPingLoop();
+      this.conn.onDisconnect(Date.now(), reason);
+      // socket.io does NOT auto-reconnect after a server-forced disconnect, so
+      // re-arm the retry ourselves. (Our own intentional teardown reports
+      // 'io client disconnect' and is suppressed via setIntentional() in
+      // disconnect(), so it never reaches this branch.)
+      if (reason === 'io server disconnect') this.socket?.connect();
+      this.emitConnChange();
+    });
+
+    // Manager-level reconnection lifecycle (only fires after a prior successful
+    // connection that dropped). `this.socket.io` is the shared Manager.
+    this.socket.io.on('reconnect_attempt', (attempt: number) => {
+      this.conn.onReconnectAttempt(Date.now(), attempt);
+      this.emitConnChange();
+    });
+    this.socket.io.on('reconnect_failed', () => {
+      this.conn.onReconnectFailed(Date.now());
+      this.emitConnChange();
+    });
+  }
+
+  /** Register the connection-health handler (drives the connection-loss overlay). */
+  onConnectionChange(cb: (view: ConnectionView) => void): void {
+    this.connChangeCb = cb;
+  }
+
+  /** Push the current connection view to the registered handler. */
+  private emitConnChange(): void {
+    this.connChangeCb(this.conn.view());
+  }
+
+  /**
+   * Advance the connection-health clock and return the fresh view. main.ts calls
+   * this on a steady interval so the 5s overlay threshold (and the "Ns offline"
+   * readout) update even when no socket event has fired. Pure w.r.t. `nowMs`.
+   */
+  tickConnection(nowMs: number): ConnectionView {
+    return this.conn.tick(nowMs);
+  }
+
+  /** Force an immediate reconnection attempt (the overlay's "Retry now" button). */
+  retry(): void {
+    this.socket?.connect();
+  }
+
+  /** Whether the socket is currently connected. */
+  get connected(): boolean {
+    return this.socket?.connected ?? false;
   }
 
   /**
@@ -122,9 +202,16 @@ export class NetClient {
     this.socket?.emit(CLIENT_EVENTS.LOBBY_JOIN, payload);
   }
 
-  /** Emit input {seq, dx, dy} (plus any extra forward-compatible fields). */
+  /**
+   * Emit input {seq, dx, dy} (plus any extra forward-compatible fields). Sent as
+   * VOLATILE: while disconnected, socket.io buffers emits and flushes them on
+   * reconnect — for real-time movement that means a burst of stale inputs would
+   * replay the moment we reconnect. Volatile drops them instead, which is the
+   * correct semantics here (only the latest movement matters; the server is
+   * authoritative and the client re-predicts from the next snapshot).
+   */
   sendInput(input: InputMsg): void {
-    this.socket?.emit(CLIENT_EVENTS.INPUT, input);
+    this.socket?.volatile.emit(CLIENT_EVENTS.INPUT, input);
   }
 
   /** Register the snapshot handler. */
@@ -177,6 +264,10 @@ export class NetClient {
 
   disconnect(): void {
     this.stopPingLoop();
+    // Mark this as an intentional app-initiated teardown BEFORE we disconnect so
+    // the connection-health machine suppresses the overlay for the resulting
+    // 'io client disconnect' (we don't want "Unable to connect" on a clean exit).
+    this.conn.setIntentional(true);
     this.socket?.disconnect();
     this.socket = undefined;
   }
