@@ -31,23 +31,67 @@ CLIENT_PORT="${CLIENT_PORT:-5173}"   # Vite default
 # Point the dev client at the local server unless the caller overrides it.
 export VITE_SERVER_URL="${VITE_SERVER_URL:-http://localhost:${SERVER_PORT}}"
 
-# --- flags ------------------------------------------------------------------
-CLEAN=0 FORCE_INSTALL=0 RUN_SERVER=1 RUN_CLIENT=1
-for arg in "$@"; do
-  case "$arg" in
-    --clean)         CLEAN=1 ;;
-    --force-install) FORCE_INSTALL=1 ;;
-    --server-only)   RUN_CLIENT=0 ;;
-    --client-only)   RUN_SERVER=0 ;;
-    -h|--help)
-      sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-      exit 0 ;;
-    *) echo "unknown flag: $arg (try --help)" >&2; exit 2 ;;
-  esac
-done
-
 log()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m %s\n' "$*"; }
+err()  { printf '\033[1;31m[error]\033[0m %s\n' "$*" >&2; }
+
+# --- dependency preflight ---------------------------------------------------
+# Verify the host has everything required BEFORE we install/build/launch, and
+# report EVERY missing or insufficient requirement at once (not one-at-a-time)
+# with a concrete install hint, so a fresh machine gets a single actionable list
+# instead of failing deep inside `npm run build` with a cryptic error.
+#
+# Hard requirements (missing → exit 1): node (>= REQUIRED_NODE_MAJOR) and npm.
+# Soft requirements (missing → warn only): lsof/fuser (port auto-free) and
+# setsid (clean group teardown) already degrade gracefully elsewhere.
+REQUIRED_NODE_MAJOR="${REQUIRED_NODE_MAJOR:-22}"
+
+# Echo the major version of `node -v` (e.g. "v22.22.2" → "22"); empty if unparseable.
+node_major() {
+  local v
+  v="$(node -v 2>/dev/null)" || return 0
+  v="${v#v}"          # strip leading 'v'
+  printf '%s' "${v%%.*}"
+}
+
+preflight() {
+  local missing=0
+
+  # node — required, with a minimum major version.
+  if ! command -v node >/dev/null 2>&1; then
+    err "node not found. Install Node.js >= ${REQUIRED_NODE_MAJOR} (https://nodejs.org or 'nvm install ${REQUIRED_NODE_MAJOR}')."
+    missing=1
+  else
+    local major
+    major="$(node_major)"
+    if [[ -z "${major}" ]]; then
+      warn "could not parse node version from '$(node -v 2>/dev/null)'; need >= ${REQUIRED_NODE_MAJOR}."
+    elif [[ "${major}" -lt "${REQUIRED_NODE_MAJOR}" ]]; then
+      err "node $(node -v) is too old; need >= ${REQUIRED_NODE_MAJOR}. Upgrade (e.g. 'nvm install ${REQUIRED_NODE_MAJOR} && nvm use ${REQUIRED_NODE_MAJOR}')."
+      missing=1
+    fi
+  fi
+
+  # npm — required (ships with node, but can be absent on stripped installs).
+  if ! command -v npm >/dev/null 2>&1; then
+    err "npm not found. It ships with Node.js — reinstall Node.js >= ${REQUIRED_NODE_MAJOR} (https://nodejs.org)."
+    missing=1
+  fi
+
+  # Soft deps: not fatal — the script degrades gracefully without them.
+  if ! command -v lsof >/dev/null 2>&1 && ! command -v fuser >/dev/null 2>&1; then
+    warn "neither lsof nor fuser found — ports won't be auto-freed (install lsof, e.g. 'apt install lsof')."
+  fi
+  if ! command -v setsid >/dev/null 2>&1; then
+    warn "setsid not found — Ctrl-C teardown falls back to per-PID kill (install util-linux for setsid)."
+  fi
+
+  if [[ "${missing}" -ne 0 ]]; then
+    err "Missing required tooling (see above). Install it and re-run ./scripts/run-dev.sh"
+    return 1
+  fi
+  log "Preflight OK (node $(node -v), npm $(npm -v))"
+}
 
 # --- conditional install ----------------------------------------------------
 # Reinstall only when node_modules is absent OR package-lock.json is newer than
@@ -147,6 +191,29 @@ spawn_group() {
 }
 
 # ============================================================================
+# Sourced by the BATS test harness? Stop here — expose the functions above for
+# unit testing without parsing flags or booting the stack. (BATS sets
+# BATS_TEST_FILENAME.)
+[[ -n "${BATS_TEST_FILENAME:-}" ]] && return 0
+
+# --- flags ------------------------------------------------------------------
+CLEAN=0 FORCE_INSTALL=0 RUN_SERVER=1 RUN_CLIENT=1
+for arg in "$@"; do
+  case "$arg" in
+    --clean)         CLEAN=1 ;;
+    --force-install) FORCE_INSTALL=1 ;;
+    --server-only)   RUN_CLIENT=0 ;;
+    --client-only)   RUN_SERVER=0 ;;
+    -h|--help)
+      sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0 ;;
+    *) echo "unknown flag: $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+# Fail fast with a complete list of what's missing before we touch anything.
+preflight
+
 [[ "${CLEAN}" -eq 1 ]] && clean_data
 
 # shared/ is required by both: client imports its src, server loads its dist.
