@@ -1170,6 +1170,34 @@ body {
   color: #9aa3ad;
 }
 
+/* Liked-food chip on a species card: the food that recruits it as a follower. */
+.species-card-food {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #ffd166;
+}
+
+/* Shared help/tips copy: grouped-controls sub-headings + the human-vs-prey lede.
+   Scoped to the help panel and the tips panel so both surfaces render identically. */
+#help-panel .copy-subhead,
+#tips-panel .copy-subhead {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #6c7888;
+}
+
+#help-panel .copy-lede,
+#tips-panel .copy-lede {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border-left: 3px solid #4cc9f0;
+  background: rgba(76, 201, 240, 0.08);
+  border-radius: 0 6px 6px 0;
+  color: #cde7ff;
+}
+
 /* Stats tab: a two-column label/value grid + the last-species sprite. */
 .stats-grid {
   display: grid;

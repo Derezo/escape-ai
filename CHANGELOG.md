@@ -4,6 +4,18 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.197: **Onboarding — help-widget rework + shared teaching copy.** First in a small arc to
+  make the game legible to first-time players (feedback: it isn't intuitive). Two new
+  single-source-of-truth modules so the persistent help widget and the upcoming first-login tips
+  screen can never drift: `client/src/help-copy.ts` (controls grouped under Move/Act/Panels, a
+  "walk = human / sprint = prey" lede, the Goal blurb, and a food-followers-robots walkthrough,
+  all platform-aware for keyboard vs touch) and `client/src/tips-state.ts` (a crash-proof
+  `escapeai.tips_seen` localStorage gate, modelled on `auth.ts`, versioned so a future revamp can
+  re-show). The H/? help widget's **Controls** tab is reworked from a flat key list into a real
+  "how to play" walkthrough sourced from `help-copy.ts`, and each **Species** card now shows its
+  liked-food chip (🍌 likes Banana) from `@shared/food` so the recruit mechanic is taught on the
+  card. No behaviour change; client build + all 6 verify gates green.
+
 - 0.2.196: **Android touch — validation cleanups.** `plan-validation-and-review` of the
   touch-controls arc returned PASS (desktop-unchanged invariant + unchanged net contract both
   confirmed) with three minor dead-code findings, now fixed: removed the unused `isNative`
