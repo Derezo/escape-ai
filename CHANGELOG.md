@@ -4,6 +4,25 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.195: **Android touch — Phase 4: orientation lock + IME guard + intro copy.** The
+  lower-priority polish that closes the audit. **Orientation:** `MainActivity` gets
+  `android:screenOrientation="portrait"` in the manifest — the game is portrait-designed and
+  the modals don't reflow for landscape; `aapt` confirms the lock baked into the merged
+  manifest. **IME:** the login name field's Enter handler (`menu.ts`) now bails on
+  `e.isComposing || e.keyCode === 229`, so pressing Enter to confirm a JP/KR/CN composition
+  candidate no longer submits half-composed text or doubles a character. (Chat already sends
+  via `form.submit`, which fires after composition ends — inherently safe, so no change there.)
+  **Intro:** the skip prompt now reads "Press any key or tap to skip" (correct on every
+  platform — the intro was already tap-skippable via `pointerdown`; only the copy lagged).
+  **Bundle (M9):** the ~1.6 MB single-chunk code-split is deliberately deferred to
+  `FINDINGS_OUTSIDE_SCOPE.md` — it's the lowest-value, highest-risk audit item (dynamic
+  `import()` interacts with Capacitor's `base: './'` WebView asset loading and needs its own
+  on-device verification pass), and the game already loads and runs. Final regression on an
+  Android 16 emulator: in-world at ~20 ms, the joystick still yields exact analog (a down-drag
+  reads `dy=0.50`), portrait locked, all controls working. **This completes the Android
+  touch-controls arc (Phases 0–4): Android went from unplayable-past-login to fully playable
+  with native-feeling controls, all gated so desktop is byte-for-byte unchanged.**
+
 - 0.2.194: **Android touch — Phase 3: safe area + soft keyboard + touch targets.** The
   usability polish that makes the touch build feel native. **Safe area:** the HUD, food bar,
   and chat icon/panel now pad with `max(<orig>, env(safe-area-inset-*))` so they clear the

@@ -316,6 +316,10 @@ export function runMenu(net: NetClient): Promise<MenuResult> {
 
     playBtn.addEventListener('click', submitManual);
     nameInput.addEventListener('keydown', (e) => {
+      // During IME composition (JP/KR/CN), Enter confirms the candidate — it must NOT
+      // submit the form, or the half-composed text is sent and a character doubles.
+      // `isComposing` (and the legacy keyCode 229) flag an in-progress composition.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === 'Enter') {
         e.preventDefault();
         submitManual();

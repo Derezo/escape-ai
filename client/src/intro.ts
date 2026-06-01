@@ -237,7 +237,7 @@ function runSequence(resolve: () => void): void {
       <span class="intro-word-escape">ESCAPE</span>
       <span class="intro-word-ai">AI</span>
     </h1>
-    <p id="intro-skip">Press any key to skip</p>
+    <p id="intro-skip">Press any key or tap to skip</p>
   `;
   document.body.appendChild(overlay);
   active = true;

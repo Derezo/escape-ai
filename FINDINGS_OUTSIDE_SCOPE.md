@@ -6,6 +6,28 @@ the audit trail).
 
 ## Open
 
+### Client bundle is one ~1.6 MB chunk — no code-splitting (Android startup on mid-range)
+- **Status:** open — deliberately deferred from the Android touch-controls plan (Phase 4).
+- **Surfaced:** Android-compatibility audit, 2026-06-01 (lifecycle/perf dimension, finding M9).
+- **Detail:** `client/dist/assets/index-*.js` is ~1.6 MB (gzip ~393 KB) — Phaser + socket.io +
+  the A* pathfinder + the intro/leaderboard all in one chunk, with no `manualChunks` in
+  `client/vite.config.ts`. On a 2 GB mid-range phone this means a startup parse/JIT stall and
+  memory pressure. (The APK itself is ~69 MB, dominated by the bundled assets, not this JS.)
+- **Why deferred:** code-splitting via dynamic `import()` interacts with Capacitor's
+  `base: './'` relative-asset loading inside the WebView (`vite.config.ts:11`) — a chunk that
+  loads with a wrong base 404s on `file://`/`https://localhost`. That needs its own careful
+  build + on-device verification pass; it's the lowest-value, highest-risk item in the audit
+  and unrelated to making the controls work. The game already loads and runs on the emulator.
+- **Suggested approach if picked up:** lazy-load the Babylon fallback (only needed on a 3D
+  rule), then dynamic-`import()` the intro + leaderboard modules; after each split, rebuild
+  with `VITE_SERVER_URL` set, `cap sync`, and confirm on a device that every chunk loads (no
+  404 in the WebView console) and the game still reaches the world. Document 1.6 MB as the
+  baseline if splitting proves not worth the risk.
+- **Refs:** `client/vite.config.ts:11` (`base: './'`); `client/dist/assets/index-*.js`;
+  `client/src/render/babylon.ts` (the swappable 3D renderer); `client/src/intro.ts`,
+  `client/src/leaderboard.ts`.
+- **Effort:** M (build reconfiguration + per-chunk on-device verification).
+
 ### Client dev-dependency advisory: esbuild ≤0.24.2 via Vite (2 moderate)
 - **Status:** open — pre-existing, out of scope, needs a human decision.
 - **Surfaced:** `/plan-validation-and-review` of the 0.2.9 gameplay-depth plan, 2026-05-29
