@@ -19,7 +19,7 @@ import type { InputMsg, PlayerAction } from '@shared/net';
 import { moveWithCollision, moveSpeed, facingFromVec } from '@shared/step';
 import { generateWorld, WORLD_GEN_VERSION, type WorldMap } from '@shared/world';
 import { speciesByKey } from '@shared/species';
-import { foodByKey, FOOD_PICKUP_AMOUNT } from '@shared/food';
+import { foodByKey, foodForSpecies, FOOD_PICKUP_AMOUNT } from '@shared/food';
 
 import { PhaserRenderer } from './render/phaser';
 // --- 3D SWAP (see shared/BABYLON_FALLBACK.md) ---------------------------------
@@ -37,6 +37,8 @@ import { initMusic, playMusicState } from './music';
 import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
 import { createInventory } from './inventory';
+import { createFoodBar } from './foodbar';
+import { questHelpText } from './quest-help';
 import { createLeaderboard } from './leaderboard';
 import { createChat } from './chat';
 import { runMenu } from './menu';
@@ -82,8 +84,9 @@ async function main(): Promise<void> {
     <div class="hud-row"><span class="hud-key">panic</span><span class="hud-val" id="hud-panic">…</span></div>
     <div class="hud-row hud-lockdown" id="hud-lockdown-row"><span class="hud-key">status</span><span class="hud-val" id="hud-lockdown">LOCKDOWN</span></div>
     <div class="hud-row"><span class="hud-key">human-like</span><span class="hud-val" id="hud-human">…</span></div>
-    <div class="hud-row" id="hud-quest-row"><span class="hud-key">quest</span><span class="hud-val" id="hud-quest">…</span></div>
+    <div class="hud-row" id="hud-quest-row"><span class="hud-key">quest</span><span class="hud-val" id="hud-quest">…</span><button id="hud-quest-info" aria-label="What do I do?" title="What do I do?">ⓘ</button></div>
     <div class="hud-row hud-carry" id="hud-carry-row"><span class="hud-key">carrying</span><span class="hud-val">prop</span></div>
+    <div id="hud-quest-help" role="tooltip"></div>
   `;
   document.body.appendChild(hud);
 
@@ -95,7 +98,28 @@ async function main(): Promise<void> {
   const hudHuman = hud.querySelector<HTMLElement>('#hud-human')!;
   const hudQuest = hud.querySelector<HTMLElement>('#hud-quest')!;
   const hudQuestRow = hud.querySelector<HTMLElement>('#hud-quest-row')!;
+  const hudQuestInfo = hud.querySelector<HTMLButtonElement>('#hud-quest-info')!;
+  const hudQuestHelp = hud.querySelector<HTMLElement>('#hud-quest-help')!;
   const hudCarryRow = hud.querySelector<HTMLElement>('#hud-carry-row')!;
+
+  // The ⓘ info panel: a "what do I actually do?" readout for the current quest step,
+  // shown UNDER the HUD. The detail text (frame() sets hudQuestHelp.dataset.text each
+  // frame from the live step) explains the action + keybind — the bit the arrow can't
+  // convey, and the only guidance an 'ability' step (no arrow) gets. Toggle by click;
+  // also reveal on hover. The icon opts back into pointer events (the HUD is
+  // click-through), and the panel mirrors the icon's open state.
+  let questHelpPinned = false;
+  const applyQuestHelp = (open: boolean): void => {
+    hudQuestHelp.textContent = hudQuestHelp.dataset.text || '';
+    hudQuestHelp.classList.toggle('open', open && !!hudQuestHelp.dataset.text);
+  };
+  hudQuestInfo.addEventListener('click', (e) => {
+    e.stopPropagation();
+    questHelpPinned = !questHelpPinned;
+    applyQuestHelp(questHelpPinned);
+  });
+  hudQuestInfo.addEventListener('mouseenter', () => applyQuestHelp(true));
+  hudQuestInfo.addEventListener('mouseleave', () => applyQuestHelp(questHelpPinned));
 
   // --- Lockdown overlay (full-screen, click-through) ---
   // A pulsing red vignette + banner shown only while world.lockdown is true.
@@ -146,6 +170,11 @@ async function main(): Promise<void> {
   // --- Inventory overlay (I). Built hidden; lists the collected food + which
   // species each feeds. Reads the local player's server-authoritative inventory. ---
   const inventory = createInventory();
+
+  // --- Food bar. A persistent top-right icon grid (🍌 ×10) of the food the player
+  // is carrying, with a bounce on every count change. The compact at-a-glance view;
+  // the detailed named readout stays in the toggle-I overlay above. ---
+  const foodbar = createFoodBar();
 
   // --- SFX. Preload the catalogue; the AudioContext starts suspended until a
   // user gesture. The splash's first-gesture handler (menu.ts) calls unlockAudio()
@@ -569,9 +598,11 @@ async function main(): Promise<void> {
     }
     prevHerd = herdNow;
 
-    // Inventory overlay: refresh from our own server-authoritative bag (no-op
-    // unless it changed). Cheap to call every frame.
-    inventory.render(myId ? (entities.get(myId)?.inventory as Record<string, number> | undefined) : undefined);
+    // Inventory overlay + top-right food bar: refresh both from our own server-
+    // authoritative bag (no-op unless it changed). Cheap to call every frame.
+    const myBag = myId ? (entities.get(myId)?.inventory as Record<string, number> | undefined) : undefined;
+    inventory.render(myBag);
+    foodbar.render(myBag);
 
     // Ability SFX for ANY entity, on the fx.startTick rising edge (mirrors the
     // renderer's visual fx edge). Volume falls off with distance to the local
@@ -736,6 +767,24 @@ async function main(): Promise<void> {
       // Tint: green when done, amber when blocked at the gate, default otherwise.
       hudQuestRow.classList.toggle('quest-done', quest.complete);
       hudQuestRow.classList.toggle('quest-blocked', !quest.complete && blocked);
+      // ⓘ help text for the CURRENT step: the action + keybind ("Press Space to
+      // hush") plus the step's flavor blurb. Hidden once the quest is complete (no
+      // action left to take). The icon shows only while there's a live step; the
+      // panel reads its text from this dataset each time it's opened/hovered.
+      if (!quest.complete) {
+        const blurb = typeof quest.blurb === 'string' ? quest.blurb : '';
+        hudQuestHelp.dataset.text = questHelpText({
+          kind: quest.type,
+          blurb,
+          species: typeof me?.species === 'string' ? me.species : '',
+          need: typeof quest.need === 'number' ? quest.need : 1,
+        });
+        hudQuestInfo.style.display = '';
+      } else {
+        hudQuestHelp.dataset.text = '';
+        hudQuestInfo.style.display = 'none';
+        applyQuestHelp(false);
+      }
       // Quest-progress edge: tick once each time the current step's done-count
       // climbs while the quest is still short of complete (the final completion
       // is quest_complete's job). Also chime on a rising stepIndex — each step
@@ -755,6 +804,9 @@ async function main(): Promise<void> {
     } else {
       hudQuest.textContent = '…';
       hudQuestRow.classList.remove('quest-done', 'quest-blocked');
+      hudQuestHelp.dataset.text = '';
+      hudQuestInfo.style.display = 'none';
+      applyQuestHelp(false);
       prevQuestComplete = false;
       prevQuestDone = 0;
       prevQuestStepIndex = 0;
@@ -1023,27 +1075,47 @@ function questGuideFor(
       }
     }
   } else if (kind === 'recruit') {
-    // 'recruit' → the NEAREST feedable animal that is a different species and not
-    // already following this player. Fallback: nearest any animal.
-    let nearestD2 = Infinity;
-    let fallbackD2 = Infinity;
-    let fallbackGoal: { x: number; y: number } | undefined;
+    // 'recruit' → the NEAREST animal I can ACTUALLY recruit right now. The server's
+    // feedNearbyAnimal silently refuses any animal whose liked food I'm not carrying
+    // (follow.js), so an arrow that ignores my inventory would send me (notably the
+    // kangaroo, whose very first step is 'recruit 2') at animals I can't feed — press
+    // F, nothing happens, the quest looks broken. So an IDEAL target is a different
+    // species, not already mine, AND one whose food I hold. If I hold no usable food
+    // at all, the right next move is to go GET food, so we fall back to the nearest
+    // food source; only if there's no food entity either do we point at the nearest
+    // animal as a last resort (so the arrow never simply vanishes mid-step).
+    const myBag = (me.inventory as Record<string, number> | undefined) ?? {};
+    let nearestD2 = Infinity; // nearest FEEDABLE ideal animal
+    let foodD2 = Infinity;
+    let foodGoal: { x: number; y: number } | undefined; // nearest food source
+    let animalD2 = Infinity;
+    let animalGoal: { x: number; y: number } | undefined; // nearest any animal
     for (const e of entities.values()) {
-      if (e.kind !== 'animal' || typeof e.x !== 'number' || typeof e.y !== 'number') continue;
-      if (e.id === myId) continue; // skip self
+      if (typeof e.x !== 'number' || typeof e.y !== 'number') continue;
       const d2 = (e.x - me.x) ** 2 + (e.y - me.y) ** 2;
-      // Ideal target: different species AND not already following this player.
-      const isIdeal = e.species !== species && e.followerOf !== myId;
+      if (e.kind === 'food') {
+        if (d2 < foodD2) { foodD2 = d2; foodGoal = { x: e.x, y: e.y }; }
+        continue;
+      }
+      if (e.kind !== 'animal' || e.id === myId) continue;
+      if (d2 < animalD2) { animalD2 = d2; animalGoal = { x: e.x, y: e.y }; }
+      // Ideal: different species, not already mine, and I carry its food so a feed
+      // press would actually land.
+      const liked = typeof e.species === 'string' ? foodForSpecies(e.species).key : '';
+      const feedable = !!liked && (myBag[liked] || 0) > 0;
+      const isIdeal = e.species !== species && e.followerOf !== myId && feedable;
       if (isIdeal && d2 < nearestD2) {
         nearestD2 = d2;
         goal = { x: e.x, y: e.y };
       }
-      if (d2 < fallbackD2) {
-        fallbackD2 = d2;
-        fallbackGoal = { x: e.x, y: e.y };
-      }
     }
-    if (!goal) goal = fallbackGoal;
+    // No feedable animal in sight → if I'm carrying NO animal food at all, the next
+    // move is to stock up, so head to a food source; otherwise (I have food but no
+    // valid target nearby) just point at the nearest animal.
+    if (!goal) {
+      const hasAnyFood = Object.values(myBag).some((n) => n > 0);
+      goal = hasAnyFood ? (animalGoal ?? foodGoal) : (foodGoal ?? animalGoal);
+    }
   } else if (kind === 'ability') {
     // 'ability' → no waypoint: the action is self-contained (fire your power anywhere).
     // Point the guide at the player itself so the pathfinder yields a zero-length
@@ -1057,6 +1129,14 @@ function questGuideFor(
         goal = { x: e.x, y: e.y };
         break;
       }
+    }
+    // Fallback: if the home questObject isn't in the snapshot yet (a transient miss
+    // right after a respawn / before the first full snapshot), use the local map's
+    // own housing center for this species — the same world-unit "reach your den"
+    // anchor — so a 'reach' arrow never blinks out mid-step.
+    if (!goal && localMap) {
+      const home = localMap.housing.find((h) => h.species === species);
+      if (home) goal = { x: home.cx, y: home.cy };
     }
   }
   if (!goal) return null;
