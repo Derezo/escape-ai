@@ -4,6 +4,39 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.190: **Client: quest ⓘ info panel explains the current step (ability-step
+  clarity fix).** "Hush the alarm" (owl) read as a mystery — `ability` steps show no
+  guide arrow by design (the power fires anywhere, so there's nothing to point at) and
+  the HUD never said which key performs it, so players assumed they had to trigger panic
+  first. Traced to source: `owlHush` (and `moleBurrow`, `chameleonCloak`) return success
+  unconditionally, so the step completes the instant the ability fires — even at 0 panic;
+  the difficulty was perceived, not real. New ⓘ icon on the HUD quest row opens a detail
+  panel under the HUD (`client/src/quest-help.ts` + wiring in `main.ts`/`style.css`) that
+  pairs the exact action + keybind with the step's flavor blurb — e.g. "Press Space to
+  hush — it counts the moment it fires, anywhere." Covers every step kind (collect→E,
+  recruit→carry food then F, activate/order→E/Q, ability→Space, fetch/escort→gate,
+  reach→home), reading the live step from the snapshot each frame; hover or click to open,
+  hidden once the quest completes. Client typecheck + production build + `verify:quick`
+  green; verified the rendered panel for owl/kangaroo/peacock/mole.
+
+- 0.2.189: **Client: quest hint arrow now points at a recruitable target (kangaroo
+  fix).** The 'recruit' step arrow pointed at the nearest other-species animal without
+  checking whether the player carries that animal's food — but the server's
+  `feedNearbyAnimal` silently refuses any animal whose liked food you aren't holding. So
+  the arrow sent players (worst-hit: the kangaroo, whose very first step is `recruit 2`)
+  at animals they couldn't feed: press F, nothing happens, the quest reads as broken.
+  `questGuideFor` (`client/src/main.ts`) now reads the local player's `inventory` and
+  prefers the nearest different-species, not-already-mine animal **whose food I carry**;
+  if I'm carrying no animal food at all it points at the nearest food source (go stock
+  up); only with no food entity either does it fall back to the nearest animal — so the
+  arrow never simply vanishes. Two defensive fallbacks added in the same pass: a 'reach'
+  step now falls back to the local map's housing center for the species if the home
+  questObject is briefly absent from the snapshot (no mid-step blink on respawn). Audited
+  every quest type's arrow against its real server mechanic: collect→nearest food (food
+  stations are renewable, so this never depletes), activate/order→nearest usable
+  terminal, fetch/escort→gate, ability→self (no arrow), reach→home — all correct; recruit
+  was the only true mismatch. Client typecheck + production build + `verify:quick` green.
+
 - 0.2.188: **Android: validation-pass cleanups (icon generator + download page).**
   Post-implementation review (`plan-validation-and-review`) of the Android arc. Removed a
   dead `getPNGDims()` helper from `scripts/gen-android-icons.js` (defined but never called —
@@ -15,6 +48,19 @@ All notable changes to Escape AI. Update this file in every commit.
   behaviour change; all 6 `verify:quick` gates green. Requirements trace + connectivity +
   signing-secret-hygiene audits all passed (6/6 implemented, no dead/duplicate code, no
   secrets tracked).
+
+- 0.2.187: **Client: top-right food bar HUD (icon grid + bouncing count).** New
+  persistent `#foodbar` strip (`client/src/foodbar.ts`) pinned top-right, mirroring the
+  HUD's top inset and click-through. One chip per food the player is carrying, in roster
+  order, icon-only with a count (🍌 ×10). Hidden until the bag has something; each chip
+  plays a one-shot expand/contract bounce (`foodbar-bump` keyframe, ~0.32s, peak scale
+  1.32) every time its count changes, so collecting (E) or feeding (F) visibly reacts —
+  and `prefers-reduced-motion` disables the bounce. Reads the same local-player
+  server-authoritative `inventory` map as the existing overlay, refreshed each frame in
+  `main.ts` (no-op unless changed; a per-key cache animates only the chips that moved).
+  The detailed named readout (per-food label + "feeds X") stays in the unchanged toggle-I
+  inventory overlay — this is the compact at-a-glance view alongside it. Client typecheck
+  + production build + `verify:quick` green.
 
 - 0.2.186: **Docs: Android build path is now real, not hypothetical.** `docs/ANDROID.md`
   rewritten to match what shipped — the committed native project, the
@@ -43,6 +89,23 @@ All notable changes to Escape AI. Update this file in every commit.
   MIME + force-download header, `=404` instead of the SPA fallback); re-run provision on the
   VPS to apply that block. Both `.sh` edits shellcheck-clean; the APK-staging branch logic
   unit-tested for present / absent-soft / absent-required.
+
+- 0.2.184: **Server: never spawn a player into a solid tile (stuck-in-a-wall fix).**
+  Reported: spawning as the skunk dropped the player onto a blocked tile and they
+  couldn't move at all. Root cause — two spawn paths trusted a position without proving
+  it walkable: `spawnForSpecies` returned the pen-centre+jitter point unvalidated (it
+  relied on world-gen's "every pen centre is walkable" proof, which can drift for a
+  species), and `lobby.js`'s resume path copied a saved snapshot's `x/y` verbatim
+  (`session.restore`), so a player who logged off mid-teleport — or whose saved tile
+  reads solid against the regenerated collision grid — resumed immobile. New
+  `world.findWalkableNear(room, x, y)` snaps a point to the nearest non-solid tile via an
+  expanding Chebyshev-ring search (closest-first), and is a no-op when the point is
+  already walkable, so normal spawns/resumes are byte-identical. Wired into
+  `spawnForSpecies` (covers join + every catch/escape respawn, which all delegate here)
+  and into the `lobby.js` resume overlay. New `server/test/spawn-walkable.test.js` asserts
+  every playable species spawns walkable across 64 jitter seeds, the no-home fallback is
+  walkable, a deliberately-solid point snaps to open ground, and the guard leaves
+  already-walkable points untouched. Full server suite (20 tests) + `verify:quick` green.
 
 - 0.2.183: **Android: release signing wired (secrets stay out of git).** `app/build.gradle`
   now reads `android/keystore.properties` (gitignored) and creates a
