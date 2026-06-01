@@ -4,6 +4,23 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.168: **Findings closeout — `/plan-validation-and-review` gate.** Ran the full
+  validation pass over all 7 phases (gap analysis + connectivity + dedup + 3-group code
+  comprehension, all adversarial; build/test/audit gates). Result: **0 in-scope issues** —
+  every requirement traced IMPLEMENTED + connected, no duplicate/dead code introduced, all
+  gates green (108 shared + 15 server tests, client typecheck + build, facing determinism,
+  atlas/tileset/audio verify; server/shared/scripts 0 npm vulns; client's 2 moderate are
+  the known deferred esbuild/Vite advisory). Two flagged "important" findings were verified
+  NOT actionable: the `time.ts` hours-branch dropping seconds is **faithful to both original
+  formatters** (the pre-Phase-1 `help.ts` also dropped seconds at hour scale — the extraction
+  preserved behavior, it didn't regress it), and the `quests.ts:229` `as QuestType` cast is
+  **pre-existing** (Phase 2 only touched the cheetah step array, never `buildDef`). Recorded
+  two genuine PRE-EXISTING, out-of-scope items to `FINDINGS_OUTSIDE_SCOPE.md` per the
+  validation skill's in/out-of-scope rule: a dead `penInteriorCells` function
+  (`stealth.js:1088`, never called, untouched by the plan) and an `input.seq` non-negative-
+  integer validation gap (`lobby.js:273`, negligible blast radius). No code fixes — the plan
+  ships clean.
+
 - 0.2.167: **Findings closeout Phase 6 — backlog rewrite + upstream/archive scaffolding.**
   Reconciled `FINDINGS_OUTSIDE_SCOPE.md` to post-plan reality: deleted the now-CLOSED
   entries for the robot PURSUE A* fix (Phase 4) and the cheetah re-feed buffer (Phase 2)

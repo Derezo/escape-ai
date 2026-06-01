@@ -91,3 +91,39 @@ the audit trail).
   (`followPathToGoal` writes `path`/`pathIndex`/`pathRepathTick`); `server/game/behaviors.js`
   (`headAngle`).
 - **Effort:** M.
+
+### Dead function `penInteriorCells` in server/game/stealth.js
+- **Status:** open — pre-existing dead code (surfaced by `/plan-validation-and-review`, not
+  introduced by the findings-closeout plan; out of scope per the validation skill's rule).
+- **Surfaced:** `/plan-validation-and-review` of the findings-closeout plan, 2026-05-31
+  (dead-code scan).
+- **Detail:** `server/game/stealth.js:1088` defines `function penInteriorCells(roomName,
+  species, rm)` which is never called anywhere (the contained-wander code uses
+  `interiorFreeCells()` / `pickContainedTarget` directly). Confirmed untouched by every
+  commit of the findings-closeout plan — it predates it.
+- **Why deferred:** the Phase-1 dead-code sweep was scoped to symbols the plan's own edits
+  touched; this is in an unrelated region of `stealth.js`, so per the validation skill it's
+  reported, not folded into this batch. It's a safe one-line-ish deletion when picked up.
+- **Suggested approach if picked up:** delete the function; grep-confirm no caller (none
+  today) and that no test references it.
+- **Refs:** `server/game/stealth.js:1088`.
+- **Effort:** Trivial.
+
+### Inbound `input.seq` not validated as a non-negative integer (low-risk hardening)
+- **Status:** open — pre-existing input-validation gap (surfaced by `/plan-validation-and-review`;
+  out of scope — the room-validation Phase 3 touched a different region of `lobby.js`).
+- **Surfaced:** `/plan-validation-and-review` of the findings-closeout plan, 2026-05-31
+  (server-logic review).
+- **Detail:** `server/socket/lobby.js:273` accepts `payload.seq` when `Number.isFinite(seq)`
+  — a finite but negative or non-integer seq passes. The downstream `if (seq < player.inputSeq)
+  return` (line 275) rejects stale values, so the practical blast radius is tiny (a negative
+  seq only "takes" on the very first input, before `inputSeq` advances; dx/dy are clamped,
+  action is whitelisted, sprint is strict-boolean). Not a vulnerability, but the seq guard
+  should mirror the strictness of the other input fields.
+- **Why deferred:** pre-existing and negligible-impact; input-validation policy is the
+  multiplayer-security-auditor's surface, and this region wasn't in the plan's scope.
+- **Suggested approach if picked up:** require `Number.isInteger(payload.seq) && payload.seq >= 0`
+  (else fall back to `player.inputSeq + 1`), consistent with the clamp/whitelist applied to the
+  other `input` fields.
+- **Refs:** `server/socket/lobby.js:273-293` (the `input` handler).
+- **Effort:** Trivial.
