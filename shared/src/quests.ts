@@ -163,9 +163,10 @@ const STEPS_BY_SPECIES: Record<string, QuestStep[]> = {
     { kind: 'reach', need: 1, title: 'Tunnel home', blurb: 'Burrow back to your den mound and surface where you started.' },
   ],
 
-  // ── cheetah: rally two runners, then sprint them out ────────────────────────
+  // ── cheetah: rally two runners, regroup at the run, then sprint them out ─────
   cheetah: [
     { kind: 'recruit', need: 2, title: 'Rally 2 runners', blurb: 'Coax two fellow animals to run with your breakout pack.' },
+    { kind: 'reach', need: 1, title: 'Regroup at your run', blurb: 'Pad back to your run and line the pack up before the dash.' },
     { kind: 'escort', need: 2, title: 'Sprint them out', blurb: 'Dash a fast line to the gate with both runners on your heels.' },
   ],
 

@@ -4,6 +4,17 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.160: **Findings closeout Phase 2 — cheetah quest re-feed buffer.** Inserted a
+  `reach` (regroup-at-home) step into the cheetah quest (`shared/src/quests.ts`) between
+  its `recruit ×2` and `escort ×2` steps, so it now mirrors kangaroo's
+  `recruit → reach → escort` arc: *Rally 2 runners → Regroup at your run → Sprint them
+  out*. This gives the player a breathing-room beat to re-feed a lapsed follower before
+  the escort finale instead of needing the herd intact the instant they assemble it — the
+  difficulty-softening the deferred balance note recommended. Quest defs aren't in the
+  world hash, and `shared/test/quests.test.mjs`'s 1..3-step invariant already accepts a
+  3-step cheetah, so no test changes were needed. 99 shared + 12 server tests green
+  (incl. quest-wiring).
+
 - 0.2.159: **Findings closeout Phase 1 — dead-code + DRY sweep.** Five verified
   single-source / dead-code fixes. SERVER: deleted the unused `const world =
   require('./world')` in `server/game/behaviors.js` (the binding was never read);
