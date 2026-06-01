@@ -4,6 +4,23 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.192: **Android touch — Phase 1: virtual joystick + action buttons (Android playable).**
+  Fills in `client/src/touch-controls.ts`: a **floating analog joystick** (appears wherever
+  the first finger lands in the left half, recenters each touch) whose knob offset
+  normalized by a 60px radius IS the analog `dx/dy` in [-1,1] — a 0.18 dead zone kills
+  thumb-rest drift, and pushing past 0.85 of the radius engages **stick-edge sprint** (the
+  knob flares amber). A bottom-right **action cluster** (Interact / Ability / Feed / Order)
+  edge-triggers on touchstart, mirroring the keyboard. Both feed the Phase-0 seam
+  (`setTouchVector` / `queueAction`), so the wire payload and prediction are unchanged.
+  Multi-touch-safe: the joystick tracks one finger by identifier and ignores touches on the
+  button cluster, so one thumb steers while the other taps. Styled in the game palette
+  (cyan knob on navy, amber sprint). Gated to Android — `main.ts` only constructs it when
+  `isAndroid`, so desktop renders zero touch DOM. **Verified on an Android 16 emulator via
+  the Chrome DevTools protocol:** `platform-android` body class set, overlay + 4 buttons +
+  joystick in the DOM, a 30px right-drag yields exactly `dx=0.50, dy=0.00`, edge-drag
+  engages sprint, and the Interact button fires — all while in-world connected to production
+  at ~20 ms. Android is now playable past login.
+
 - 0.2.191: **Android touch — Phase 0: platform gate + input seam + canvas hygiene.**
   Groundwork for on-screen controls (Android is currently unplayable past login — no
   touch input exists). New `client/src/platform.ts` exposes `isAndroid`
