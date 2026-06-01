@@ -3,6 +3,10 @@ dist/
 .env
 .DS_Store
 
+# Competition submission bundle written by scripts/bundle-submission.sh. A
+# generated artifact (the git-tracked sources, zipped) — regenerate, never commit.
+*-submission.zip
+
 # Local deploy configuration (names your VPS host/user). Copy from
 # scripts/deploy.env.example, which IS committed as the template.
 scripts/deploy.env
