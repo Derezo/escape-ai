@@ -4,6 +4,20 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.167: **Findings closeout Phase 6 — backlog rewrite + upstream/archive scaffolding.**
+  Reconciled `FINDINGS_OUTSIDE_SCOPE.md` to post-plan reality: deleted the now-CLOSED
+  entries for the robot PURSUE A* fix (Phase 4) and the cheetah re-feed buffer (Phase 2)
+  per the "delete the entry; git history is the audit trail" convention. What remains is
+  genuinely deferred — the esbuild/Vite major-upgrade pass, the doorway elevated-wall-face
+  render (human-eyeball cosmetic call), and the client (chat/menu) test-harness gap — plus
+  one new low-priority optional-hardening note surfaced by the Phase 4 validation (robot
+  entity snapshots leak A*-path scratch fields; not a desync, just a larger delta).
+  Scaffolded the two living-document conventions that didn't exist yet:
+  `docs/UPSTREAM_ASKS.md` (the esbuild/Vite advisory as an upstream ask, with a runnable
+  reproducer and an audit-clean gating signal that auto-detects the upstream fix) and
+  `docs/archive/` (an archive note for the stale stat-field-DRY finding deleted in Phase 0,
+  explaining it was already resolved by `server/game/stats-delta.js`). Docs-only.
+
 - 0.2.166: **Findings closeout Phase 5 — verification automation + missing tests.**
   The repo had rich verify gates but no CI and only a reminder-only commit-msg hook,
   so every gate was manual and easy to forget. Four fixes: (1) NEW
