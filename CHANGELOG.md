@@ -4,6 +4,24 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.177: **Deploy security hardening — two defense-in-depth fixes from a script audit.**
+  A security review of the deploy/provision scripts found the model otherwise solid
+  (nologin app user, loopback bind in prod, secrets out of git, ufw closed on the app
+  port), but flagged two spots that relied on *two* safeguards both holding. Fixed both.
+  (1) **`HOST` now defaults to `127.0.0.1`, not `0.0.0.0`** (`server/config.js`,
+  `server/.env.example`). Production was always safe — `ecosystem.config.js` injects
+  `HOST=127.0.0.1` and ufw keeps the app port closed — but the *default* was an exposed
+  all-interfaces bind, so a manual `node index.js` or a lapse in pm2's env injection would
+  silently face the internet. Binding all interfaces is now an explicit opt-in
+  (`HOST=0.0.0.0`, e.g. LAN testing); local dev via `run-dev.sh` is unaffected (same-machine
+  loopback). (2) **`scripts/deploy.env` is now owner-only (`chmod 600`).** It was
+  world-readable (`0664`), leaking the VPS host/user/paths to other local users. Both
+  `deploy-server.sh` and `provision-escape.sh` now `chmod 600` it on every run (a fresh
+  `cp` from the example inherits the umask, often `0644`), and `deploy.env.example`
+  documents the manual lock-down. Verified: server binds `127.0.0.1` and `/health` answers
+  on loopback, `HOST=0.0.0.0` override still works, all 15 server tests pass, shellcheck
+  introduced no new findings.
+
 - 0.2.176: **deploy-server.sh: two cold-deploy fixes (first live deploy).** Hardened the
   deploy after the first real run to escape.mittonvillage.com exposed two bugs. (1) The
   **local builds stripped their own toolchain**: `deploy.env` sets `NODE_ENV=production`

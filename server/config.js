@@ -11,7 +11,12 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 module.exports = {
   // Network
   PORT: parseInt(process.env.PORT, 10) || 3000,
-  HOST: process.env.HOST || '0.0.0.0',
+  // Loopback by default: the node port must NEVER face the public internet on its
+  // own — in production the edge is nginx + TLS, and the port is loopback-only and
+  // closed in ufw. Defaulting to 127.0.0.1 means an exposed bind requires an
+  // explicit, deliberate HOST=0.0.0.0 (e.g. LAN testing), instead of being the
+  // accidental fallback if pm2's env injection or the firewall ever lapses.
+  HOST: process.env.HOST || '127.0.0.1',
 
   // The room a joiner lands in when it sends no (or a blank) room name — the
   // single source of truth for the lobby fallback AND the boot warm-up (engine.init

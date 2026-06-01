@@ -28,6 +28,10 @@ die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 if [[ -f "${SCRIPT_DIR}/deploy.env" ]]; then
+  # deploy.env names your host/user/paths — keep it owner-only. Self-correct loose
+  # perms (e.g. a fresh `cp` from the example inherits your umask, often 0644/0664)
+  # so the secret-adjacent config can't be read by other local users.
+  chmod 600 "${SCRIPT_DIR}/deploy.env" 2>/dev/null || true
   # shellcheck disable=SC1091
   set -a; . "${SCRIPT_DIR}/deploy.env"; set +a
 fi
