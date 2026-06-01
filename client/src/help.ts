@@ -2,12 +2,20 @@
  * The in-game help widget (toggle H or ?) — a tabbed panel that replaces the old
  * single-scroll manual. It covers the recurring TINS in-game-help requirement
  * AND carries the STORY + artistic/bonus beats so a reviewer can find them:
- *   - Controls       — the condensed key list (the default tab on open)
- *   - Species        — animated cards for all 14 @shared species + abilities
+ *   - Controls       — a full "how to play" walkthrough (the default tab on open):
+ *                       the human-vs-prey lede, the grouped key list, the goal, and
+ *                       the food/followers/robots rundown
+ *   - Species        — animated cards for all 14 @shared species + abilities, each
+ *                       with its liked-food chip (the recruit hint, @shared/food)
  *   - More           — the lore: premise, the verbatim Three Laws (rule #84,
  *                       the Asimov reference), the double-edged Sutskever-order
  *                       callout, overflow, and the "THE CAVES OF STEEL" flavour
  *   - Stats          — the logged-in player's persisted UserStats
+ *
+ * The Controls-tab copy (controls + goal + walkthrough) is single-sourced from
+ * help-copy.ts and shared verbatim with the one-time first-login Game Tips screen
+ * (tips.ts), so this persistent widget IS the re-read path for those tips and the
+ * two can never drift.
  *
  * Pure DOM + CSS; no renderer dependency. `createHelp()` builds the hidden
  * overlay, wires H/? to toggle and Esc/× to close, and returns a handle. Unlike
