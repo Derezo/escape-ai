@@ -4,6 +4,14 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.200: **Android — lock the APK to landscape.** Changed `android:screenOrientation`
+  `portrait` → `sensorLandscape` in `client/android/app/src/main/AndroidManifest.xml`, so the app
+  launches and stays in landscape and accepts either landscape orientation (held either way). The
+  `<activity>` already lists `orientation|screenSize` in `configChanges`, so rotation is handed to
+  the WebView without recreating the activity. (Supersedes the Phase-4 portrait lock from 0.2.195.)
+  The manifest is the canonical committed source; `cap sync` copies only the web bundle and does not
+  regenerate it, so the lock is durable. Overlay landscape-fit follows in the next entry.
+
 - 0.2.199: **Android — fix the stretched / wrong-aspect render.** On-device the world looked
   stretched (one axis scaled differently from the other), not zoomed. Root cause: the
   `#game canvas { width/height: 100% !important }` rule (`client/src/style.css`) overrode the
