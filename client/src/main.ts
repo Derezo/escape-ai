@@ -45,7 +45,7 @@ import { createLeaderboard } from './leaderboard';
 import { createChat } from './chat';
 import { runMenu } from './menu';
 import { playIntro, preloadIntroAssets, isIntroActive } from './intro';
-import { isAndroid, applyPlatformClass } from './platform';
+import { isAndroid, applyPlatformClass, lockLandscape } from './platform';
 import { getTouchVector, setActionSink } from './touch-input';
 import { createTouchControls } from './touch-controls';
 import { installLifecycle } from './lifecycle';
@@ -70,6 +70,9 @@ async function main(): Promise<void> {
   // Mirror the platform onto <body> (platform-android) so CSS can scope Android-only
   // rules the same way the JS gates touch-only behaviour.
   applyPlatformClass();
+  // Re-assert the landscape lock at runtime (manifest sensorLandscape is the primary
+  // lock; this backstops a stale install / a WebView that ignores it). No-op off Android.
+  lockLandscape();
   // Track the soft keyboard (Android): publishes --kb-inset so bottom-anchored panels
   // lift above it. No-op off-Android. The teardown handle is retained for the session
   // (the SPA lives until reload, which cleans up the listeners anyway).

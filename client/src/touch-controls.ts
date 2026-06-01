@@ -189,19 +189,26 @@ export function createTouchControls(): TouchControls {
     clearTouchVector();
   };
 
-  // Listen on the root (which covers the screen) for the joystick; buttons stopped
-  // their own touches above. passive:false so we can preventDefault the scroll/zoom.
-  root.addEventListener('touchstart', onTouchStart, { passive: false });
-  root.addEventListener('touchmove', onTouchMove, { passive: false });
-  root.addEventListener('touchend', onTouchEnd);
-  root.addEventListener('touchcancel', onTouchEnd);
+  // Listen on WINDOW, not on `root`. The overlay root is `pointer-events:none` (so taps
+  // on empty play-surface fall through to the game), which ALSO means it is NOT a
+  // hit-test target and its touch listeners never fire for a bare left-half touch — the
+  // event goes straight to the canvas beneath. That is the "no joystick on Android" bug:
+  // the stick never appeared because root never received the touchstart. Window-level
+  // listeners fire regardless of any element's pointer-events; onTouchStart already
+  // filters to bare left-half touches (skipping #touch-actions / chat / any button via
+  // closest()), so this claims only joystick touches and leaves the HUD/buttons alone.
+  // passive:false so we can preventDefault the scroll/zoom on a claimed joystick touch.
+  window.addEventListener('touchstart', onTouchStart, { passive: false });
+  window.addEventListener('touchmove', onTouchMove, { passive: false });
+  window.addEventListener('touchend', onTouchEnd);
+  window.addEventListener('touchcancel', onTouchEnd);
 
   return {
     destroy() {
-      root.removeEventListener('touchstart', onTouchStart);
-      root.removeEventListener('touchmove', onTouchMove);
-      root.removeEventListener('touchend', onTouchEnd);
-      root.removeEventListener('touchcancel', onTouchEnd);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
       clearTouchVector();
       root.remove();
     },

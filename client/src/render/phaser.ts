@@ -61,6 +61,31 @@ const MOVE_PERSIST_MS = 200;
 const LERP_RATE = 16;
 
 /**
+ * How many world tiles to keep visible across the viewport's SHORTER dimension, so
+ * the on-screen world scale (pixels-per-tile) is the SAME on every device instead
+ * of falling out of whatever CSS-pixel viewport the host happens to report.
+ *
+ * Why this exists: the camera defaults to zoom=1, so with `Scale.RESIZE` the world
+ * scale was driven purely by the canvas's CSS-pixel size. A desktop/mobile BROWSER
+ * reports a sane viewport there and framed the world correctly (~1:1 pixel zoom),
+ * but the Capacitor Android WebView resolves `width=device-width`/`100dvh` to a
+ * different CSS-pixel box (interacts with `viewport-fit=cover` + the locked
+ * `maximum-scale=1`), so the SAME bundle rendered hugely zoomed-in / wrong-aspect
+ * in the APK while looking right in the mobile browser. Anchoring zoom to a fixed
+ * tile count makes the APK match the browser regardless of the reported viewport.
+ *
+ * 10 tiles tall reproduces the confirmed-correct browser landscape framing; we
+ * anchor on the SHORTER side so portrait and landscape keep the same pixel-per-tile
+ * scale (the browser does this naturally at zoom=1). Clamped to sane bounds so a
+ * freak viewport can't produce a degenerate zoom. Re-applied on every resize.
+ */
+const TARGET_TILES_MIN_DIM = 10;
+/** Clamp for the derived camera zoom (pixels-per-tile / TS), so a degenerate
+ *  viewport can't blow the world up or shrink it to nothing. */
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
+
+/**
  * Per-species base tint for animals — also used to tint the shape FALLBACK so the
  * fallback matches the atlas family colour. (Kept for the no-atlas path.)
  */
@@ -534,12 +559,18 @@ class WorldScene extends Phaser.Scene {
       this.buildDoorwayMarker(b, TS);
     }
 
-    // 4. Camera: bound to the world and (later) follow the local player.
-    this.cameras.main.setBounds(0, 0, worldPx.w, worldPx.h);
-
-    // 5. Keep the map + a reusable A* scratch so the quest arrow can pathfind on the
-    // same collision grid the server uses (door tiles are non-solid → it threads them).
+    // 4. Keep the map first — the camera zoom + the A* scratch both read it.
     this.map = map;
+
+    // 5. Camera: bound to the world, framed at a device-independent zoom, and
+    //    (later) following the local player. Re-frame on every viewport change so
+    //    rotation / WebView reflow keeps the same world scale (see applyCameraZoom).
+    this.cameras.main.setBounds(0, 0, worldPx.w, worldPx.h);
+    this.applyCameraZoom();
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.applyCameraZoom, this);
+
+    // 6. A reusable A* scratch so the quest arrow can pathfind on the same collision
+    //    grid the server uses (door tiles are non-solid → it threads them).
     this.pathScratch = makeScratch(map.w, map.h);
     this.clearQuestArrow();
     this.questArrowRespawnAt = 0;
@@ -880,6 +911,27 @@ class WorldScene extends Phaser.Scene {
    * kind:'animal'). Following a destroyed body silently freezes the camera, so we
    * must re-point it at the live body. Requires the map (bounds) to exist first.
    */
+  /**
+   * Set the camera zoom so TARGET_TILES_MIN_DIM world tiles fit across the
+   * viewport's SHORTER side — a fixed pixels-per-tile scale on every device,
+   * decoupled from whatever CSS-pixel viewport the host (browser vs Android
+   * WebView) reports. Bound to the ScaleManager RESIZE event, so rotation and
+   * WebView startup reflow keep a stable, correct framing instead of the
+   * zoomed-in / wrong-aspect APK render. Idempotent and cheap.
+   */
+  private applyCameraZoom = (): void => {
+    const cam = this.cameras?.main;
+    if (!cam) return;
+    const minDim = Math.min(this.scale.width, this.scale.height);
+    // Guard with > (not <=) so a NaN/undefined dimension during an early-init RESIZE
+    // race short-circuits too — NaN<=0 is false, which would let setZoom(NaN) through
+    // and break the camera. Number.isFinite makes the intent explicit.
+    if (!Number.isFinite(minDim) || minDim <= 0) return;
+    const TS = this.map?.tile || 32; // ||, not ??: a degenerate tile=0 would divide-by-zero
+    const zoom = Phaser.Math.Clamp(minDim / (TARGET_TILES_MIN_DIM * TS), ZOOM_MIN, ZOOM_MAX);
+    cam.setZoom(zoom);
+  };
+
   private startFollow(view: EntityView): void {
     if (!this.worldBuilt) return;
     if (this.followTarget === view.body) return; // already following this body

@@ -24,3 +24,28 @@ export const isAndroid: boolean = Capacitor.getPlatform() === 'android';
 export function applyPlatformClass(): void {
   document.body.classList.toggle('platform-android', isAndroid);
 }
+
+/**
+ * Belt-and-suspenders landscape lock for Android. The APK's AndroidManifest already
+ * pins the activity to `screenOrientation="sensorLandscape"` (the authoritative,
+ * native lock), but a stale install or a WebView that doesn't honour it can still let
+ * the page rotate to portrait. This re-asserts the lock at runtime via the standard Web
+ * Screen Orientation API — exactly what the @capacitor/screen-orientation plugin wraps,
+ * but with zero new dependency or native code. No-op off Android, and silently tolerant
+ * where lock() is unsupported / rejects (it requires a secure context + can throw on
+ * some WebViews) — the manifest remains the primary guarantee. Call once at startup;
+ * the manifest keeps it locked across resume, so no re-arm hook is needed.
+ */
+export function lockLandscape(): void {
+  if (!isAndroid) return;
+  // `screen.orientation.lock` is not in the default TS lib DOM types (it's behind a
+  // permissions-gated API), so reach it through a narrowed shape rather than `any`.
+  const orientation = (screen as Screen & {
+    orientation?: { lock?: (o: string) => Promise<void> };
+  }).orientation;
+  // lock() returns a promise that rejects on unsupported / not-allowed; swallow it —
+  // the manifest is the real lock and we don't want an unhandled rejection at boot.
+  orientation?.lock?.('landscape').catch(() => {
+    /* WebView without programmatic lock — manifest sensorLandscape still governs. */
+  });
+}
