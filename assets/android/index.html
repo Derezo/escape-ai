@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Escape AI — Android download</title>
+  <meta name="description" content="Download the Escape AI Android app. A top-down multiplayer stealth-escape game — evade the AI keeper-robots. Also playable in your browser." />
+  <meta name="theme-color" content="#0b0e14" />
+
+  <!-- Open Graph / social preview -->
+  <meta property="og:title" content="Escape AI — Android download" />
+  <meta property="og:description" content="The zoo is under new management. Download the Android app or play in your browser." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://escape.mittonvillage.com/android/" />
+  <meta property="og:image" content="https://escape.mittonvillage.com/android/icon.png" />
+  <link rel="icon" type="image/png" href="./icon.png" />
+
+  <style>
+    /* ---------------------------------------------------------------------
+       The Escape AI download page. The look + the title animation are lifted
+       verbatim from the in-game title screen (client/src/style.css and
+       client/src/menu.ts): the "ESCAPE" cyan→white gradient fade, the "AI"
+       glitch/jitter pop with red/cyan chromatic aberration, the radial dark
+       background, the monospace type, and the pulsing prompt. Self-contained
+       (no build step, no external CSS/JS) so it deploys as a static file.
+       --------------------------------------------------------------------- */
+    :root {
+      --bg: #0b0e14;
+      --cyan: #4cc9f0;
+      --cyan-soft: #cde7ff;
+      --ink: #aebfd6;
+      --muted: #6c7888;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      min-height: 100%;
+      background: radial-gradient(circle at 50% 32%, #131a26 0%, #07090d 72%) fixed;
+      color: var(--cyan-soft);
+      font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+      -webkit-font-smoothing: antialiased;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 7vh 24px 48px;
+      text-align: center;
+      user-select: none;
+    }
+
+    /* --- The animated ESCAPE AI title (reused from the game splash) -------- */
+    #title {
+      margin: 0 0 6px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      line-height: 1.05;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.04em;
+      font-size: clamp(44px, 11vw, 104px);
+    }
+
+    /* "ESCAPE" — the calm half. Cold cyan→white gradient, slow fade-in, then a
+       breathing glow. */
+    #word-escape {
+      opacity: 0;
+      background: linear-gradient(100deg, #4cc9f0, #cde7ff, #4cc9f0);
+      background-size: 220% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      filter: drop-shadow(0 0 12px rgba(76, 201, 240, 0.3));
+      animation:
+        escape-in 2.2s ease-out 0.3s forwards,
+        escape-glow 3.6s ease-in-out 2.5s infinite;
+    }
+    @keyframes escape-in {
+      from { opacity: 0; letter-spacing: 0.34em; filter: drop-shadow(0 0 2px rgba(76, 201, 240, 0)); }
+      to   { opacity: 1; letter-spacing: 0.16em; filter: drop-shadow(0 0 12px rgba(76, 201, 240, 0.35)); }
+    }
+    @keyframes escape-glow {
+      0%, 100% { background-position: 0% 50%; filter: drop-shadow(0 0 10px rgba(76, 201, 240, 0.3)); }
+      50%      { background-position: 100% 50%; filter: drop-shadow(0 0 22px rgba(76, 201, 240, 0.55)); }
+    }
+
+    /* "AI" — the menace. Cold near-white with a red/cyan chromatic-aberration
+       glitch. Pops in after ESCAPE, flickering + shaking, then snaps solid. */
+    #word-ai {
+      opacity: 0;
+      color: #eef4ff;
+      font-size: 1.18em;
+      letter-spacing: 0.28em;
+      animation: ai-pop 1.3s steps(1, end) 2.5s forwards;
+    }
+    @keyframes ai-pop {
+      0%   { opacity: 0; transform: translate(0, 0) scale(1.18); text-shadow: none; }
+      6%   { opacity: 1; transform: translate(-3px, 2px) scale(1.12);
+             text-shadow: 3px 0 0 rgba(255, 40, 60, 0.85), -3px 0 0 rgba(60, 220, 255, 0.7); }
+      12%  { opacity: 0.15; transform: translate(4px, -2px) scale(1.05); text-shadow: none; }
+      20%  { opacity: 1; transform: translate(-2px, -3px) scale(1.02);
+             text-shadow: -4px 0 0 rgba(255, 40, 60, 0.8), 4px 0 0 rgba(60, 220, 255, 0.7); }
+      28%  { opacity: 0.3; transform: translate(3px, 2px) scale(1); text-shadow: none; }
+      38%  { opacity: 1; transform: translate(-1px, 1px) scale(1);
+             text-shadow: 2px 0 0 rgba(255, 40, 60, 0.6), -2px 0 0 rgba(60, 220, 255, 0.5); }
+      48%  { opacity: 0.6; transform: translate(1px, -1px) scale(1); }
+      60%  { opacity: 1; transform: translate(0, 0) scale(1);
+             text-shadow: 1px 0 0 rgba(255, 40, 60, 0.4), -1px 0 0 rgba(60, 220, 255, 0.35); }
+      100% { opacity: 1; transform: translate(0, 0) scale(1);
+             text-shadow: 0 0 30px rgba(120, 180, 255, 0.45),
+                          1px 0 0 rgba(255, 40, 60, 0.22), -1px 0 0 rgba(60, 220, 255, 0.18); }
+    }
+
+    /* --- Staggered reveal for everything under the title ------------------- */
+    .reveal { opacity: 0; animation: fade-in 1.2s ease-out forwards; }
+    @keyframes fade-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    #tagline {
+      margin: 18px 0 0;
+      font-size: clamp(14px, 2.4vw, 20px);
+      color: var(--ink);
+      letter-spacing: 0.06em;
+      font-style: italic;
+      animation-delay: 3.8s;
+    }
+
+    #blurb {
+      max-width: 540px;
+      margin: 26px 0 0;
+      font-size: clamp(13px, 1.7vw, 15px);
+      line-height: 1.7;
+      color: #9fb0c6;
+      letter-spacing: 0.02em;
+      animation-delay: 4.0s;
+    }
+
+    /* --- The app card: icon + download button + meta ---------------------- */
+    #card {
+      margin: 40px 0 0;
+      width: min(440px, 100%);
+      padding: 28px 24px 24px;
+      background: rgba(14, 18, 26, 0.66);
+      border: 1px solid rgba(76, 201, 240, 0.18);
+      border-radius: 16px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+      animation-delay: 4.4s;
+    }
+    #app-icon {
+      width: 88px; height: 88px;
+      border-radius: 20px;
+      image-rendering: auto;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255,255,255,0.04);
+      display: block; margin: 0 auto 16px;
+    }
+    #app-name { margin: 0; font-size: 17px; letter-spacing: 0.12em; color: var(--cyan-soft); }
+    #app-meta { margin: 6px 0 20px; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
+
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%;
+      padding: 16px 20px;
+      font-family: inherit; font-size: 16px; font-weight: 700;
+      letter-spacing: 0.14em; text-transform: uppercase; text-decoration: none;
+      color: #061018;
+      background: linear-gradient(180deg, #5fd2f4, #3bb6e4);
+      border: none; border-radius: 10px;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
+      box-shadow: 0 8px 24px rgba(76, 201, 240, 0.28);
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 12px 30px rgba(76, 201, 240, 0.42); filter: brightness(1.04); }
+    .btn:active { transform: translateY(0); }
+    .btn svg { width: 18px; height: 18px; }
+
+    #browser-link {
+      display: inline-block; margin: 16px 0 0;
+      font-size: 13px; letter-spacing: 0.06em;
+      color: var(--cyan); text-decoration: none;
+      border-bottom: 1px solid rgba(76, 201, 240, 0.35);
+      padding-bottom: 1px;
+      transition: color 0.12s, border-color 0.12s;
+    }
+    #browser-link:hover { color: var(--cyan-soft); border-color: var(--cyan-soft); }
+
+    /* --- Install instructions --------------------------------------------- */
+    #install {
+      margin: 34px 0 0;
+      width: min(540px, 100%);
+      text-align: left;
+      animation-delay: 4.8s;
+    }
+    #install h2 {
+      font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase;
+      color: var(--muted); margin: 0 0 14px; text-align: center;
+    }
+    #install ol { margin: 0; padding: 0; list-style: none; counter-reset: step; }
+    #install li {
+      position: relative;
+      padding: 10px 0 10px 40px;
+      font-size: 13.5px; line-height: 1.6; color: #b8c6da;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      counter-increment: step;
+    }
+    #install li:first-child { border-top: none; }
+    #install li::before {
+      content: counter(step);
+      position: absolute; left: 0; top: 9px;
+      width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; color: var(--cyan);
+      background: rgba(76, 201, 240, 0.1);
+      border: 1px solid rgba(76, 201, 240, 0.3);
+      border-radius: 50%;
+    }
+    #install code {
+      color: var(--cyan-soft);
+      background: rgba(76, 201, 240, 0.08);
+      padding: 1px 6px; border-radius: 4px; font-size: 0.95em;
+    }
+
+    #note {
+      margin: 26px 0 0; max-width: 540px;
+      font-size: 12px; line-height: 1.6; color: var(--muted);
+      animation-delay: 5.0s;
+    }
+
+    footer {
+      margin: 40px 0 0;
+      font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+      color: #3d4654;
+      animation-delay: 5.2s;
+    }
+    footer a { color: #51606f; text-decoration: none; }
+    footer a:hover { color: var(--cyan); }
+
+    /* Respect reduced-motion: skip the glitch + reveals, show everything calm. */
+    @media (prefers-reduced-motion: reduce) {
+      #word-escape, #word-ai, .reveal {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+      }
+      #word-escape { color: var(--cyan); -webkit-text-fill-color: var(--cyan); }
+      #word-ai { color: #eef4ff; text-shadow: 0 0 20px rgba(120,180,255,0.4); }
+    }
+  </style>
+</head>
+<body>
+  <h1 id="title">
+    <span id="word-escape">ESCAPE</span>
+    <span id="word-ai">AI</span>
+  </h1>
+
+  <p id="tagline" class="reveal">The zoo is under new management.</p>
+
+  <p id="blurb" class="reveal">
+    A top-down multiplayer stealth game. You're an animal in a zoo the machines
+    now run — slip between cover, stay below the keeper-robots' notice, and reach
+    the exit before their optics lock onto you. Play with others in real time.
+  </p>
+
+  <section id="card" class="reveal">
+    <img id="app-icon" src="./icon.png" alt="Escape AI app icon — a glowing red robot optic" />
+    <p id="app-name">Escape AI</p>
+    <p id="app-meta">v1.0 · 68&nbsp;MB · Android 7.0+</p>
+
+    <a class="btn" id="download" href="./escape-ai.apk" download="escape-ai.apk">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
+      </svg>
+      Download APK
+    </a>
+
+    <a id="browser-link" href="https://escape.mittonvillage.com/">…or play in your browser instead →</a>
+  </section>
+
+  <section id="install" class="reveal">
+    <h2>Installing the APK</h2>
+    <ol>
+      <li>Tap <strong>Download APK</strong> above and let the file finish downloading.</li>
+      <li>Open it. Android will ask to <strong>allow installs from this source</strong> (your browser) — this is normal for an app outside the Play Store. Toggle it on, then go back.</li>
+      <li>Tap <strong>Install</strong>, then <strong>Open</strong>. You'll land on the title screen — pick a name and a species and you're in.</li>
+    </ol>
+  </section>
+
+  <p id="note">
+    The app bundles the game and connects to the live server at
+    <code>escape.mittonvillage.com</code> — so you'll need a network connection,
+    and other players you see are real. Nothing is uploaded from your device
+    beyond the game's normal multiplayer traffic.
+  </p>
+
+  <footer class="reveal">
+    Escape AI · <a href="https://escape.mittonvillage.com/">escape.mittonvillage.com</a>
+  </footer>
+</body>
+</html>

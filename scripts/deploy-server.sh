@@ -95,6 +95,29 @@ log "Building client/ (VITE_SERVER_URL=https://${APP_DOMAIN})"
     && VITE_SERVER_URL="https://${APP_DOMAIN}" npm run build )
 [[ -f "${PROJECT_ROOT}/client/dist/index.html" ]] || die "client build produced no dist/index.html."
 
+# --- 1b. stage the Android APK into the bundle (for the /android download page)
+# The /android page (assets/android/ → dist/android/index.html, copied by Vite)
+# links to ./escape-ai.apk. The APK is a large, gitignored binary built
+# separately (see docs/ANDROID.md), so we copy the locally-built signed release
+# APK into the bundle just before the rsync. It then ships with the static
+# client to ${REMOTE_PATH}/client/android/escape-ai.apk and nginx serves it at
+# https://${APP_DOMAIN}/android/escape-ai.apk.
+#
+# Path is overridable: APK_PATH=/path/to.apk ./scripts/deploy-server.sh
+# If no APK is found we WARN and continue — the page still deploys; only the
+# download link 404s until an APK is staged. Set REQUIRE_APK=1 to hard-fail.
+APK_PATH="${APK_PATH:-${PROJECT_ROOT}/client/android/app/build/outputs/apk/release/app-release.apk}"
+if [[ -f "${APK_PATH}" ]]; then
+  log "Staging Android APK → client/dist/android/escape-ai.apk ($(du -h "${APK_PATH}" | cut -f1))"
+  mkdir -p "${PROJECT_ROOT}/client/dist/android"
+  cp "${APK_PATH}" "${PROJECT_ROOT}/client/dist/android/escape-ai.apk"
+elif [[ "${REQUIRE_APK:-0}" == "1" ]]; then
+  die "REQUIRE_APK=1 but no APK at ${APK_PATH}. Build it first (see docs/ANDROID.md) or set APK_PATH."
+else
+  log "WARNING: no APK at ${APK_PATH} — /android page will deploy but the download link will 404."
+  log "         Build a signed release APK (docs/ANDROID.md) or pass APK_PATH=/path/to.apk to include it."
+fi
+
 # --- 2. ensure remote dirs exist (idempotent; provision made them, this is safe)
 log "Ensuring remote directories"
 remote "mkdir -p '${REMOTE_PATH}/server' '${REMOTE_PATH}/shared' '${REMOTE_PATH}/client' '${REMOTE_PATH}/logs' '${REMOTE_PATH}/data'"

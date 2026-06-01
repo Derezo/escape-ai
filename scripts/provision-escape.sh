@@ -254,6 +254,18 @@ server {
         try_files \$uri \$uri/ /index.html;
     }
 
+    # The Android APK (served by the /android download page). Force a download
+    # with the correct package MIME, serve =404 if absent (never the SPA HTML),
+    # and don't rate-limit a single large binary. The file is staged into the
+    # bundle by scripts/deploy-server.sh.
+    location = /android/escape-ai.apk {
+        types { }
+        default_type application/vnd.android.package-archive;
+        add_header Content-Disposition 'attachment; filename="escape-ai.apk"';
+        try_files \$uri =404;
+        access_log off;
+    }
+
     # Cache the hashed Vite bundles + generated assets aggressively.
     location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|woff2?|wav|mp3|ogg|json)\$ {
         try_files \$uri =404;

@@ -4,6 +4,23 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.185: **Android: `/android` download page + deploy wiring.** A polished static
+  download page at `escape.mittonvillage.com/android/`, styled like the in-game title
+  screen — the same `ESCAPE` cyan→white gradient fade and `AI` glitch/jitter pop (red/cyan
+  chromatic aberration) lifted verbatim from `client/src/style.css`, the radial dark
+  background, monospace type, the "The zoo is under new management." tagline, and the app
+  icon. Self-contained HTML (no build step) in `assets/android/` — Vite copies it to
+  `dist/android/`, so it ships with the normal client deploy. Includes a download button,
+  3-step sideload instructions, a "play in your browser" link, version/size (v1.0 · 68 MB ·
+  Android 7.0+), and a what-is-this blurb; honours `prefers-reduced-motion`.
+  `deploy-server.sh` gains a step that stages the locally-built signed release APK into
+  `client/dist/android/escape-ai.apk` before the rsync (overridable `APK_PATH`, soft-warn
+  if absent, `REQUIRE_APK=1` to hard-fail). `provision-escape.sh`'s nginx vhost gets a
+  dedicated `location = /android/escape-ai.apk` (correct `application/vnd.android.package-archive`
+  MIME + force-download header, `=404` instead of the SPA fallback); re-run provision on the
+  VPS to apply that block. Both `.sh` edits shellcheck-clean; the APK-staging branch logic
+  unit-tested for present / absent-soft / absent-required.
+
 - 0.2.183: **Android: release signing wired (secrets stay out of git).** `app/build.gradle`
   now reads `android/keystore.properties` (gitignored) and creates a
   `signingConfigs.release` applied to the release build type — but only when that file
