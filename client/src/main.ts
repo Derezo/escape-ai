@@ -72,6 +72,8 @@ async function main(): Promise<void> {
   // lore lives in the help widget, not here.
   const hud = document.createElement('div');
   hud.id = 'hud';
+  // Hidden during character selection; revealed once we're in-game (see frame()).
+  hud.style.display = 'none';
   hud.innerHTML = `
     <div id="hud-title">ESCAPE AI</div>
     <div class="hud-row"><span class="hud-key">latency</span><span class="hud-val" id="hud-latency">…</span></div>
@@ -474,6 +476,10 @@ async function main(): Promise<void> {
 
   // --- Render + HUD loop (every animation frame) ---
   function frame(): void {
+    // The stats HUD belongs to the in-game view only — keep it hidden through
+    // character selection and reveal it the moment we have our entity id.
+    hud.style.display = myId ? 'block' : 'none';
+
     // Tag our own entity as local (client-only field; never crosses the wire) so
     // the renderer snaps it to the predicted position while interpolating remote
     // entities for smoothness. Cleared on others implicitly (only one is set).
