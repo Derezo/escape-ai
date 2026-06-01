@@ -6,6 +6,8 @@
   "description": "Dev/ops scripts for the TINS 2026 starter kit. The frame generator + load-test harness are zero-dep; only the atlas rasteriser (build-atlas) needs sharp.",
   "type": "commonjs",
   "scripts": {
+    "verify": "node verify.mjs",
+    "verify:quick": "node verify.mjs --quick",
     "sim": "node sim-clients.js",
     "gen-sprites": "node gen-sprites.js",
     "build-atlas": "node build-atlas.js",

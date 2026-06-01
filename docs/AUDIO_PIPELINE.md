@@ -149,9 +149,14 @@ Terminal failure statuses (`CREATE_TASK_FAILED`, `GENERATE_AUDIO_FAILED`,
    --key=<key>` (or `generate-music.py`). Verify it sounds right; if the second sample
    is better, swap it (§9).
 
-The drift gate (`npm run audio:verify`) fails the build if `manifest.json` and
-`audio.generated.ts` disagree, so the client can never reference a key the manifest
-doesn't define (or vice versa).
+The drift gate is the `cd scripts && npm run audio:verify` check (also run as part of
+`npm run audio`, which regenerates the bindings and then verifies). It is a **manual,
+developer-run gate** — it is NOT wired into any client/server/shared build, git hook,
+or CI, so `npm run build` does not invoke it. Run it (or `npm run audio`) yourself
+before committing a manifest change: it exits non-zero if `manifest.json` and
+`audio.generated.ts` disagree, so you catch a drift where the client would otherwise
+reference a key the manifest doesn't define (or vice versa). The repo-wide
+`node scripts/verify.mjs` aggregator runs it alongside the other verify gates.
 
 ---
 

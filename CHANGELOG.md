@@ -4,6 +4,27 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.166: **Findings closeout Phase 5 — verification automation + missing tests.**
+  The repo had rich verify gates but no CI and only a reminder-only commit-msg hook,
+  so every gate was manual and easy to forget. Four fixes: (1) NEW
+  `shared/test/net.test.mjs` — the net event contract (`shared/src/net.ts`) had ZERO
+  test coverage despite being a first-class contract; 9 subtests pin the exact
+  `CLIENT_EVENTS`/`SERVER_EVENTS` key sets, assert event-name values are unique within
+  each map and disjoint between them, and tripwire the total count — so adding/renaming
+  an event without updating the test fails (99 → 108 shared tests). (2) NEW
+  `node scripts/verify.mjs` (+ `npm run verify` / `verify:quick` in `scripts/`) — a
+  zero-dep aggregator that builds shared then runs every gate (shared + server tests,
+  client typecheck, facing determinism, atlas + tileset verify, audio drift) in one
+  shot, runs ALL gates even if one fails (surfaces every problem), and exits non-zero
+  if any fail; `--quick` skips the slower asset rasterisation gates. Confirmed: all 7
+  gates green. (3) `client/src/config.ts` — the `VITE_SERVER_URL` → `localhost:3000`
+  fallback was silent; it now emits a loud `console.error` in a PRODUCTION build (the
+  Android/WebView misconfig) via an `import.meta.env.PROD` guard, while local dev stays
+  zero-config + silent (the warning string is confirmed baked into the prod bundle).
+  (4) `docs/AUDIO_PIPELINE.md` — corrected the drift-gate wording from "fails the
+  build" to "a manual developer-run gate" (it is NOT wired into any build/CI/hook) and
+  pointed at the new aggregator.
+
 - 0.2.165: **Findings closeout Phase 4 — robot PURSUE routes A* around walls
   (+ smoothed).** Closes the deferred finding: the perception-driven chase
   (`decision.mode === 'pursue'` in `stealth.js` `stepRobots`) was the one robot
