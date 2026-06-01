@@ -83,6 +83,12 @@ async function loadSharedWorld() {
   // model from one shared-world cache — game/follow.js then calls
   // world.foodForSpecies(species) rather than maintaining its own loader.
   const foodMod = await import('../../shared/dist/food.js');
+  // The AABB-vs-solids test the movement integrator uses (shared/dist/step.js).
+  // Loaded into the shared cache so spawnForSpecies can validate that a spawn point's
+  // PLAYER BOX (not just its tile centre) is clear of solids — the exact same test
+  // moveWithCollision runs each tick, so a spawn it accepts is one the player can
+  // actually move out of. See findBoxClearNear.
+  const stepMod = await import('../../shared/dist/step.js');
 
   const required = {
     generateWorld: worldMod.generateWorld,
@@ -91,6 +97,7 @@ async function loadSharedWorld() {
     MAP_H: worldMod.MAP_H,
     tileSolid: worldMod.tileSolid,
     isSolidAt: worldMod.isSolidAt,
+    boxHitsSolid: stepMod.boxHitsSolid,
     worldToTile: worldMod.worldToTile,
     seedFromString: rngMod.seedFromString,
     questForSpecies: questMod.questForSpecies,
@@ -402,6 +409,96 @@ function findWalkableNear(roomName, px, py, maxRadius = 12) {
 }
 
 /**
+ * Nearest spawn point whose PLAYER BOX can move — the spawn-only sibling of
+ * findWalkableNear. findWalkableNear validates a single POINT (one tile via
+ * isSolidAtRoom), but the player is integrated as an axis-aligned box of half-extent
+ * RECT_SIZE*0.4 (= the same radius moveWithCollision uses). A tile centre can be
+ * point-walkable while the player's box overlaps an adjacent solid tile on every
+ * side — a "box-trapped" spawn where the player loads in unable to move on any axis
+ * (the tortoise-in-the-pond / animal-in-the-den bug). This validates the actual box.
+ *
+ * STAGE 1 (the load-bearing fix): snap the preferred point to ITS OWN tile centre and
+ * accept it if the box there is clear. Because the player half-extent (12.8) is < half
+ * a tile (16), a box centred on ANY non-solid tile stays entirely within that one tile
+ * — so snapping to the centre cures every real case (jitter only ever lands the raw
+ * point within ~3 units of a tile edge, which is what clips the box into a neighbour).
+ *
+ * STAGE 2 (defensive backstop): if the own-centre box is somehow blocked, ring-search
+ * outward (identical Chebyshev visitation order to findWalkableNear, so the choice is
+ * deterministic) for the nearest tile centre whose box is clear; track the
+ * least-overlapping centre seen as a fallback.
+ *
+ * STAGE 3 (degenerate): no box-clear centre within maxRadius (a genuinely too-tight
+ * pen — never happens at current constants since radius < tile/2). Warn loudly and
+ * return the least-overlapping centre — never the known-trapped input, never a loop.
+ *
+ * Pure + deterministic (no rng). Same args → same result.
+ * @param {string} roomName
+ * @param {number} px  preferred X (world units)
+ * @param {number} py  preferred Y (world units)
+ * @param {number} [maxRadius=12]  max search radius in tiles
+ * @returns {{ x: number, y: number }}
+ */
+function findBoxClearNear(roomName, px, py, maxRadius = 12) {
+  // Lazily required to keep world.js a clean leaf module (see pruneExpired's note);
+  // Node caches the module, so this is a map lookup after first call.
+  const { RECT_SIZE } = require('../config');
+  const radius = RECT_SIZE * 0.4; // half-extent moveWithCollision integrates the player at
+  const map = getOrCreateRoomWorld(roomName).map;
+  const { collision, w, h, tile } = map;
+  const at = (tx, ty) => ({ x: (tx + 0.5) * tile, y: (ty + 0.5) * tile });
+  const clear = (x, y) => !sharedWorld.boxHitsSolid(x, y, radius, collision, w, h, tile);
+  // How many solid tiles the box at (x,y) overlaps — mirrors boxHitsSolid's span math
+  // exactly (floor((c±radius)/tile), OOB counts solid), for the least-overlap tie-break.
+  const overlapCount = (x, y) => {
+    const minTx = Math.floor((x - radius) / tile);
+    const maxTx = Math.floor((x + radius) / tile);
+    const minTy = Math.floor((y - radius) / tile);
+    const maxTy = Math.floor((y + radius) / tile);
+    let n = 0;
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        if (tx < 0 || ty < 0 || tx >= w || ty >= h || collision[ty * w + tx] === 1) n++;
+      }
+    }
+    return n;
+  };
+
+  const tx0 = Math.floor(px / tile);
+  const ty0 = Math.floor(py / tile);
+
+  // STAGE 1: own tile centre.
+  const c0 = at(tx0, ty0);
+  if (clear(c0.x, c0.y)) return c0;
+
+  // STAGE 2: expanding ring; track the least-overlapping centre as we go.
+  let best = c0;
+  let bestOverlap = overlapCount(c0.x, c0.y);
+  for (let r = 1; r <= maxRadius; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue; // ring edge only
+        const p = at(tx0 + dx, ty0 + dy);
+        if (clear(p.x, p.y)) return p;
+        const o = overlapCount(p.x, p.y);
+        if (o < bestOverlap) {
+          bestOverlap = o;
+          best = p;
+        }
+      }
+    }
+  }
+
+  // STAGE 3: degenerate — surface it (a too-tight pen) and return the least-bad spot.
+  console.warn(
+    `[spawn] box-trapped fallback in room=${roomName} near (${px.toFixed(1)},${py.toFixed(1)}): ` +
+    `no box-clear tile within ${maxRadius} tiles; using least-overlapping centre ` +
+    `(${best.x.toFixed(1)},${best.y.toFixed(1)}, overlap=${bestOverlap}). Pen geometry too tight.`
+  );
+  return best;
+}
+
+/**
  * The spawn point for a player of `species` in a room: the CENTER of that species'
  * OWN pen/home (world units), with a small deterministic per-player jitter so two
  * same-species players don't stack exactly. Spawning in the home pen — not the
@@ -412,8 +509,10 @@ function findWalkableNear(roomName, px, py, maxRadius = 12) {
  * species). The jitter is clamped to the pen interior so it can't cross the
  * barrier ring; world-gen proves every pen center is non-solid + reachable and the
  * interior is >= 6x6 tiles, so a sub-tile offset stays walkable. As a final guard,
- * the chosen point is snapped to the nearest walkable tile (findWalkableNear) so a
- * player can never spawn stuck inside a solid tile. No rng (hashStr).
+ * the chosen point is snapped to the nearest tile whose PLAYER BOX is clear of solids
+ * (findBoxClearNear), so the player can MOVE on the first tick — not merely stand on a
+ * non-solid tile centre while its collision box is wedged against an interior wall /
+ * the pond's deep-water core / a den wall (the box-trapped-on-load bug). No rng (hashStr).
  *
  * @param {string} roomName
  * @param {string} species
@@ -425,7 +524,7 @@ function spawnForSpecies(roomName, species, jitterSeed) {
   const center = species ? getHomeCentersBySpecies(roomName).get(species) : null;
   if (!center) {
     const fallback = (map.spawns && map.spawns[0]) || { x: 50, y: 50 };
-    return findWalkableNear(roomName, fallback.x, fallback.y);
+    return findBoxClearNear(roomName, fallback.x, fallback.y);
   }
   const bounds = getHomeBoundsBySpecies(roomName).get(species);
   let x = center.x;
@@ -437,7 +536,7 @@ function spawnForSpecies(roomName, species, jitterSeed) {
     x = Math.min(Math.max(center.x + jx, bounds.minX + 4), bounds.maxX - 4);
     y = Math.min(Math.max(center.y + jy, bounds.minY + 4), bounds.maxY - 4);
   }
-  return findWalkableNear(roomName, x, y);
+  return findBoxClearNear(roomName, x, y);
 }
 
 /**
@@ -670,6 +769,7 @@ module.exports = {
   getHomeCentersBySpecies,
   spawnForSpecies,
   findWalkableNear,
+  findBoxClearNear,
   getHomeGateInsideBySpecies,
   getGuardBoundsByRobotId,
   getAuxInteriorRects,

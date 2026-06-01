@@ -4,6 +4,54 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.205: **Android — runtime landscape lock backstop.** The manifest already pins the activity to
+  `sensorLandscape` (0.2.200, the authoritative native lock), but a stale install or a WebView that
+  ignores it could still let the page rotate to portrait. Added a dependency-free `lockLandscape()`
+  (`client/src/platform.ts`) that re-asserts the lock at startup via the standard Web Screen
+  Orientation API (`screen.orientation.lock('landscape')`) — what `@capacitor/screen-orientation`
+  wraps, but with no new plugin or native code. Called once from `main()`; tolerant of WebViews
+  where `lock()` is unsupported/rejects (the manifest stays the primary guarantee). No-op off Android.
+  Client typecheck + build green.
+
+- 0.2.204: **Android — fix the missing on-screen joystick.** The floating joystick never appeared on
+  the APK: its `touchstart`/`move`/`end` listeners were attached to `#touch-controls`, which is
+  `pointer-events:none` (so empty play-surface taps fall through to the game). A `pointer-events:none`
+  element is not a hit-test target, so its touch listeners never fire for a bare left-half touch — the
+  event went straight to the canvas and the stick was never created. Fix (`client/src/touch-controls.ts`):
+  attach the joystick listeners to `window` instead of the root. Window-level listeners fire regardless
+  of any element's `pointer-events`; `onTouchStart` already filters to bare left-half touches (skipping
+  `#touch-actions`, chat, and any `<button>` via `closest()`, which covers the top-left `#hud-quest-info`
+  ⓘ button), so it claims only joystick touches and leaves the HUD/buttons alone. Client typecheck green.
+
+- 0.2.203: **Android — fix the zoomed-in / wrong-aspect render (camera now device-independent).**
+  The same bundle rendered correctly in the mobile browser but hugely zoomed-in on the APK. Root
+  cause: the camera ran at the default `zoom = 1`, so with `Scale.RESIZE` the on-screen world scale
+  was driven purely by whatever CSS-pixel viewport the host reported — and the Capacitor WebView
+  resolves `width=device-width`/`100dvh` to a different box than the browser (it interacts with
+  `viewport-fit=cover` + the locked `maximum-scale=1`), so the world scale fell out differently.
+  Fix (`client/src/render/phaser.ts`): set an explicit camera zoom anchored to a fixed number of
+  world tiles across the viewport's shorter dimension (`TARGET_TILES_MIN_DIM = 10`, clamped), applied
+  on world build and re-applied on every `ScaleManager` RESIZE. The framing is now identical on the
+  APK and the browser regardless of the reported viewport, and stable across rotation. Client
+  typecheck + build green.
+
+- 0.2.202: **Spawn — never spawn a player BOX-TRAPPED (tortoise/mole/fox/skunk in tight pens).**
+  Spawning as a tortoise (also mole/fox/skunk) could drop the player on a tile they couldn't move
+  out of on first load. The spawn guard (`findWalkableNear`) validated a single POINT (one tile via
+  `isSolidAtRoom`), but the player is integrated as an axis-aligned box of half-extent
+  `RECT_SIZE*0.4` (12.8). In the tight pond/den pens a tile centre is point-walkable while the
+  player's box overlaps an adjacent solid (the deep-water core / a den wall) on every side —
+  point-walkable but immobile (4040 such spawns across 40 seeds × 14 species × 64 jitter seeds).
+  Fix (`server/game/world.js`, server-only — no `WORLD_GEN_VERSION` bump, no client change): a new
+  spawn-only `findBoxClearNear` validates the player BOX with the SAME `shared.boxHitsSolid` test the
+  integrator runs each tick. It snaps the spawn to its own tile centre first (the load-bearing fix:
+  radius 12.8 < tile/2 16, so any non-solid tile centre is box-clear), with a deterministic
+  ring-search backstop and a warned least-overlapping degenerate fallback. `findWalkableNear` is left
+  untouched (it stays the resume-into-wall guard). The regression test
+  (`server/test/spawn-walkable.test.js`) now asserts the box is clear AND can actually move via the
+  real shared `moveWithCollision` (the old point-check assertion passed even on the buggy code). Probe
+  4040→0; full `verify` (incl. shared parity / pinned-hash gate) and the 22-test server suite green.
+
 - 0.2.201: **Android — landscape mobile-fit pass on the overlays.** The modals were laid out for a
   tall portrait viewport; on a short, wide landscape phone (~360px tall) their portrait-era `vh`
   height caps would squeeze the content. Each modal's `max-height` is now
