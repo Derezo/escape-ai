@@ -4,6 +4,24 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.193: **Android touch — Phase 2: background-pause lifecycle (battery).** On a phone,
+  backgrounding the WebView (home / call / app-switch) left the rAF render loop, both
+  `setInterval`s (connection tick + input send), the audio loops, and the Socket.IO
+  connection all running full-tilt — draining battery and churning the socket while invisible.
+  New `client/src/lifecycle.ts` wires Capacitor `App` `pause`/`resume` (installs
+  `@capacitor/app@8.1.0`) plus a `document.visibilitychange` fallback for WebViews where the
+  native event is late/absent, debounced so the two can't double-fire. `main.ts`: the two
+  intervals now capture their ids, the input-send body is a named `sendInputFrame`, and the
+  rAF loop gates on an `isAppActive` flag (a paused `frame()` returns without re-scheduling).
+  On pause → clear both intervals, flip `isAppActive=false`, `getAudioCtx()?.suspend()`,
+  `net.disconnect()`. On resume → `net.connect()`, `getAudioCtx()?.resume()`, reset the
+  send-loop clock, re-arm both intervals, restart the rAF loop. Gated to Android (the whole
+  install is behind `isAndroid`), so desktop loops/audio/socket are unchanged. **Verified on
+  an Android 16 emulator:** via the DevTools protocol, a hide→show cycle increments the audio
+  context's suspend then resume counters; a real HOME-button background + relaunch leaves the
+  app alive and reconnected (no crash). (`npm audit` flags the pre-existing dev-only
+  esbuild/Vite advisory — already tracked in `FINDINGS_OUTSIDE_SCOPE.md`, not introduced here.)
+
 - 0.2.192: **Android touch — Phase 1: virtual joystick + action buttons (Android playable).**
   Fills in `client/src/touch-controls.ts`: a **floating analog joystick** (appears wherever
   the first finger lands in the left half, recenters each touch) whose knob offset

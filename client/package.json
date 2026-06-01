@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",
+    "@capacitor/app": "^8.1.0",
     "@capacitor/core": "^8.3.4",
     "phaser": "^3.88.2",
     "socket.io-client": "^4.8.1"

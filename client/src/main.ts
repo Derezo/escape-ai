@@ -32,7 +32,7 @@ import { PhaserRenderer } from './render/phaser';
 import { NetClient } from './net/client';
 import { HEADLINE as CONN_HEADLINE, type ConnectionView } from './net/connection-state';
 import { SERVER_URL, DEFAULT_ROOM } from './config';
-import { preloadSfx, playSfx, startLoop, stopLoop, spatialGain, type SfxName } from './audio';
+import { preloadSfx, playSfx, startLoop, stopLoop, spatialGain, getAudioCtx, type SfxName } from './audio';
 import { initMusic, playMusicState } from './music';
 import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
@@ -46,6 +46,7 @@ import { playIntro, preloadIntroAssets, isIntroActive } from './intro';
 import { isAndroid, applyPlatformClass } from './platform';
 import { getTouchVector, setActionSink } from './touch-input';
 import { createTouchControls } from './touch-controls';
+import { installLifecycle } from './lifecycle';
 
 // Client prediction uses the SAME collision-aware integration as the server
 // (shared moveWithCollision against the regenerated map's grid), so prediction
@@ -241,7 +242,13 @@ async function main(): Promise<void> {
   // Drive the health clock at 250ms so the 5s threshold trips and the "Ns offline"
   // counter advances even when no socket event fires. Imperceptible granularity for
   // a 5s gate, and cheap.
-  setInterval(() => renderConnView(net.tickConnection(Date.now())), 250);
+  // Interval id captured so the lifecycle handler (Android) can clear it on
+  // background and re-arm on resume — otherwise it ticks the connection clock while
+  // the app is invisible. `connTickInterval` is reassigned on resume.
+  let connTickInterval = window.setInterval(
+    () => renderConnView(net.tickConnection(Date.now())),
+    250,
+  );
 
   // --- Leaderboard overlay (L). Built hidden; a sortable datatable of the top
   // players by every stat + the server-computed composite score. Opening it (and
@@ -517,7 +524,10 @@ async function main(): Promise<void> {
   // --- Input send loop @ INPUT_SEND_MS: stamp seq, send, predict locally ---
   let seq = 0;
   let lastSendTime = performance.now();
-  setInterval(() => {
+  // Named so the lifecycle handler (Android) can re-arm the interval on resume.
+  // `inputInterval` is reassigned there; `lastSendTime` is reset there too so the
+  // first post-resume dt isn't a huge gap.
+  function sendInputFrame(): void {
     // While the chat input is focused the player is typing: freeze movement. The
     // keydown handler already bails on `chatFocused` (so nothing new enters `keys`
     // and no action is queued), but a key held across the focus edge is cleared
@@ -577,10 +587,19 @@ async function main(): Promise<void> {
       const me = entities.get(myId);
       if (me) me.facing = facingFromVec(dx, dy, (me.facing as Dir8) ?? 's');
     }
-  }, INPUT_SEND_MS);
+  }
+  // Interval id captured so the lifecycle handler can clear/re-arm it (Android).
+  let inputInterval = window.setInterval(sendInputFrame, INPUT_SEND_MS);
 
   // --- Render + HUD loop (every animation frame) ---
+  // `isAppActive` gates the loop so the lifecycle handler (Android) can stop it on
+  // background: a paused frame() returns WITHOUT re-scheduling, halting the loop until
+  // resume re-arms it. rAF already stops firing when the tab/app is hidden in most
+  // engines, but this is the authoritative stop (and the companion to suspending audio
+  // + dropping the socket) so nothing churns while backgrounded.
+  let isAppActive = true;
   function frame(): void {
+    if (!isAppActive) return; // paused: do not render and do not re-schedule
     // The stats HUD belongs to the in-game view only — keep it hidden through
     // character selection and reveal it the moment we have our entity id.
     hud.style.display = myId ? 'block' : 'none';
@@ -945,6 +964,37 @@ async function main(): Promise<void> {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  // --- App lifecycle (Android): pause everything on background, restore on resume.
+  // Without this the rAF loop, both intervals, audio, and the socket keep running
+  // while the app is invisible — draining battery and churning the connection. Gated
+  // to Android; desktop never installs it, so its loops/audio/socket are unchanged. ---
+  if (isAndroid) {
+    installLifecycle({
+      onPause() {
+        isAppActive = false; // the next frame() returns without re-scheduling
+        window.clearInterval(connTickInterval);
+        window.clearInterval(inputInterval);
+        getAudioCtx()?.suspend();
+        net.disconnect();
+      },
+      onResume() {
+        // Reconnect first so the socket is live as the loops come back.
+        net.connect(SERVER_URL);
+        getAudioCtx()?.resume();
+        // Reset the send-loop clock so the first post-resume dt isn't a huge gap.
+        lastSendTime = performance.now();
+        connTickInterval = window.setInterval(
+          () => renderConnView(net.tickConnection(Date.now())),
+          250,
+        );
+        inputInterval = window.setInterval(sendInputFrame, INPUT_SEND_MS);
+        // Re-arm the render loop.
+        isAppActive = true;
+        requestAnimationFrame(frame);
+      },
+    });
+  }
 
   /**
    * Select the appropriate music track based on current game state.
