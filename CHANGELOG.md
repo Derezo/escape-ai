@@ -4,6 +4,18 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.182: **Android: branded launcher icon + splash (the AI optic).** New zero-dep
+  generator `scripts/gen-android-icons.js` (SVG → PNG via the already-installed `sharp`,
+  same pattern as `build-atlas.js`; deterministic/idempotent, no new deps) replaces the
+  default Capacitor logo with the game's antagonist tell: a steel-ringed glowing red robot
+  optic with a cyan scan-line on dark navy — "the AI sees you; escape it." Writes the
+  adaptive-icon foreground at 5 densities (108→432px) + the `ic_launcher_background` colour
+  (`#11151d`), the legacy `ic_launcher`/`ic_launcher_round` at 5 densities (48→192px), and
+  the splash at the 11 Capacitor port/land density sizes (dimensions read from the existing
+  files at runtime so nothing mismatches). Palette is the real game palette harvested from
+  the codebase (`#4cc9f0` cyan, `#9aa3ad` steel, `#e05a5a` alert red, `#0b0e14`/`#11151d`
+  navy).
+
 - 0.2.181: **Android: commit the native project, lock the appId to the prod domain.**
   First phase of the releasable-APK work. The Capacitor `appId` is now
   `com.mittonvillage.escape` (the reverse of the production domain
