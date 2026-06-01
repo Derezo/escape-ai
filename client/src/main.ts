@@ -36,6 +36,8 @@ import { preloadSfx, playSfx, startLoop, stopLoop, spatialGain, getAudioCtx, typ
 import { initMusic, playMusicState } from './music';
 import type { MusicName } from './audio.generated';
 import { createHelp } from './help';
+import { createTips } from './tips';
+import { hasSeenTips, markTipsSeen } from './tips-state';
 import { createInventory } from './inventory';
 import { createFoodBar } from './foodbar';
 import { questHelpText } from './quest-help';
@@ -181,6 +183,11 @@ async function main(): Promise<void> {
   // now, so the help widget no longer opens on load. H or ? toggles it. ---
   createHelp();
 
+  // --- One-time Game Tips screen. Built hidden; shown ONCE after the intro for a
+  // new character (or any player who hasn't seen it yet) as a species-specific
+  // walkthrough. The help widget (H/?) carries the same content for re-reading. ---
+  const tips = createTips();
+
   // --- Inventory overlay (I). Built hidden; lists the collected food + which
   // species each feeds. Reads the local player's server-authoritative inventory. ---
   const inventory = createInventory();
@@ -282,8 +289,29 @@ async function main(): Promise<void> {
   // down — the join-build hitch is hidden. The frame loop's music guard
   // (isIntroActive()) keeps gameplay music silent until then. Returning players
   // resuming a run skip it. playIntro() never rejects. ---
+  //
+  // One-time Game Tips: show the species-specific walkthrough ONCE — for a genuine
+  // new character OR any player who hasn't seen it yet (so existing players who
+  // predate the feature still get it). It's chained AFTER the intro so a new
+  // character sees cinematic → tips → play; everyone else sees it immediately on
+  // join. We DON'T await the intro before net.join above, so the world still builds
+  // behind the curtain; we only use the intro's resolve to time the tips reveal.
+  // A resuming player joins with no species (the server restores their reborn one),
+  // so we can't render the species-specific screen for them — gate on a known
+  // species and only stamp "seen" when we actually showed it, so a resumer who's
+  // never seen the tips still gets them on their next fresh login.
+  const shouldShowTips = (isNewCharacter || !hasSeenTips()) && !!species;
+  const showTipsOnce = (): void => {
+    if (!species) return;
+    tips.show(species);
+    markTipsSeen();
+  };
   if (isNewCharacter) {
-    void playIntro();
+    void playIntro().then(() => {
+      if (shouldShowTips) showTipsOnce();
+    });
+  } else if (shouldShowTips) {
+    showTipsOnce();
   }
 
   // --- Authoritative-ish world state, keyed by entity id ---
