@@ -4,6 +4,18 @@ All notable changes to TINS 2026. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.161: **provision-escape.sh now runs from the dev box.** Provisioning is no
+  longer a "copy to the VPS and run as root there" step — it matches deploy-server.sh.
+  The script resolves config from `scripts/deploy.env`, opens the `DEPLOY_USER` SSH
+  connection (adding `sudo` automatically when that user isn't root; `sudo -n` so a
+  non-NOPASSWD sudoer fails fast rather than hanging on a non-TTY prompt), and ships
+  its provisioning body over SSH via `env VAR=… bash -s` — the dev-box values are
+  passed as remote env so the nginx-config heredoc interpolates remotely-literal
+  vars with no local quoting fragility. `DEPLOY_USER`/`DEPLOY_HOST` joined `APP_DOMAIN`
+  as required-no-default. Verified end-to-end against the VPS with a non-destructive
+  dry payload (env transmits, runs as root, all prereqs present, port free, DNS
+  resolves). Updated README + the release-and-deploy agent doc to the dev-box flow.
+
 - 0.2.160: **Findings closeout Phase 2 — cheetah quest re-feed buffer.** Inserted a
   `reach` (regroup-at-home) step into the cheetah quest (`shared/src/quests.ts`) between
   its `recruit ×2` and `escort ×2` steps, so it now mirrors kangaroo's

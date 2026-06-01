@@ -184,23 +184,24 @@ cp scripts/deploy.env.example scripts/deploy.env
 | `PM2_NAME`     | no (`$APP_USER`) | pm2 process name (also the `pm2-$APP_USER.service` unit) |
 | `SSH_KEY`      | no (`~/.ssh/id_ed25519`) | private key for the connection |
 
-### One-time provisioning (run once on the VPS)
+### One-time provisioning (run once, from your dev machine)
 
-`scripts/provision-escape.sh` is idempotent and creates everything securely:
-the `nologin` app user (no shell, no password, can't ssh in), the deploy dirs with
-tight ownership, a per-user pm2 systemd unit that resurrects the process on reboot,
-the nginx vhost (static client + socket/health proxy), a Let's Encrypt certificate,
-and the firewall rules (allows the web edge; keeps the app port closed).
+`scripts/provision-escape.sh` runs from your dev box (like the deploy): it connects
+to the VPS over SSH as `DEPLOY_USER` (adding `sudo` automatically if that user isn't
+root) and provisions everything securely and idempotently — the `nologin` app user
+(no shell, no password, can't ssh in), the deploy dirs with tight ownership, a
+per-user pm2 systemd unit that resurrects the process on reboot, the nginx vhost
+(static client + socket/health proxy), a Let's Encrypt certificate, and the firewall
+rules (allows the web edge; keeps the app port closed).
 
 ```bash
-# copy your scripts/deploy.env to the VPS next to the script, then, on the VPS:
-sudo bash provision-escape.sh
-# or pass values inline:
-sudo APP_DOMAIN=escape.example.com APP_USER=escape APP_PORT=3390 bash provision-escape.sh
+cp scripts/deploy.env.example scripts/deploy.env   # then edit it (host/user/domain)
+./scripts/provision-escape.sh
 ```
 
-> If DNS for `APP_DOMAIN` doesn't resolve to the box yet, run with `SKIP_CERTBOT=1`
-> to provision everything but TLS, then rerun once DNS is live to issue the cert.
+> If DNS for `APP_DOMAIN` doesn't resolve to the VPS yet, run with `SKIP_CERTBOT=1`
+> (`SKIP_CERTBOT=1 ./scripts/provision-escape.sh`) to provision everything but TLS,
+> then rerun once DNS is live to issue the cert.
 
 ### Deploy (from your dev machine, repeatably)
 

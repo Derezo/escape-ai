@@ -2,9 +2,12 @@
 #
 # provision-escape.sh — one-time, idempotent VPS setup for Escape AI.
 #
-# Run ONCE on the VPS with root privileges (via sudo). It creates the dedicated,
-# secure app user and everything the deploy needs:
+# Run from your DEV BOX (like deploy-server.sh). It connects to the VPS over SSH
+# as DEPLOY_USER and provisions everything the deploy needs, as root (sudo is
+# added automatically when DEPLOY_USER is not root). It is NOT meant to be run on
+# the VPS directly — the dev box is the single control point.
 #
+# What it creates on the VPS (idempotent — safe to re-run):
 #   1. A login-DISABLED system user (APP_USER, nologin) that owns the files and
 #      runs the node process under its own pm2 — it can never ssh in, has no
 #      shell, and no password.
@@ -15,15 +18,15 @@
 #      and reverse-proxies ONLY /socket.io/ + /health to the loopback node port
 #      (single origin → no CORS, production CORS stays locked to `origin:false`).
 #   5. A Let's Encrypt certificate via certbot (HTTP-01), with HTTP→HTTPS redirect.
+#   6. Conditional ufw rules (allow 80/443; keep the app port closed).
 #
-# Everything is parameterised by env (see scripts/deploy.env.example) so no host,
-# user, domain, or port is hard-coded. Re-running is safe: each step checks for
-# existing state first.
+# All config is env-driven via scripts/deploy.env (copy from deploy.env.example).
+# DEPLOY_USER, DEPLOY_HOST, APP_DOMAIN have NO defaults — the script errors if
+# unset, so no host/user is hard-coded in this committed file.
 #
-# Usage (on the VPS):
-#   sudo APP_DOMAIN=escape.example.com APP_USER=escape APP_PORT=3390 \
-#        bash provision-escape.sh
-#   # or copy scripts/deploy.env alongside this script and just: sudo bash provision-escape.sh
+# Usage:  cp scripts/deploy.env.example scripts/deploy.env && edit it, then:
+#         ./scripts/provision-escape.sh
+#         SKIP_CERTBOT=1 ./scripts/provision-escape.sh   # before DNS resolves
 #
 set -euo pipefail
 
@@ -37,9 +40,15 @@ if [[ -f "${SCRIPT_DIR}/deploy.env" ]]; then
   set -a; . "${SCRIPT_DIR}/deploy.env"; set +a
 fi
 
-# Required, NO default: the public hostname reveals your infrastructure and must
-# not be hard-coded in the committed script. Set it in scripts/deploy.env.
-[[ -n "${APP_DOMAIN:-}" ]] || die "APP_DOMAIN is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in (or export APP_DOMAIN)."
+# Required, NO default: the SSH target + public hostname identify your
+# infrastructure and must not be hard-coded. Set them in scripts/deploy.env.
+require_env() {
+  local name="$1"
+  [[ -n "${!name:-}" ]] || die "${name} is not set. Copy scripts/deploy.env.example to scripts/deploy.env and fill it in (or export ${name})."
+}
+require_env DEPLOY_USER   # SSH login user (a sudoer; root needs no sudo)
+require_env DEPLOY_HOST   # VPS hostname
+require_env APP_DOMAIN    # public hostname (nginx server_name + TLS cert)
 
 # App-internal identity: safe, non-host-revealing defaults are fine.
 APP_USER="${APP_USER:-escape}"
@@ -52,46 +61,62 @@ APP_PORT="${APP_PORT:-3390}"
 # apex domain; override CERTBOT_EMAIL in deploy.env to use a real inbox.
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-admin@${APP_DOMAIN#*.}}"
 # Set SKIP_CERTBOT=1 to provision everything except the TLS cert (e.g. before
-# DNS for APP_DOMAIN resolves to this VPS — rerun without it once DNS is live).
+# DNS for APP_DOMAIN resolves to the VPS — rerun without it once DNS is live).
 SKIP_CERTBOT="${SKIP_CERTBOT:-0}"
+
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+SSH_OPTS=(-i "${SSH_KEY}" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20)
+[[ -f "${SSH_KEY}" ]] || die "SSH key not found: ${SSH_KEY} (set SSH_KEY in scripts/deploy.env)."
+
+# Privilege prefix: root needs nothing; a non-root sudoer gets `sudo -n` (fails
+# fast instead of hanging on a password prompt over a non-TTY SSH session).
+if [[ "${DEPLOY_USER}" == "root" ]]; then SUDO=""; else SUDO="sudo -n"; fi
+
+log "Provisioning ${APP_DOMAIN} on ${SSH_TARGET} (app user '${APP_USER}', loopback :${APP_PORT}, root ${REMOTE_PATH})"
+
+# --- ship the provisioning body to the VPS and run it as root ---------------
+# The remote body reads its config from the leading `env` assignment (the dev-box
+# values), so the nginx heredoc below interpolates remotely-literal $VARS with no
+# fragile local quoting. The whole thing runs in one ssh/bash invocation.
+ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+  ${SUDO} env \
+    APP_USER="${APP_USER}" \
+    APP_DOMAIN="${APP_DOMAIN}" \
+    REMOTE_PATH="${REMOTE_PATH}" \
+    APP_PORT="${APP_PORT}" \
+    CERTBOT_EMAIL="${CERTBOT_EMAIL}" \
+    SKIP_CERTBOT="${SKIP_CERTBOT}" \
+    bash -s <<'REMOTE'
+set -euo pipefail
+
+log() { printf '\033[1;36m  [vps]\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m  [vps] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 NGINX_AVAILABLE="/etc/nginx/sites-available/${APP_USER}.conf"
 NGINX_ENABLED="/etc/nginx/sites-enabled/${APP_USER}.conf"
 WEBROOT="/var/www/certbot"   # shared ACME webroot for HTTP-01 challenges
 
-[[ "$(id -u)" -eq 0 ]] || die "must run as root (use sudo)."
-command -v nginx   >/dev/null || die "nginx not installed."
-command -v pm2     >/dev/null || die "pm2 not installed (npm i -g pm2)."
-command -v node    >/dev/null || die "node not installed."
-
-log "Provisioning '${APP_USER}' → ${APP_DOMAIN} (loopback :${APP_PORT}, root ${REMOTE_PATH})"
+[[ "$(id -u)" -eq 0 ]] || die "remote provisioning is not running as root (DEPLOY_USER needs sudo)."
+command -v nginx >/dev/null || die "nginx not installed on the VPS."
+command -v pm2   >/dev/null || die "pm2 not installed on the VPS (npm i -g pm2)."
+command -v node  >/dev/null || die "node not installed on the VPS."
 
 # --- 0. firewall (ufw): open the web edge, keep the app port closed ----------
 # The public edge is nginx on 80/443; the node app port is loopback-only and must
-# NEVER be exposed. So this step (a) ensures HTTP/HTTPS is allowed (idempotent —
-# skips if a matching rule already exists), and (b) as defense in depth, removes
-# any stray rule that publicly opens APP_PORT. All conditional: if ufw is absent
-# or inactive, we note it and move on rather than fail.
+# NEVER be exposed. (a) ensure HTTP/HTTPS is allowed (idempotent); (b) defense in
+# depth, remove any stray rule that publicly opens APP_PORT. Conditional: if ufw
+# is absent or inactive, note it and move on rather than fail.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   UFW_STATUS="$(ufw status 2>/dev/null)"
-
-  # (a) Allow the web edge. Reuse the 'Nginx Full' app profile if registered
-  # (80+443 in one rule); otherwise allow the two ports directly. Only add when
-  # not already present so reruns don't pile up duplicate rules.
   if echo "${UFW_STATUS}" | grep -qE "Nginx Full|(^|[^0-9])80,443/tcp"; then
     log "ufw: web edge (80/443) already allowed — leaving as is."
   elif ufw app list 2>/dev/null | grep -q "Nginx Full"; then
-    log "ufw: allowing 'Nginx Full' (80/443)"
-    ufw allow "Nginx Full" >/dev/null
+    log "ufw: allowing 'Nginx Full' (80/443)"; ufw allow "Nginx Full" >/dev/null
   else
-    log "ufw: allowing 80,443/tcp"
-    ufw allow 80,443/tcp >/dev/null
+    log "ufw: allowing 80,443/tcp"; ufw allow 80,443/tcp >/dev/null
   fi
-
-  # (b) Defense in depth: if a rule publicly opens APP_PORT, delete it. The app
-  # port belongs on loopback behind nginx — it should not appear here at all.
-  # The port must be a whole token (no adjacent digit on either side) so a short
-  # APP_PORT can't false-match a longer port (e.g. 390 inside 3390).
+  # Whole-token match so a short APP_PORT can't false-match a longer port (390 in 3390).
   if echo "${UFW_STATUS}" | grep -qE "(^|[^0-9])${APP_PORT}(/tcp)?([^0-9]|$)"; then
     log "ufw: found a public rule for app port ${APP_PORT} — removing (should be loopback-only)"
     ufw delete allow "${APP_PORT}/tcp" >/dev/null 2>&1 || true
@@ -108,21 +133,18 @@ if id "${APP_USER}" &>/dev/null; then
   log "User '${APP_USER}' already exists — leaving as is."
 else
   log "Creating system user '${APP_USER}' (nologin, no password)"
-  # --system: no aging/expiry; --shell nologin: cannot log in; home is the
-  # deploy root so pm2 ($HOME/.pm2) and the files live together.
+  # --system: no aging/expiry; --shell nologin: cannot log in; home is the deploy
+  # root so pm2 ($HOME/.pm2) and the files live together.
   useradd --system --create-home --home-dir "${REMOTE_PATH}" \
           --shell /usr/sbin/nologin "${APP_USER}"
-  # Belt-and-suspenders: lock the password so no credential auth is possible.
-  passwd --lock "${APP_USER}" >/dev/null
+  passwd --lock "${APP_USER}" >/dev/null   # lock the password — no credential auth
 fi
 
 # --- 2. deploy root + runtime dirs, owned by the app user, tight perms -------
 log "Ensuring ${REMOTE_PATH} (+ logs/, data/, client/, server/, shared/)"
 mkdir -p "${REMOTE_PATH}"/{logs,data,client,server,shared}
 chown -R "${APP_USER}:${APP_USER}" "${REMOTE_PATH}"
-# 0750: owner full, group read/exec (nginx reads the static client as its own
-# user — add nginx to the group so it can traverse), world none.
-chmod 750 "${REMOTE_PATH}"
+chmod 750 "${REMOTE_PATH}"   # owner full, group rx (nginx via group), world none
 # Let the web server's group descend to serve client/ statics.
 if getent group www-data >/dev/null; then
   usermod -aG "${APP_USER}" www-data || true
@@ -135,9 +157,8 @@ if systemctl list-unit-files | grep -q "^${PM2_UNIT}"; then
 else
   log "Registering ${PM2_UNIT} (pm2 startup for ${APP_USER})"
   # Run as root with -u/--hp: pm2 generates+installs a systemd unit that runs pm2
-  # AS ${APP_USER} with PM2_HOME=${REMOTE_PATH}/.pm2 (the unit hardcodes both from
-  # these flags). The first deploy's `pm2 save` (as the app user) then writes the
-  # dump this unit resurrects on boot.
+  # AS ${APP_USER} with PM2_HOME=${REMOTE_PATH}/.pm2. The first deploy's `pm2 save`
+  # (as the app user) then writes the dump this unit resurrects on boot.
   pm2 startup systemd -u "${APP_USER}" --hp "${REMOTE_PATH}" >/dev/null
   systemctl enable "${PM2_UNIT}" >/dev/null 2>&1 || true
 fi
@@ -246,8 +267,8 @@ else
 fi
 
 # --- validate + reload nginx ------------------------------------------------
-# If the cert is still missing (SKIP_CERTBOT before DNS), `nginx -t` would fail
-# on the ssl_certificate lines — guard the reload on the cert existing.
+# Guard the reload on the cert existing (SKIP_CERTBOT before DNS would make
+# `nginx -t` fail on the ssl_certificate lines).
 if [[ -f "/etc/letsencrypt/live/${APP_DOMAIN}/fullchain.pem" ]]; then
   log "Validating + reloading nginx"
   nginx -t && systemctl reload nginx
@@ -255,5 +276,8 @@ else
   log "Cert not present yet — NOT reloading nginx. Provision TLS, then: nginx -t && systemctl reload nginx"
 fi
 
-log "Done. Deploy the app with:  ./scripts/deploy-server.sh"
+log "VPS provisioning complete."
+REMOTE
+
+log "Done. Now deploy the app with:  ./scripts/deploy-server.sh"
 log "  (the systemd unit resurrects pm2 on reboot; the first deploy starts the process.)"

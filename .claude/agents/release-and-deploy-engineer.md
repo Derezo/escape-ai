@@ -87,7 +87,7 @@ cd client/android && ./gradlew assembleDebug  # headless APK
 
 All deploy config is env-driven via `scripts/deploy.env` (copy from `scripts/deploy.env.example`). `DEPLOY_HOST`, `DEPLOY_USER`, and `APP_DOMAIN` have **no defaults** and the scripts error if unset — never hard-code a host/user in a committed script.
 
-One-time, on the VPS: `scripts/provision-escape.sh` (idempotent) creates the dedicated `nologin` app user, the deploy dirs (tight ownership), a per-user pm2 systemd unit (resurrects on reboot), the nginx vhost (serves the static client from disk; proxies only `/socket.io/` + `/health` to the loopback node port), a Let's Encrypt cert, and the firewall rules (allows 80/443; keeps the app port closed).
+One-time, from the dev box: `scripts/provision-escape.sh` (idempotent) connects to the VPS over SSH as `DEPLOY_USER` (adds `sudo` automatically when that user isn't root) and creates the dedicated `nologin` app user, the deploy dirs (tight ownership), a per-user pm2 systemd unit (resurrects on reboot), the nginx vhost (serves the static client from disk; proxies only `/socket.io/` + `/health` to the loopback node port), a Let's Encrypt cert, and the firewall rules (allows 80/443; keeps the app port closed). It ships its provisioning body over SSH — there is no "run it on the VPS" step.
 
 Repeatable, from a dev machine: `scripts/deploy-server.sh` builds `shared/` + the client bundle (baking `VITE_SERVER_URL=https://$APP_DOMAIN`), rsyncs `server/` + `shared/` + the client bundle, installs prod deps remotely, chowns to the app user, zero-downtime-reloads pm2 (`pm2 startOrReload ecosystem.config.js`), then health-checks.
 
