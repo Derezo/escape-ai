@@ -24,7 +24,14 @@ body {
   position: fixed;
   inset: 0;
   width: 100vw;
+  /* `100vh` is the *large* viewport height in a mobile WebView (computed as if the
+     toolbar/gesture-nav are retracted), so it lays out TALLER than what's actually
+     visible. Phaser's RESIZE ScaleManager then sizes the canvas backing store to that
+     too-tall box and the result reads as a stretched / wrong-aspect render on a phone.
+     `100dvh` tracks the real visible height; the `100vh` line above is the fallback for
+     any engine without dvh. Desktop is unaffected (dvh == vh there). */
   height: 100vh;
+  height: 100dvh;
   /* On touch, the play surface must not interpret gestures as double-tap-zoom,
      pinch-zoom, long-press callouts, or text selection — those would hijack the
      virtual joystick's drags. `touch-action: none` hands all pointer events to the
@@ -35,10 +42,15 @@ body {
   user-select: none;
 }
 
+/* Let Phaser's RESIZE ScaleManager OWN the canvas CSS size: it sets explicit pixel
+   width/height that match the drawing-buffer resolution (and computes the autoCenter
+   margins). Forcing `width/height:100% !important` here decouples the displayed box from
+   the backing store, so when their aspect ratios disagree (WebView startup reflow,
+   rotation, vh≠visible-height) the browser stretches a fixed-resolution buffer into a
+   wrongly-proportioned box — the stretched render seen on Android. Don't re-add the
+   `!important` sizing. */
 #game canvas {
   display: block;
-  width: 100% !important;
-  height: 100% !important;
   touch-action: none;
 }
 
@@ -168,7 +180,9 @@ body {
   font-size: 11.5px;
   line-height: 1.45;
   white-space: pre-line; /* the \n between action + blurb becomes a line break */
-  max-width: 240px;
+  /* Cap to 60vw so it can't cover most of a narrow landscape phone (where 240px is
+     ~2/3 of the width); on desktop the 240px term wins, so it's unchanged. */
+  max-width: min(240px, 60vw);
   pointer-events: none;
 }
 #hud-quest-help.open {
@@ -599,7 +613,11 @@ body {
 #login-panel {
   width: 100%;
   max-width: 560px;
-  max-height: 90vh;
+  /* Clamp to the real visible height on a short landscape phone so the panel
+     scrolls (overflow-y below) instead of clipping. On a tall desktop the 90vh
+     term wins, so desktop sizing is unchanged. The 24px reserve keeps it off the
+     top/bottom screen edges. */
+  max-height: min(90vh, calc(100dvh - 24px));
   overflow-y: auto;
   padding: 24px 28px 22px;
   border-radius: 12px;
@@ -980,7 +998,8 @@ body {
   flex-direction: column;
   max-width: 760px;
   width: 100%;
-  max-height: 90vh;
+  /* Short-landscape clamp (see #login-panel); the inner #help-body scrolls. */
+  max-height: min(90vh, calc(100dvh - 24px));
   padding: 18px 24px 14px;
   border-radius: 12px;
   background: #11151d;
@@ -1158,7 +1177,9 @@ body {
   flex-direction: column;
   max-width: 720px;
   width: 100%;
-  max-height: 92vh;
+  /* Short-landscape clamp (see #login-panel); the inner #tips-body scrolls and the
+     #tips-foot "Got it" button stays pinned visible. */
+  max-height: min(92vh, calc(100dvh - 24px));
   padding: 20px 26px 16px;
   border-radius: 12px;
   background: #11151d;
@@ -1440,7 +1461,8 @@ body {
   flex-direction: column;
   max-width: 460px;
   width: 100%;
-  max-height: 80vh;
+  /* Short-landscape clamp (see #login-panel); the inner #inv-body scrolls. */
+  max-height: min(80vh, calc(100dvh - 24px));
   padding: 18px 24px 14px;
   border-radius: 12px;
   background: #11151d;
@@ -1657,7 +1679,9 @@ body {
   flex-direction: column;
   width: 100%;
   max-width: 960px;
-  max-height: 86vh;
+  /* Short-landscape clamp (see #login-panel); the inner #lb-scroll scrolls both
+     axes (overflow:auto), so the wide table also pans sideways on a narrow screen. */
+  max-height: min(86vh, calc(100dvh - 24px));
   padding: 18px 22px 14px;
   border-radius: 12px;
   background: #11151d;
@@ -1924,7 +1948,10 @@ body {
   z-index: 35;
   width: 340px;
   max-width: calc(100vw - 28px);
-  max-height: 56vh;
+  /* Short-landscape clamp: the panel is bottom-anchored above the chat icon, so
+     reserve ~120px for that offset + the soft keyboard; the inner #chat-scroll
+     scrolls. On desktop the 56vh term wins (unchanged). */
+  max-height: min(56vh, calc(100dvh - 120px));
   display: flex;
   flex-direction: column;
   padding: 12px 12px 9px;

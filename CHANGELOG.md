@@ -4,6 +4,39 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.201: **Android — landscape mobile-fit pass on the overlays.** The modals were laid out for a
+  tall portrait viewport; on a short, wide landscape phone (~360px tall) their portrait-era `vh`
+  height caps would squeeze the content. Each modal's `max-height` is now
+  `min(<existing vh>, calc(100dvh - <chrome>))` — on a tall desktop the `vh` term wins (sizing
+  unchanged), on a short phone the `dvh` term wins so the panel scrolls (every one already has an
+  inner `overflow-y:auto` region) instead of clipping. Applied to `#login-panel`, `#help-panel`,
+  `#tips-panel`, `#inv-panel`, `#lb-panel`, and `#chat-panel` (the chat panel reserves ~120px for its
+  bottom anchor + soft keyboard). The leaderboard `#lb-scroll` already used `overflow:auto`, so the
+  wide table already pans both axes — no change needed there. `#hud-quest-help` max-width
+  `240px` → `min(240px, 60vw)` so the quest-info popover can't cover most of a narrow screen. All
+  changes are no-ops on desktop. Audit-clean overlays (splash, intro, connection card, banners,
+  food bar, cue) were left untouched. Client build green.
+
+- 0.2.200: **Android — lock the APK to landscape.** Changed `android:screenOrientation`
+  `portrait` → `sensorLandscape` in `client/android/app/src/main/AndroidManifest.xml`, so the app
+  launches and stays in landscape and accepts either landscape orientation (held either way). The
+  `<activity>` already lists `orientation|screenSize` in `configChanges`, so rotation is handed to
+  the WebView without recreating the activity. (Supersedes the Phase-4 portrait lock from 0.2.195.)
+  The manifest is the canonical committed source; `cap sync` copies only the web bundle and does not
+  regenerate it, so the lock is durable. Overlay landscape-fit follows in the next entry.
+
+- 0.2.199: **Android — fix the stretched / wrong-aspect render.** On-device the world looked
+  stretched (one axis scaled differently from the other), not zoomed. Root cause: the
+  `#game canvas { width/height: 100% !important }` rule (`client/src/style.css`) overrode the
+  explicit pixel sizing that Phaser's `Scale.RESIZE` ScaleManager writes onto the canvas to match its
+  drawing-buffer. When the displayed box and the backing store disagreed in aspect ratio — WebView
+  startup reflow, rotation, or `100vh` ≠ the actually-visible height — the browser stretched a
+  fixed-resolution buffer into a wrongly-proportioned box. Fix: drop the `!important` canvas sizing so
+  the ScaleManager owns the canvas CSS (this also restores `autoCenter: CENTER_BOTH`), and switch
+  `#game` height `100vh` → `100dvh` (with a `100vh` fallback) so the parent box matches the real
+  visible viewport in the WebView. No `phaser.ts` change; camera zoom stays 1:1 (unchanged). Desktop
+  is unaffected (`dvh == vh`, and the ScaleManager already owned sizing there). Client build green.
+
 - 0.2.198: **Onboarding — one-time first-login Game Tips screen.** A polished, species-specific
   walkthrough (`client/src/tips.ts`) shown ONCE to teach the game to new players. It opens after
   the cinematic intro tears down (so a new character sees cinematic → tips → play) and is gated on
