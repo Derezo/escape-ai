@@ -62,6 +62,29 @@ module.exports = {
   // in regardless of this value. Overridable by env for tuning/tests.
   WORLD_MAX: parseFloat(process.env.WORLD_MAX) || 4096,
 
+  // Area-of-Interest (AOI) radius, in world units: each socket's snapshot carries
+  // ONLY the entities within this distance of THAT player (plus the player's own
+  // entity unconditionally). This is the primary fix for snapshot bloat — the room
+  // holds ~140 entities (most of them idle pen animals that drift sub-pixel every
+  // tick and defeat the delta diff), so a room-wide broadcast shipped all of them
+  // every tick (~105 ent/snap, ~530-835 KB/s per client → inbound head-of-line
+  // blocking → broken movement + climbing RTT). Culling to a per-socket radius
+  // bounds the count to "what's near me".
+  //
+  // SIZING: the client camera frames TARGET_TILES_MIN_DIM (= 10) tiles across the
+  // viewport's SHORTER side (client/src/render/phaser.ts), i.e. ~320 world units
+  // short-side full / ~160 half-extent at the common zoom, up to ~960 half-extent
+  // only at the clamped MINIMUM zoom (0.5) on a very large desktop window. 800
+  // world units = 25 tiles — generously larger than even the worst-case visible
+  // half-extent, so an entity only leaves a socket's AOI when it is far off-screen
+  // (the client culls off-screen draws anyway), and it RE-ENTERS the AOI — and is
+  // force-resent (see engine.broadcastSnapshots) — well before it could appear at
+  // the screen edge. Empirically (room "gate", 141 entities) this caps a snapshot
+  // at ~40 entities worst-case / ~27 average, comfortably under the gate's 45.
+  // Squared once at module-eval time so the hot per-tick cull does a cheap dist2
+  // compare with no per-entity sqrt. Overridable by env for tuning/tests.
+  AOI_RADIUS: parseFloat(process.env.AOI_RADIUS) || 800,
+
   // Ambient NPC drift speeds (mirror shared WANDER). A robot with nothing to
   // chase PATROLS at PATROL_SPEED (slower than ROBOT_SPEED so a real chase still
   // reads as faster); idle decoy animals drift at WANDER_ANIMAL_SPEED. Both ride

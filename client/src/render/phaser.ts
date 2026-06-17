@@ -344,15 +344,34 @@ class Minimap {
   /**
    * Keep the two-camera split intact: the HUD camera must render ONLY the minimap
    * container, so it ignores every other root the scene has spawned since last call
-   * (tilemap layers, entity views, FX — all added dynamically). Cheap: the scene's
-   * root list is small, and Camera.ignore is idempotent per object. Called each
-   * frame from WorldScene.drawMinimap so newly-created world objects never leak into
-   * the HUD camera.
+   * (tilemap layers, entity views, FX — all added dynamically).
+   *
+   * PERF FIX (O(1) amortised, was O(scene) per frame): instead of iterating the
+   * whole DisplayList every frame and calling hudCam.ignore() on every object (which
+   * visits ~538 static images even when nothing changed), we maintain a Set of
+   * already-registered objects and only process the new entries added since the last
+   * call.  hudCam.ignore() is idempotent, but the iteration itself costs O(scene)
+   * even when idempotent — a full-refresh tick that adds ~N entity views therefore
+   * paid O(scene) for each of the N new adds, stacking on the texture-upload stall.
+   * With the Set, new objects cost O(new) total per frame, not O(scene) per frame.
    */
+  private readonly hudIgnored = new Set<Phaser.GameObjects.GameObject>();
+
   refreshCameras(): void {
     // scene.children is a DisplayList; .list is its public GameObject[] backing array.
     for (const obj of this.scene.children.list) {
-      if (obj !== this.container) this.hudCam.ignore(obj);
+      if (obj === this.container) continue;
+      if (this.hudIgnored.has(obj)) continue; // already registered — skip
+      this.hudCam.ignore(obj);
+      this.hudIgnored.add(obj);
+    }
+    // Prune stale references: objects that have been destroyed are no longer in the
+    // DisplayList, so remove them from the Set to avoid unbounded growth.
+    if (this.hudIgnored.size > this.scene.children.list.length + 64) {
+      const live = new Set(this.scene.children.list);
+      for (const obj of this.hudIgnored) {
+        if (!live.has(obj)) this.hudIgnored.delete(obj);
+      }
     }
   }
 
@@ -1159,7 +1178,25 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** Upsert (create/move) present entities, destroy vanished ones. */
+  /**
+   * Upsert (create/move) present entities; destroy vanished ones.
+   *
+   * View lifecycle:
+   *
+   *   ACTIVE  – id in this.views; rendered every frame by interpolate().
+   *   DEAD    – permanently destroyed; id absent from this.views.
+   *
+   * An entity present in the snapshot is created (via createView) on first
+   * appearance, or updated on the FAST PATH when its existing view is compatible.
+   * An entity absent from the snapshot is destroyed immediately via destroyView.
+   *
+   * The 5 s render spike that motivated a view pool is fixed at the source by the
+   * server full-refresh trim (server never re-sends unchanged entities on full ticks).
+   * The pool was unreachable anyway: the net contract has no despawn/removed channel,
+   * so AOI-exited NPCs are never removed from main.ts's entity map and always ride
+   * syncEntities — the "entity disappears from snapshot" branch can only fire for
+   * players who left the room, and those are rare events.
+   */
   private upsert(entities: Entity[]): void {
     const seen = new Set<string>();
 
@@ -1173,7 +1210,7 @@ class WorldScene extends Phaser.Scene {
         continue;
       }
       seen.add(e.id);
-      const view = this.views.get(e.id);
+
       // For 'animal' entities a respawn can change the species on the same id while
       // kind stays 'animal'.  species drives the body type (Sprite vs Shape), the
       // animation key (view.anim), the halo, and view.isSprite — all set at creation
@@ -1183,8 +1220,11 @@ class WorldScene extends Phaser.Scene {
       // never spuriously rebuilds every frame.  Non-animal kinds (robots) carry no
       // meaningful species field and are excluded from this check.
       const effectiveSpecies = typeof e.species === 'string' ? e.species : 'ape';
+
+      const view = this.views.get(e.id);
       const sameSpecies = e.kind !== 'animal' || effectiveSpecies === view?.species;
       if (view && view.kind === e.kind && sameSpecies) {
+        // ── FAST PATH: view already active and compatible ──────────────────────
         // New target position from the snapshot; the local entity snaps (it is
         // already client-predicted), remote entities interpolate (see interpolate()).
         view.targetX = e.x;
@@ -1200,19 +1240,22 @@ class WorldScene extends Phaser.Scene {
         this.updateFx(view, e);
         this.updateFollowRing(view, e);
       } else {
+        // ── MISS: entity not in active views ───────────────────────────────────
+        // Destroy any existing incompatible active view first (kind/species change).
         if (view) this.destroyView(view);
-        const created = this.createView(e);
-        created.isLocal = e._local === true;
-        this.updateAnimation(created, e);
-        this.restyle(created, e);
-        this.updateFx(created, e);
-        this.updateFollowRing(created, e);
-        this.views.set(e.id, created);
-        if (e._local === true) this.startFollow(created);
+
+        const active = this.createView(e);
+        active.isLocal = e._local === true;
+        this.updateAnimation(active, e);
+        this.restyle(active, e);
+        this.updateFx(active, e);
+        this.updateFollowRing(active, e);
+        this.views.set(e.id, active);
+        if (e._local === true) this.startFollow(active);
       }
     }
 
-    // Destroy views for entities no longer present.
+    // Destroy views for entities no longer present in the snapshot.
     for (const [id, view] of this.views) {
       if (!seen.has(id)) {
         this.destroyView(view);

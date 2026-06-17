@@ -4,8 +4,9 @@
  * Lobby + input handler.
  * Events: lobby:join {room, name}, input {seq, dx, dy}
  *
- * A "player" is the game-agnostic synced entity: a movable point. The engine
- * reads `player.input` each tick and integrates it into `player.x/y`.
+ * A "player" is the game-agnostic synced entity: a movable point. The input
+ * handler ENQUEUES each client input into player.inputQueue (a small FIFO); the
+ * engine drains one per tick and integrates it into player.x/y.
  */
 
 const { v4: uuidv4 } = require('uuid');
@@ -28,6 +29,16 @@ const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 // (Second-Law command), 'ability' (species power), 'feed' (give an animal its liked
 // food so it follows you — the animal-collection verb).
 const ACTIONS = new Set(['interact', 'order', 'ability', 'feed']);
+
+// Hard cap on a player's pending INPUT FIFO depth (FIX 3). The engine drains one
+// input per tick (one fixed step), so the queue only grows if the client persistently
+// sends FASTER than the tick rate (~20Hz). At 8 it tolerates a healthy burst (e.g. a
+// momentary scheduling hiccup that delivers a few inputs at once) yet bounds the
+// memory + the worst-case ack lag: a queue pinned at the cap means the engine is ~8
+// ticks (~0.4s) behind the newest input, and we DROP THE OLDEST to make room (the
+// client's reconciliation tail covers the lost step). A correctly-behaving client
+// (one input per ~50ms) keeps the queue at 0–1, so the cap never bites in normal play.
+const MAX_INPUT_QUEUE = 8;
 
 // Per-room monotonic join counter, used to deterministically spread spawns so
 // that ~20 players don't all stack on the origin. Survives leaves (it only
@@ -180,7 +191,21 @@ function register(socket, deps) {
       fx: null,               // active ability-effect echo for the client FX layer
       inputSeq: 0,            // highest seq the client has sent
       lastProcessedSeq: 0,    // highest seq the engine has simulated
+      // The input the engine LAST integrated (its dx/dy/sprint drive the post-move
+      // facing + human-likeness read for that tick). Initialized to a still frame;
+      // the engine overwrites it each tick with the input it dequeues (see below).
       input: { seq: 0, dx: 0, dy: 0 },
+      // Per-player INPUT FIFO (FIX 3). The client sends one input per local frame
+      // (~20Hz) but client-send and server-tick are not phase-locked, so two inputs
+      // can land between ticks. The old single-slot `input` overwrite DROPPED the
+      // older one's movement while the engine still acked the NEWER seq — so the
+      // client pruned a pending input that was never integrated, leaving a small
+      // position deficit (the "6u drop"). The queue preserves every input; the engine
+      // drains ONE per tick (one fixed step), carrying the rest to later ticks, and
+      // acks ONLY the seq it actually integrated. Capped (drop-oldest) below so a
+      // client persistently sending faster than the tick rate can't grow it without
+      // bound. Each entry: { seq, dx, dy, sprint }.
+      inputQueue: [],
       // Latched one-shot action awaiting the next engine tick. Kept OUTSIDE
       // `input` so a later action-less movement frame can't clobber it before
       // the engine reads it (client send rate and tick rate are both ~20Hz but
@@ -296,8 +321,26 @@ function register(socket, deps) {
     // Sprint (Shift): full speed but reads as fleeing prey. Default = walk.
     const sprint = payload.sprint === true;
 
+    // ENQUEUE this input into the per-player FIFO (FIX 3) instead of overwriting a
+    // single slot. The engine drains ONE input per tick (one fixed step) and acks
+    // only the seq it actually integrated, so an input that arrives in the same
+    // inter-tick gap as another is integrated on its OWN later tick rather than
+    // silently dropped while its newer sibling is acked. inputSeq still tracks the
+    // HIGHEST seq seen (for the stale-input reject above + the engine's none-queued
+    // fallback). The drop-oldest cap keeps a too-fast client from growing it without
+    // bound — at the cap the oldest queued (already-superseded) frame is the safest
+    // to shed, and the client's pending-input replay covers the missing step.
     player.inputSeq = seq;
-    player.input = { seq, dx, dy, sprint };
+    player.inputQueue.push({ seq, dx, dy, sprint });
+    if (player.inputQueue.length > MAX_INPUT_QUEUE) {
+      player.inputQueue.splice(0, player.inputQueue.length - MAX_INPUT_QUEUE);
+    }
+    // Stamp the wall-clock time of this input. The engine's slow-client detector
+    // (broadcastSnapshots) reads this to decide whether to suppress a snapshot tick
+    // for a socket whose event loop appears blocked: normal clients send every ~50 ms;
+    // a blocked client stops sending (timer callbacks can't fire during a spin), so
+    // lastInputAt falls behind and the snapshot is held back to prevent HOL pileup.
+    player.lastInputAt = Date.now();
   });
 }
 

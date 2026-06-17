@@ -4,6 +4,219 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.215: **Client renderer — remove dead view-pool code (`client/src/render/phaser.ts`).**
+  Confirmed live (user-observed) that the 5 s render spike is gone; the real fix was the
+  server full-refresh trim landed in 0.2.213 (commit 1bda94f). The client-side EntityView
+  pool added in that same commit (`viewPool`, `parkView`, `unhideView`, `evictStalePools`,
+  `VIEW_POOL_TTL_MS`, `VIEW_POOL_MAX`) was found by the 0.2.214 validation to be unreachable
+  dead code on the live path: the net contract has no despawn/removed channel, and
+  `client/src/main.ts` prunes only departed players (the `playerIds` set), never NPCs —
+  so an AOI-exited NPC is never deleted from the entity map, rides every `syncEntities`,
+  and stays in the renderer's `seen` set forever. The `!seen.has(id)` branch that would park
+  a view only ever fires for players who left the room (rare), not for the AOI-exit case
+  the pool was built for.
+  Removed per the no-dead-code rule: `VIEW_POOL_TTL_MS` constant (~line 609), `VIEW_POOL_MAX`
+  constant (~line 616), `viewPool` field (~line 639), the SHUTDOWN handler's pool-drain loop
+  (~lines 749-750), the `evictStalePools()` call in `upsert()` (~line 1251), the pool-reclaim
+  block in the MISS branch (~lines 1298-1305), the entire `parkView` method (~lines 1342-1375),
+  the entire `unhideView` method (~lines 1389-1419), and the entire `evictStalePools` method
+  (~lines 1426-1434). The cleanup loop now unconditionally destroys absent views
+  (both local-player and remote), collapsing the if/else. The `upsert` doc-comment is rewritten
+  to describe the simpler create-on-appear / destroy-on-absence lifecycle.
+  No behaviour change for any entity that stays continuously visible (the common case —
+  renderX/renderY/targetX/targetY interpolation is untouched). The `refreshCameras` O(new)
+  fix is kept (reachable and valuable).
+  `FINDINGS_OUTSIDE_SCOPE.md` updated: the dead-code half of the "Client AOI-exit entities /
+  view pool" entry is resolved; the latent no-despawn-channel gap (AOI-exited NPCs freeze at
+  last position — benign since AOI >> viewport) remains as a smaller open finding.
+  Verify: `cd client && npm run build` green; grep for `viewPool|parkView|unhideView|evictStalePools|VIEW_POOL` returns nothing; `cd scripts && npm run verify` — all 10 gates green.
+
+- 0.2.214: **Validation — gate integrity fix + wire the live gate into `verify` + living-docs cleanup.**
+  Final `/plan-validation-and-review` over the whole netcode arc (P0–P3) caught two real issues and
+  did the convention cleanup; the runtime arc itself was rated correct/ship-ready.
+  1. **CRITICAL gate-integrity fix (`scripts/check-netcode-live.mjs`).** The live gate used FIXED
+     probe usernames (`gateA`/`gateB`) which persist in `server/data/escapeai.db`; on any 2nd run /
+     CI / teammate, login returned `name_taken`, the probe never joined, and ALL-ZERO metrics
+     trivially PASSED every upper-bound check (6 of 7) — the exact "ships green while broken" mode
+     this gate exists to kill. Fixed: per-run unique usernames (`gate{A,B}_<ts>_<rand>`) AND a
+     `requireLive` hard-fail (auth failure or zero snapshots ⇒ FAIL, never pass-on-zeros). Verified:
+     fails on a dead/unauthed server, passes healthy, and now survives a reused DB. Also added a
+     `maxEnt`/`maxBytes` peak assertion (`peak entities/snap ≤ 1.5×`) — the one piece of the P3
+     server full-refresh trim that IS measurable headlessly (a regression reinstating the whole-AOI
+     re-send spikes one snap/100 ticks, which the average hides).
+  2. **Wired the live gate into `npm run verify`** (`scripts/verify.mjs` + `verify:live` in
+     `scripts/package.json`). It boots a server (~45s) so it is `asset:true` (skipped under
+     `--quick`) and runs with a throwaway `DB_PATH`. `verify.mjs` gained per-gate `env` support.
+     `npm run verify` is now 10 gates.
+  3. **Living-docs cleanup.** Deleted `docs/netcode-refix-spec.md` (its own header said "delete after
+     the fix lands + verifies" — the Variant-B reconciliation it specced is shipped). Deleted the
+     `FINDINGS_OUTSIDE_SCOPE.md` "Input-coalescing 6u drop" entry — FIXED by the 0.2.213 input FIFO
+     (the entry's own suggested approach, implemented) — and replaced it with the narrower residual
+     (drop-oldest under sustained >20Hz overflow). Filed a new entry: the P3 client view-pool is
+     dead on the live AOI path (no despawn channel; client prunes only players) — gated on the live
+     render-spike test to decide delete-vs-wire.
+
+  `cd scripts && npm run verify` — all 10 gates green (incl. the now-wired live gate). No runtime
+  code changed in this entry (gate + docs only).
+
+- 0.2.213: **Server netcode — three fixes: full-refresh trim, fixed-step sim dt, input FIFO.**
+  All three land in `server/game/engine.js` + `server/socket/lobby.js`, on top of the committed P1
+  AOI culling and P2 slow-client deferral.
+
+  1. **Full-refresh trim (`engine.js` `broadcastSnapshots`) — the server half of the 5 s spike.**
+     The periodic full-refresh tick (`currentTick % FULL_REFRESH_INTERVAL === 0`) used to RE-SEND
+     every in-AOI entity to every socket regardless of whether the socket already had an up-to-date
+     serialization — the batch the real client choked on (the 0.2.212 view/texture re-creation).
+     With per-socket `lastSent` memory (P1) and the AOI-entry force-send invariant already repainting
+     re-entering entities, that re-send is pure waste. The flush tick is now a normal per-socket
+     delta — send only AOI-new (`!lastSent.has(id)`) ∪ changed (`lastSent.get(id) !== serialized`)
+     entities — that simply CAN'T be deferred by the slow-client coalescer (still drains the pending
+     accumulator). A client that missed a delta still recovers: `lastSent` only advances on a
+     CONFIRMED emit, so the dirty diff + the deferral accumulator together cover every owed entity
+     (and the WS stream is ordered+reliable — a delayed emit is not a lost one). `isFull` renamed
+     `isFlushTick` to reflect the new role. Empirically `entities/snap` drops to ~13 (no periodic
+     re-send burst), KB/s ~36.
+
+  2. **Fixed/clamped tick dt (`engine.js` `tick`) — kills NPC big-step jumps + restores client parity.**
+     `tick()` integrated with the WALL-CLOCK elapsed `dt = (now - lastTickTime)/1000`; a GC/scheduler
+     stall stretched one tick's dt → `integratePlayers`/`stepNpcs` moved everything a big step that
+     tick (robots "jumped") AND diverged from the client, which predicts at a FIXED step. Switched
+     the WHOLE sim to a fixed `FIXED_DT = 1/TICK_RATE` (0.05 s). Chosen over clamping because the
+     client's prediction replay already uses FIXED_DT through the SAME shared `moveWithCollision`
+     (client `main.ts`) — a fixed server step makes the two bit-identical (zero reconciliation snap).
+     Every dt-consuming system is per-second-rate math (`rate * dt`, constants named `_PER_SEC`,
+     tuned for 20 Hz) and NONE reads a wall clock — movement, suspicion decay, human-likeness, and
+     the shared panic meter all just tick at their nominal designed rate. The wall clock is now read
+     ONLY for the self-scheduling cadence (holding 20 Hz), never to advance the sim.
+
+  3. **Input FIFO (`lobby.js` input handler + `engine.js` `integratePlayers`) — fixes the coalescing drop.**
+     The handler stored only the LATEST input (single-slot overwrite): when two inputs arrived between
+     ticks the older's movement was dropped while the engine acked the newer seq, so the client pruned
+     a pending input that was never integrated → a small position deficit (the "6u drop"). Replaced the
+     slot with a per-player `inputQueue` FIFO (cap `MAX_INPUT_QUEUE = 8`, drop-oldest). The engine
+     drains ONE input per tick (one fixed step), carrying surplus to later ticks, and acks ONLY the seq
+     it actually integrated (option (b)). This preserves input fidelity AND one-step-per-tick movement
+     (no burst speed-up), and keeps client reconciliation honest: an input still in our queue is still
+     unacked, so the client keeps replaying it until we integrate + ack it. A too-fast client (>20 Hz)
+     pins the ack gap at the cap (empirically max 8 at ~33 Hz; 0 at the normal 20 Hz) — bounded, with
+     the client's pending-input tail covering the dropped step.
+
+  `cd shared && npm run build` green; `cd server && npm test` 22/22; `cd scripts && npm run verify`
+  all 9 gates green (incl. the 533-assertion reconciliation + facing determinism); live gate
+  `check-netcode-live.mjs` Gates A+B green (Gate A maxGap=0, Gate B rtt max 160 ms, 0 disconnects);
+  `e2e-follow.js` green. No `client/` or shared changes (client view pooling is the parallel 0.2.212).
+
+- 0.2.212: **Client render — three perf fixes eliminating the ~2 400 ms jank spike every 5 s.**
+  Root cause: every 5 s the server sends a full-refresh snapshot re-including all in-AOI entities.
+  On re-entry each entity hit `createView → makeLabel → this.add.text(...)` — Phaser Text creation
+  rasterises a canvas + uploads a WebGL texture (expensive).  Batching 20-30 of these onto one tick
+  stalled the render thread by ~2 400 ms.  Three targeted fixes in `client/src/render/phaser.ts`:
+
+  1. **EntityView / label pooling (PRIMARY, eliminates the texture-upload batch).**
+     On AOI exit (`upsert` removes entity from `seen`) the view is now PARKED — hidden via
+     `setVisible(false)` — into `viewPool: Map<id, {view, parkedAt}>` rather than destroyed.
+     On re-entry the pool is checked first; a matching kind+species entry is UNPARKED via
+     `unhideView()`, which skips `createView + makeLabel` entirely (the label texture already
+     exists in VRAM).  Eviction: TTL = 6 000 ms (longer than the 5 s full-refresh interval
+     so a re-entry on the next full-refresh tick always hits the pool), cap = 64 entries (evict
+     oldest when at cap).  Pool is drained on scene SHUTDOWN so no GameObjects leak.  The
+     local player's view is never pooled (it does not leave the snapshot during normal play).
+
+  2. **Snap-on-reentry (`unhideView`) — fixes teleporting robots.**
+     When a view is un-pooled, `renderX/Y` and `targetX/Y` are snapped to `e.x, e.y` so the
+     entity appears at its current authoritative position instead of lerping from the stale
+     position it held when it was parked.  `movingUntil` is reset and `anim` cleared so the
+     entity starts idle.  Continuously-visible entities (never parked) are unaffected — they
+     follow the normal smooth-lerp path unchanged.
+
+  3. **`refreshCameras()` O(scene) → O(new) per frame.**
+     Previously iterated the whole scene DisplayList (~538 objects) each frame to call
+     `hudCam.ignore(obj)`.  Now maintains `hudIgnored: Set<GameObject>` on `Minimap`; on each
+     call it skips already-registered objects and only calls `hudCam.ignore()` on new additions.
+     A periodic prune removes stale (destroyed) entries when the Set outgrows the live list by
+     more than 64.  The minimap/HUD split is functionally unchanged — new world objects are
+     still registered on the first frame they appear, never leaking into the HUD camera.
+
+  `cd client && npm run build` green (tsc strict + vite).  `cd scripts && npm run verify` all
+  9 gates green.  No shared or server changes.
+
+- 0.2.211: **Netcode Phase 2 — slow-client HOL unblocking (server-side coalescing + client-side rAF drain).**
+  Phase 1 cut server payload 23× via AOI culling. Phase 2 eliminates the residual head-of-line blocking
+  that occurred when a slow client (Android WebView spinning 80ms per snapshot) couldn't drain the 20Hz
+  stream fast enough, causing pong responses to pile behind queued snapshots → unbounded RTT climb.
+
+  **Server-side (`server/game/engine.js`, `server/socket/lobby.js`):**
+  - `player.lastInputAt = Date.now()` stamped on every `input` event in `lobby.js`.
+  - Per-socket accumulated delta buffer (`pendingDeltaBySocket`: `Map<socketId, Map<entityId, entity>>`)
+    in `engine.js`. When a socket's last input was > `SLOW_CLIENT_THRESHOLD_MS` (65 ms) ago and we're
+    not on a full-refresh tick, the snapshot for that socket is HELD BACK and its entity delta is
+    accumulated into `pendingDeltaBySocket`. On the next send-allowed tick (fresh input or full-refresh),
+    the UNION of all accumulated entity updates is sent in one burst. No entity update is ever lost —
+    it is deferred by at most one additional interval. `clearSocket()` clears the accumulator on disconnect.
+  - Normal clients (input every ~50 ms) are unaffected: `lastInputAge ≤ 65ms` → always send. Gate A
+    still passes (snapRate 20/s, KB/s 36, entities/snap 14, ack gap 0–1). Slow clients receive snapshots
+    at their actual processing rate (~12.5/sec matching the 80ms spin) so pong responses drain freely.
+
+  **Client-side (`client/src/net/client.ts`):**
+  - `snapshotBuffer: SnapshotMsg[]` + `drainSnapshotBuffer()` + `snapshotRafPending` flag replace the
+    synchronous `snapshotCb(msg)` call in the socket `snapshot` handler.
+  - Each received snapshot is pushed to the buffer. The drain fires on the next `requestAnimationFrame`
+    (or immediately when buffer ≥ `MAX_SNAPSHOT_BUFFER = 10` for background-tab safety).
+  - On drain: 1 queued → pass-through (no overhead). N > 1 queued → merge entity arrays in tick order
+    (latest entity for each id wins) into a single synthetic `SnapshotMsg` with the newest tick/acks/world;
+    call `snapshotCb` once. This caps expensive downstream work (prediction rebuild, HUD update) at
+    once-per-frame on real Android WebViews using our code.
+  - Coalesce-equals-sequential: merging N last-writer-wins delta maps is associative and idempotent —
+    the final per-id entity is identical to processing them one-by-one.
+
+  **Result:** `DB_PATH=/tmp/p2.db node scripts/check-netcode-live.mjs --port=3221`:
+  Gate A PASSES (unchanged). Gate B PASSES: RTT max 160ms (≤1500ms bound), growth ≤27ms (≤800ms),
+  0 disconnects. Was: max ~1680–10321ms, growth up to 9281ms depending on run.
+  `cd client && npm run build` green. `cd scripts && npm run verify` all 9 gates green.
+
+- 0.2.210: **Server — netcode PRIMARY fix: per-socket Area-of-Interest culling + NPC wire-shape + position quantization (snapshot bloat).**
+  Empirical root cause (measured against prod with `scripts/prod-wire-probe.mjs`, reproduced by
+  `scripts/check-netcode-live.mjs`): the server broadcast ~105 entities / ~44KB to EVERY client
+  EVERY tick (~530-835 KB/s per client), flooding the client pipe into inbound head-of-line blocking
+  → broken movement + RTT climbing to ~20s. Two prior CLIENT fixes (0.2.208/0.2.209) couldn't help —
+  the bug was server-side. Three compounding server changes, all in `server/game/engine.js`
+  `broadcastSnapshots`:
+  1. **Per-socket AOI culling.** The room-wide `io.to(roomName).emit` becomes a PER-SOCKET emit; each
+     socket receives only entities within `config.AOI_RADIUS` (= 800 world units = 25 tiles, generously
+     larger than the client's ~10-tile-tall viewport so nothing pops in at the screen edge) of THAT
+     player, plus its own entity unconditionally. New `config.AOI_RADIUS` constant (env-overridable),
+     squared once at module-eval for a sqrt-free hot-loop cull.
+  2. **Per-socket delta memory.** `lastSentByRoom` (per-room) → `lastSentBySocket` (Map keyed by
+     socketId), because each socket now gets a different entity subset. CRITICAL force-send invariant:
+     when an entity ENTERS a socket's AOI (was culled last tick) it is sent in FULL this tick even if
+     its serialization is byte-identical to the last time that socket saw it — else it'd be invisible
+     until the next full refresh (`!lastSent.has(id)` is the "new to this socket" test). On AOI exit
+     the entity is dropped from that socket's `lastSent`; no remove signal is sent because AOI_RADIUS
+     is far larger than the viewport, so a just-exited entity is well off-screen (the client culls
+     off-screen draws) and is force-repainted on re-entry before it could reach the screen edge — so
+     NO net-contract change was needed. Dropped on disconnect via new `engine.clearSocket(socketId)`
+     (wired from `server/socket/connection.js`) so the map can't leak across joins/leaves.
+  3. **NPC wire-shape + position quantization.** Live NPC objects accumulate heavy server-internal
+     scratch — the A* `path` waypoint array (30+ points on a patrolling robot!), FSM state
+     (`patrolIndex`, `localLoop`, `headAngle`, `pathGoalTx`…), return-home bookkeeping — which rode the
+     wire via the `Entity` index signature AND changed every tick (defeating the delta diff and
+     bloating each entity ~3×). New `serializeWorldEntity` projects each world entity onto a WHITELIST
+     of the client-visible fields (`WORLD_WIRE_FIELDS`) and rounds x/y to whole pixels, so a stationary
+     prop serializes identically tick-over-tick (drops out of the delta) and an NPC carries just its
+     render state (~120B instead of ~450B). `sendFullSnapshotTo` (the per-join full snapshot) is now
+     AOI-scoped and PRIMES the joiner's per-socket delta memory with the same wire shape (no redundant
+     force-resend next tick). acks are trimmed to the receiving player's own `lastProcessedSeq` (the
+     client only reads `acks[myId]`).
+
+  **Result — `node scripts/check-netcode-live.mjs` Gate A PASSES:** snapRate 20.1/s (≥15), KB/s 36
+  (≤50, was 835), entities/snap 13-14 (≤45, was 105), ack gap 0-1 (≤8). Two-client sync verified:
+  same-pen players see each other + themselves; a far player is correctly culled and force-sent on AOI
+  entry/re-entry (the subtle invariant). `cd server && npm test` (22) green; `cd scripts && npm run
+  verify` (9 gates, incl. 533-assertion netcode reconciliation) green; `node scripts/e2e-follow.js`
+  green (its "all 14 food sources" assertion was updated to the AOI-correct "food within AOI rides the
+  wire" — that the count is bounded by AOI is the intended behavior of this fix); 20-bot
+  `sim-clients.js` stable at ~23 ent/snap, RTT <5ms.
+
 - 0.2.209: **Client — netcode re-fix: Variant B separate-baseline/pure-rebuild; latency hardening.**
   The 0.2.208 fix (commit 9194fc1) regressed production with wild bouncing and a 20-second latency
   display. Root cause: the old reconciliation updated `confirmedX/Y` from the entity map *every*
