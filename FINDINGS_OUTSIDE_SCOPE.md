@@ -14,39 +14,48 @@ the audit trail).
 - **Why deferred:** all three are test-robustness / pre-existing-hardening items, not defects in the shipped reconciliation logic (which the review rated ship-ready). Effort: S each.
 - **Refs:** `client/src/net/client.ts:104,110`; `scripts/check-netcode.mjs` Gate 7 (~621-654), Gate 9 (~716-758).
 
-### Input-coalescing 6u drop — server overwrites unprocessed movement input and acks the dropped seq
-- **Status:** open — same bug *class* as the reconciliation regression fix (an issued input not
-  faithfully reflected under reconciliation), but its only correct fix is server-side, which is
-  outside the client-only charter of that fix and needs explicit sign-off.
-- **Surfaced:** 2026-06-17, by the Variant-B reconciliation re-fix making it perceptible.
-- **Detail:** the server stores only the latest input — `server/socket/lobby.js:299-300` does
-  `player.inputSeq = seq; player.input = {seq,dx,dy,sprint}`, a plain overwrite with no queue.
-  When two client INPUT frames (seq N, N+1) land between two ticks, N+1 overwrites N; the tick
-  integrates only N+1 (`server/game/engine.js:142-163`) and acks N+1 (`engine.js:211,364`).
-  N's movement is never integrated, yet its seq is acked, so the client prunes both N and N+1
-  (`client/src/main.ts` prune `seq <= ack`) and never replays N → ~6u of the player's intended
-  motion is silently lost = a recurring backward micro-correction. At two free-running 20Hz
-  timers this coalescing hits ~5–20% of ticks under jitter (≈1–4 drops/sec during movement).
-- **Pre-existing, newly visible:** the drop happened identically on `62b7d20`, but was masked by
-  that build's worse, ever-present rubber-band. Variant B removes that noise floor, so the 6u
-  drop becomes the largest remaining discrete correction and is now perceptible. Shipping the
-  re-fix does not introduce it.
-- **Why deferred:** not fixable client-only — the ack is a single `lastProcessedSeq` high-water
-  mark, identical whether the server integrated or dropped-but-acked the seq; a client
-  delta-compare against expected step is unsound (collisions/slide, sprint/dash/shell/cloak
-  multipliers, float rounding all make the realized server delta legitimately ≠ 6u·dx). The only
-  correct fix is server-side (queue inputs + drain/sub-step all pending per tick), which changes
-  server authority/determinism/perf and breaks the re-fix's client-only constraint → its own plan
-  + user sign-off. ("Ack only the applied seq" does NOT work given the overwrite at lobby.js:300 —
-  there is no preserved older input to defer-apply; it converts a lost step into a temporary
-  over-prediction without fixing fidelity.)
-- **Suggested approach if picked up:** mirror the deliberately-latched `pendingAction` pattern
-  (`server/socket/lobby.js:288-294`) into a per-player movement FIFO; have the engine drain and
-  integrate ALL queued inputs per tick. The client's existing per-pending-input `FIXED_DT` replay
-  then matches the drained server exactly. Re-verify two-client sync + the determinism gates.
-- **Refs:** `server/socket/lobby.js:299-300` (overwrite; cf. latch at :288-294),
-  `server/game/engine.js:142-163,211,364`, `client/src/main.ts` (prune `seq <= ack` in onSnapshot).
-- **Effort:** M (server input-queue + drain + client replay-parity verification).
+### Input FIFO drop-oldest can strand one input under SUSTAINED >20Hz overflow
+- **Status:** open — MINOR residual after the input-FIFO fix (the original "6u drop on every
+  inter-tick double-arrival" is FIXED; this is the much narrower tail). Surfaced by the arc
+  validation, 2026-06-17.
+- **Detail:** `server/socket/lobby.js` now queues inputs in a per-player FIFO (cap
+  `MAX_INPUT_QUEUE = 8`, drop-oldest) drained one-per-tick by the engine, acking only the
+  integrated seq. If a client sustains >20Hz sending for 8+ consecutive frames the queue pins at
+  the cap and `splice` drops the oldest seq, which the next cumulative ack then prunes from the
+  client's pending buffer → a ~1-fixed-step deficit (the same class as the old drop, but now
+  confined to sustained overflow rather than every double-arrival).
+- **Why deferred:** strict improvement over the prior single-slot overwrite; the normal 50ms
+  `setInterval` client never sustains 8+ over-rate frames (queue sits at 0–1 in normal play),
+  and the deferral path does not feed it (the queue is drained every tick regardless of
+  output-side suppression). Not worth blocking on.
+- **Suggested approach if picked up:** on overflow, collapse same-direction frames or keep the
+  contiguous-from-oldest run instead of blind drop-oldest; or raise the cap; or have the client
+  rate-limit its own send to the tick rate.
+- **Refs:** `server/socket/lobby.js` (inputQueue + `MAX_INPUT_QUEUE`), `server/game/engine.js`
+  `integratePlayers` (one-per-tick drain + ack-only-integrated).
+- **Effort:** S.
+
+### Client AOI-exit entities are never removed (no despawn channel) — view pool is dead on this path
+- **Status:** open — surfaced by the arc validation, 2026-06-17. Gated on the user's live
+  render-spike test (determines delete-vs-wire).
+- **Detail:** the net contract (`shared/src/net.ts`) has NO removed/despawn channel, and
+  `client/src/main.ts` prunes only departed *players* (the `playerIds` set ~`:440`), never NPCs.
+  So an NPC that leaves a player's AOI is never deleted from the client `entities` map — it
+  rides every `syncEntities` and stays in the renderer's `seen` set, so the P3 view-pool
+  (`client/src/render/phaser.ts` `parkView`/`unhideView`/`viewPool`) is UNREACHABLE for AOI exit.
+  Two consequences: (1) the pool + snap-on-reentry is dead code on the live path (violates the
+  no-dead-code rule); (2) an AOI-exited NPC freezes on the client at its last position (benign
+  today because AOI ≫ viewport, but it is a latent correctness gap).
+- **Why deferred:** the 5s spike's actual fix is the SERVER full-refresh trim (which removes the
+  re-send burst at source); the client pool was a safety net that can't engage. The decision —
+  delete the pool as dead code, OR add a despawn channel + move snap-on-reentry onto the
+  reachable fast path so the pool/removal works — depends on whether the live render-spike test
+  shows the server trim alone suffices. Do NOT merge the arc to main with the pool as unreachable
+  dead code under either outcome.
+- **Refs:** `shared/src/net.ts` (no despawn event), `client/src/main.ts` (~`:440` player-only
+  prune; `:466` NPC merge), `client/src/render/phaser.ts` (`parkView` ~`:1342`, `viewPool`),
+  `server/game/engine.js` (AOI-exit drop ~`:628`, deliberately keeps client-side).
+- **Effort:** S to delete the pool; M to add a despawn channel + reachable snap.
 
 ### Client bundle is one ~1.6 MB chunk — no code-splitting (Android startup on mid-range)
 - **Status:** open — deliberately deferred from the Android touch-controls plan (Phase 4).

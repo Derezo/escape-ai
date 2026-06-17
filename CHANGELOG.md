@@ -4,6 +4,34 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.214: **Validation — gate integrity fix + wire the live gate into `verify` + living-docs cleanup.**
+  Final `/plan-validation-and-review` over the whole netcode arc (P0–P3) caught two real issues and
+  did the convention cleanup; the runtime arc itself was rated correct/ship-ready.
+  1. **CRITICAL gate-integrity fix (`scripts/check-netcode-live.mjs`).** The live gate used FIXED
+     probe usernames (`gateA`/`gateB`) which persist in `server/data/escapeai.db`; on any 2nd run /
+     CI / teammate, login returned `name_taken`, the probe never joined, and ALL-ZERO metrics
+     trivially PASSED every upper-bound check (6 of 7) — the exact "ships green while broken" mode
+     this gate exists to kill. Fixed: per-run unique usernames (`gate{A,B}_<ts>_<rand>`) AND a
+     `requireLive` hard-fail (auth failure or zero snapshots ⇒ FAIL, never pass-on-zeros). Verified:
+     fails on a dead/unauthed server, passes healthy, and now survives a reused DB. Also added a
+     `maxEnt`/`maxBytes` peak assertion (`peak entities/snap ≤ 1.5×`) — the one piece of the P3
+     server full-refresh trim that IS measurable headlessly (a regression reinstating the whole-AOI
+     re-send spikes one snap/100 ticks, which the average hides).
+  2. **Wired the live gate into `npm run verify`** (`scripts/verify.mjs` + `verify:live` in
+     `scripts/package.json`). It boots a server (~45s) so it is `asset:true` (skipped under
+     `--quick`) and runs with a throwaway `DB_PATH`. `verify.mjs` gained per-gate `env` support.
+     `npm run verify` is now 10 gates.
+  3. **Living-docs cleanup.** Deleted `docs/netcode-refix-spec.md` (its own header said "delete after
+     the fix lands + verifies" — the Variant-B reconciliation it specced is shipped). Deleted the
+     `FINDINGS_OUTSIDE_SCOPE.md` "Input-coalescing 6u drop" entry — FIXED by the 0.2.213 input FIFO
+     (the entry's own suggested approach, implemented) — and replaced it with the narrower residual
+     (drop-oldest under sustained >20Hz overflow). Filed a new entry: the P3 client view-pool is
+     dead on the live AOI path (no despawn channel; client prunes only players) — gated on the live
+     render-spike test to decide delete-vs-wire.
+
+  `cd scripts && npm run verify` — all 10 gates green (incl. the now-wired live gate). No runtime
+  code changed in this entry (gate + docs only).
+
 - 0.2.213: **Server netcode — three fixes: full-refresh trim, fixed-step sim dt, input FIFO.**
   All three land in `server/game/engine.js` + `server/socket/lobby.js`, on top of the committed P1
   AOI culling and P2 slow-client deferral.

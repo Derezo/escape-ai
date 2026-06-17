@@ -8,6 +8,7 @@
   "scripts": {
     "verify": "node verify.mjs",
     "verify:quick": "node verify.mjs --quick",
+    "verify:live": "DB_PATH=/tmp/escape-verify-live.db node check-netcode-live.mjs",
     "sim": "node sim-clients.js",
     "gen-sprites": "node gen-sprites.js",
     "build-atlas": "node build-atlas.js",

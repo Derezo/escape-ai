@@ -35,7 +35,7 @@ const ROOT = join(SCRIPTS_DIR, '..');
 const quick = process.argv.includes('--quick');
 
 /**
- * @typedef {{ name: string, cmd: string, args: string[], cwd: string }} Gate
+ * @typedef {{ name: string, cmd: string, args: string[], cwd: string, asset?: boolean, env?: Record<string,string> }} Gate
  */
 
 /** Build shared FIRST — every downstream gate reads shared/dist. */
@@ -50,6 +50,13 @@ const GATES = [
   { name: 'client typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], cwd: join(ROOT, 'client') },
   { name: 'facing determinism', cmd: 'node', args: ['check-facing.js'], cwd: SCRIPTS_DIR },
   { name: 'netcode reconciliation', cmd: 'node', args: ['check-netcode.mjs'], cwd: SCRIPTS_DIR },
+  // Live empirical gate — boots the REAL server + a real socket.io probe and measures the
+  // wire (payload, ack gap, slow-consumer RTT). This catches the production netcode
+  // regressions the model-based reconciliation gate above cannot. It boots a server (~45s
+  // with both probe arms), so it is `asset:true` to skip under --quick. The throwaway
+  // DB_PATH keeps probe accounts out of the dev DB; per-run unique usernames make it robust
+  // even against a reused DB. Run standalone via `npm run verify:live`.
+  { name: 'netcode live', cmd: 'node', args: ['check-netcode-live.mjs', '--port=3299'], cwd: SCRIPTS_DIR, asset: true, env: { DB_PATH: '/tmp/escape-verify-live.db' } },
   // Asset rasterisation gates — skipped under --quick (slower; rarely change).
   { name: 'atlas verify', cmd: 'node', args: ['verify-atlas.js'], cwd: SCRIPTS_DIR, asset: true },
   { name: 'tileset verify', cmd: 'node', args: ['verify-tileset.js'], cwd: SCRIPTS_DIR, asset: true },
@@ -63,7 +70,8 @@ const GATES = [
  */
 function runGate(gate) {
   process.stdout.write(`\n── ${gate.name} ── (${gate.cmd} ${gate.args.join(' ')})\n`);
-  const res = spawnSync(gate.cmd, gate.args, { cwd: gate.cwd, stdio: 'inherit', shell: false });
+  const env = gate.env ? { ...process.env, ...gate.env } : process.env;
+  const res = spawnSync(gate.cmd, gate.args, { cwd: gate.cwd, stdio: 'inherit', shell: false, env });
   if (res.error) {
     process.stdout.write(`   ✗ ${gate.name}: failed to launch (${res.error.message})\n`);
     return false;
