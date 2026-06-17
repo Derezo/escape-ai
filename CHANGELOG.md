@@ -4,6 +4,42 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.209: **Client — netcode re-fix: Variant B separate-baseline/pure-rebuild; latency hardening.**
+  The 0.2.208 fix (commit 9194fc1) regressed production with wild bouncing and a 20-second latency
+  display. Root cause: the old reconciliation updated `confirmedX/Y` from the entity map *every*
+  snapshot, not just the ones where our entity was actually present. On FULL_REFRESH ticks (entity
+  present) this was fine; but on intermediate DELTA snapshots (entity absent, position unchanged),
+  the code read the entity map's last-seen x/y back into `confirmedX/Y` — which already reflected
+  a prior rebuild. Because the rebuild had already applied the unacked tail, reading it back as the
+  baseline caused the tail to be applied *again* on the next rebuild: double-integration, which
+  compounds with every snapshot into unbounded drift. The high-latency "20s" report was a symptom
+  of a saturated ping EMA caused by un-clamped implausible RTT samples.
+
+  **Corrected design (Variant B: separate baseline + pure rebuild):**
+  1. `confirmedX/Y: number | undefined` are added as *separate* closure variables (outside the entity
+     map). They are the ONLY source of truth for the server-confirmed position and are written
+     EXCLUSIVELY from `onSnapshot` — and ONLY on ticks where our entity is actually present in
+     `msg.entities`. When our entity is OMITTED from a delta snapshot, `confirmedX/Y` are left
+     UNTOUCHED.
+  2. `rebuildLocalPredicted()` is a new PURE primitive: it reads `confirmedX/Y` + `pendingInputs`,
+     starting from a fresh copy of the confirmed baseline every call, and replays the unacked tail
+     through the same `moveWithCollision` call chain the server uses. It writes ONLY `me.x`/`me.y`
+     and is the SINGLE writer of those fields. Double-integration is structurally unreachable.
+  3. `onSnapshot` is rewritten A→B→C→D→E: (A) merge delta, (B) capture baseline present-only,
+     (C) prune by ack (`seq<=ackedSeq`; seq is 1-based so ack==0 prunes nothing on join),
+     (D) unconditional rebuild, (E) tick/world tail.
+  4. `sendInputFrame` replaces the in-place prediction block (which had a `(dx||dy)` guard) with a
+     single unconditional `rebuildLocalPredicted()` after the push/cap.
+  5. **Latency hardening in `client/src/net/client.ts`:** the pong handler drops implausible RTT
+     samples before they corrupt the EMA (`!isFinite || rtt<0 || rtt>PING_INTERVAL_MS*4`). The ping
+     is now emitted volatile so a reconnect burst can't spike the EMA.
+  6. **Verification harness (`scripts/check-netcode.mjs`):** a new deterministic headless gate wired
+     into `cd scripts && npm run verify` imports the REAL shared `moveWithCollision`/`moveSpeed` and
+     replicates all 7 spec oracle x-traces exactly, plus 8 automated gates (no-runaway bound,
+     convergence-after-stop=0, steady-state error=0, omitted-entity single-step ≤6u, join/ack==0,
+     NaN/Infinity fuzz, latency-clamp unit tests, single-writer static grep). All 622 assertions pass.
+  No shared/ or server/ changes. Client tsc + vite build green; `npm run verify` all gates pass.
+
 - 0.2.208: **Client — fix high-latency rubber-banding via snapshot reconciliation with input replay.**
   Without this fix, `net.onSnapshot` blindly merged the server's authoritative position (as of the
   tick the snapshot was computed, ~RTT ago) onto the local player entity. Because the local entity is

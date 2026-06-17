@@ -6,6 +6,48 @@ the audit trail).
 
 ## Open
 
+### Netcode validation nits (non-blocking, surfaced by /plan-validation-and-review of the re-fix)
+- **Status:** open — non-blocking quality debt surfaced 2026-06-17 reviewing the reconciliation re-fix. None block merge/deploy; the shipped runtime code is correct.
+- **(a) Pre-existing wall-clock RTT (`client/src/net/client.ts:104`, from commit b78182e):** latency is `rtt = Date.now() - msg.t` — wall-clock, so an NTP/manual clock step could in principle distort a sample. **Largely mitigated** by the clamp the re-fix added (`!isFinite || rtt<0 || rtt>PING_INTERVAL_MS*4` drops backward steps and forward jumps). A fuller fix would need a monotonic clock shared with the server's stamp, which `performance.now()` alone can't provide (different origin). Low value; the clamp covers the realistic cases.
+- **(b) Gate 7 NaN fuzz is self-confirming (`scripts/check-netcode.mjs` ~461):** the fuzz feeds the client's own predicted position back as the "server" oracle, so it proves NaN-freedom but can't catch a reconciliation *divergence*. Add an independent-authority position to make it meaningful.
+- **(c) Gate 9 single-writer static gate is a string-grep (`scripts/check-netcode.mjs` ~743-755):** robust against the current code but fragile to aliasing (`const p = entities.get(myId); p.x = …`), whitespace, or brace reformatting. Anchor the function-range end on the next `function ` token and consider an AST check if this gate ever needs to be authoritative.
+- **Why deferred:** all three are test-robustness / pre-existing-hardening items, not defects in the shipped reconciliation logic (which the review rated ship-ready). Effort: S each.
+- **Refs:** `client/src/net/client.ts:104,110`; `scripts/check-netcode.mjs` Gate 7 (~621-654), Gate 9 (~716-758).
+
+### Input-coalescing 6u drop — server overwrites unprocessed movement input and acks the dropped seq
+- **Status:** open — same bug *class* as the reconciliation regression fix (an issued input not
+  faithfully reflected under reconciliation), but its only correct fix is server-side, which is
+  outside the client-only charter of that fix and needs explicit sign-off.
+- **Surfaced:** 2026-06-17, by the Variant-B reconciliation re-fix making it perceptible.
+- **Detail:** the server stores only the latest input — `server/socket/lobby.js:299-300` does
+  `player.inputSeq = seq; player.input = {seq,dx,dy,sprint}`, a plain overwrite with no queue.
+  When two client INPUT frames (seq N, N+1) land between two ticks, N+1 overwrites N; the tick
+  integrates only N+1 (`server/game/engine.js:142-163`) and acks N+1 (`engine.js:211,364`).
+  N's movement is never integrated, yet its seq is acked, so the client prunes both N and N+1
+  (`client/src/main.ts` prune `seq <= ack`) and never replays N → ~6u of the player's intended
+  motion is silently lost = a recurring backward micro-correction. At two free-running 20Hz
+  timers this coalescing hits ~5–20% of ticks under jitter (≈1–4 drops/sec during movement).
+- **Pre-existing, newly visible:** the drop happened identically on `62b7d20`, but was masked by
+  that build's worse, ever-present rubber-band. Variant B removes that noise floor, so the 6u
+  drop becomes the largest remaining discrete correction and is now perceptible. Shipping the
+  re-fix does not introduce it.
+- **Why deferred:** not fixable client-only — the ack is a single `lastProcessedSeq` high-water
+  mark, identical whether the server integrated or dropped-but-acked the seq; a client
+  delta-compare against expected step is unsound (collisions/slide, sprint/dash/shell/cloak
+  multipliers, float rounding all make the realized server delta legitimately ≠ 6u·dx). The only
+  correct fix is server-side (queue inputs + drain/sub-step all pending per tick), which changes
+  server authority/determinism/perf and breaks the re-fix's client-only constraint → its own plan
+  + user sign-off. ("Ack only the applied seq" does NOT work given the overwrite at lobby.js:300 —
+  there is no preserved older input to defer-apply; it converts a lost step into a temporary
+  over-prediction without fixing fidelity.)
+- **Suggested approach if picked up:** mirror the deliberately-latched `pendingAction` pattern
+  (`server/socket/lobby.js:288-294`) into a per-player movement FIFO; have the engine drain and
+  integrate ALL queued inputs per tick. The client's existing per-pending-input `FIXED_DT` replay
+  then matches the drained server exactly. Re-verify two-client sync + the determinism gates.
+- **Refs:** `server/socket/lobby.js:299-300` (overwrite; cf. latch at :288-294),
+  `server/game/engine.js:142-163,211,364`, `client/src/main.ts` (prune `seq <= ack` in onSnapshot).
+- **Effort:** M (server input-queue + drain + client replay-parity verification).
+
 ### Client bundle is one ~1.6 MB chunk — no code-splitting (Android startup on mid-range)
 - **Status:** open — deliberately deferred from the Android touch-controls plan (Phase 4).
 - **Surfaced:** Android-compatibility audit, 2026-06-01 (lifecycle/perf dimension, finding M9).
