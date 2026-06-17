@@ -35,27 +35,29 @@ the audit trail).
   `integratePlayers` (one-per-tick drain + ack-only-integrated).
 - **Effort:** S.
 
-### Client AOI-exit entities are never removed (no despawn channel) — view pool is dead on this path
-- **Status:** open — surfaced by the arc validation, 2026-06-17. Gated on the user's live
-  render-spike test (determines delete-vs-wire).
+### AOI-exited NPCs freeze at last position (no despawn channel)
+- **Status:** open (latent, benign) — surfaced by the arc validation, 2026-06-17. The dead-code
+  half (the unreachable view pool) was removed in 0.2.215 per the no-dead-code rule. This entry
+  tracks the remaining latent correctness gap only.
 - **Detail:** the net contract (`shared/src/net.ts`) has NO removed/despawn channel, and
   `client/src/main.ts` prunes only departed *players* (the `playerIds` set ~`:440`), never NPCs.
   So an NPC that leaves a player's AOI is never deleted from the client `entities` map — it
-  rides every `syncEntities` and stays in the renderer's `seen` set, so the P3 view-pool
-  (`client/src/render/phaser.ts` `parkView`/`unhideView`/`viewPool`) is UNREACHABLE for AOI exit.
-  Two consequences: (1) the pool + snap-on-reentry is dead code on the live path (violates the
-  no-dead-code rule); (2) an AOI-exited NPC freezes on the client at its last position (benign
-  today because AOI ≫ viewport, but it is a latent correctness gap).
-- **Why deferred:** the 5s spike's actual fix is the SERVER full-refresh trim (which removes the
-  re-send burst at source); the client pool was a safety net that can't engage. The decision —
-  delete the pool as dead code, OR add a despawn channel + move snap-on-reentry onto the
-  reachable fast path so the pool/removal works — depends on whether the live render-spike test
-  shows the server trim alone suffices. Do NOT merge the arc to main with the pool as unreachable
-  dead code under either outcome.
+  rides every `syncEntities`, stays in the renderer's `seen` set, and its EntityView is never
+  destroyed. The NPC freezes on the client at its last known position until the client
+  disconnects. In practice this is benign: the server AOI radius is much larger than the
+  viewport, so an NPC that has truly left the AOI is off-screen anyway.
+- **Why deferred:** benign today (AOI >> viewport, the frozen entity is never visible); adding
+  a despawn channel is an `@shared/net` + server + client contract change — a full handoff across
+  all three engineers (shared-contract-architect, server, client). The spike that motivated the
+  old pool is fixed at source by the server full-refresh trim (0.2.213).
+- **Suggested approach if picked up:** add a `removed` field to `SnapshotMsg` (`string[]` of
+  entity ids to delete), emit it server-side on AOI exit, and prune `entities.delete(id)` in
+  `client/src/main.ts` alongside the existing `playerIds` prune. The renderer's destroy-on-absence
+  path in `upsert()` then fires naturally, no pool needed.
 - **Refs:** `shared/src/net.ts` (no despawn event), `client/src/main.ts` (~`:440` player-only
-  prune; `:466` NPC merge), `client/src/render/phaser.ts` (`parkView` ~`:1342`, `viewPool`),
-  `server/game/engine.js` (AOI-exit drop ~`:628`, deliberately keeps client-side).
-- **Effort:** S to delete the pool; M to add a despawn channel + reachable snap.
+  prune; entity merge loop), `client/src/render/phaser.ts` (`upsert` cleanup loop),
+  `server/game/engine.js` (AOI-exit drop, deliberately server-side only).
+- **Effort:** M (contract change across all three sides + wiring in main.ts + server-side emit).
 
 ### Client bundle is one ~1.6 MB chunk — no code-splitting (Android startup on mid-range)
 - **Status:** open — deliberately deferred from the Android touch-controls plan (Phase 4).

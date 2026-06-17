@@ -4,6 +4,33 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.215: **Client renderer — remove dead view-pool code (`client/src/render/phaser.ts`).**
+  Confirmed live (user-observed) that the 5 s render spike is gone; the real fix was the
+  server full-refresh trim landed in 0.2.213 (commit 1bda94f). The client-side EntityView
+  pool added in that same commit (`viewPool`, `parkView`, `unhideView`, `evictStalePools`,
+  `VIEW_POOL_TTL_MS`, `VIEW_POOL_MAX`) was found by the 0.2.214 validation to be unreachable
+  dead code on the live path: the net contract has no despawn/removed channel, and
+  `client/src/main.ts` prunes only departed players (the `playerIds` set), never NPCs —
+  so an AOI-exited NPC is never deleted from the entity map, rides every `syncEntities`,
+  and stays in the renderer's `seen` set forever. The `!seen.has(id)` branch that would park
+  a view only ever fires for players who left the room (rare), not for the AOI-exit case
+  the pool was built for.
+  Removed per the no-dead-code rule: `VIEW_POOL_TTL_MS` constant (~line 609), `VIEW_POOL_MAX`
+  constant (~line 616), `viewPool` field (~line 639), the SHUTDOWN handler's pool-drain loop
+  (~lines 749-750), the `evictStalePools()` call in `upsert()` (~line 1251), the pool-reclaim
+  block in the MISS branch (~lines 1298-1305), the entire `parkView` method (~lines 1342-1375),
+  the entire `unhideView` method (~lines 1389-1419), and the entire `evictStalePools` method
+  (~lines 1426-1434). The cleanup loop now unconditionally destroys absent views
+  (both local-player and remote), collapsing the if/else. The `upsert` doc-comment is rewritten
+  to describe the simpler create-on-appear / destroy-on-absence lifecycle.
+  No behaviour change for any entity that stays continuously visible (the common case —
+  renderX/renderY/targetX/targetY interpolation is untouched). The `refreshCameras` O(new)
+  fix is kept (reachable and valuable).
+  `FINDINGS_OUTSIDE_SCOPE.md` updated: the dead-code half of the "Client AOI-exit entities /
+  view pool" entry is resolved; the latent no-despawn-channel gap (AOI-exited NPCs freeze at
+  last position — benign since AOI >> viewport) remains as a smaller open finding.
+  Verify: `cd client && npm run build` green; grep for `viewPool|parkView|unhideView|evictStalePools|VIEW_POOL` returns nothing; `cd scripts && npm run verify` — all 10 gates green.
+
 - 0.2.214: **Validation — gate integrity fix + wire the live gate into `verify` + living-docs cleanup.**
   Final `/plan-validation-and-review` over the whole netcode arc (P0–P3) caught two real issues and
   did the convention cleanup; the runtime arc itself was rated correct/ship-ready.
