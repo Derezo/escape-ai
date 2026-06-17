@@ -4,6 +4,29 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.208: **Client — fix high-latency rubber-banding via snapshot reconciliation with input replay.**
+  Without this fix, `net.onSnapshot` blindly merged the server's authoritative position (as of the
+  tick the snapshot was computed, ~RTT ago) onto the local player entity. Because the local entity is
+  tagged `_local` the renderer snaps it to that position immediately — on a 100–200ms connection that
+  yanks the avatar back to where it was 2–4 prediction steps ago (the visible "bounce-back / drift").
+  The fix adds **pending-input buffering + replay** entirely in `client/src/main.ts`:
+  1. Every sent input is pushed to a `pendingInputs: PendingInput[]` buffer (seq / dx / dy / sprint).
+     A `MAX_PENDING_INPUTS = 50` cap (~2.5s at 20Hz) prevents unbounded growth when myId or the map
+     is transiently absent.
+  2. In `net.onSnapshot`, after the normal server-wins entity merge, the local player's entity is
+     fast-forwarded: inputs with `seq <= msg.acks[myId]` (already reflected in the server position)
+     are pruned; the remaining unacked inputs are replayed with `moveWithCollision` in order,
+     advancing the entity from the server baseline to where the server *will* place it once those
+     inputs arrive — eliminating the RTT-lag snap.
+  3. Both the live prediction step and the replay use `FIXED_DT = INPUT_SEND_MS / 1000` (0.05 s),
+     NOT wall-clock dt. The server consumes one input per tick at 1/20 s; using wall-clock jitter
+     (the interval fires ~1-4ms early/late) would compound a mismatch across the replay steps and
+     re-introduce a smaller drift. Fixed-dt makes prediction and replay numerically identical to the
+     server's integration, so they cancel cleanly. `lastSendTime` (previously used to derive `dt`)
+     is removed entirely as it is no longer needed.
+  Remote entities (every `e.id !== myId`) keep the unchanged server-wins merge. No shared/ or
+  server/ changes. Client `tsc` + `vite build` green.
+
 - 0.2.207: **Client — a windowed minimap HUD (bottom-right).** Added a player-centred minimap that
   scrolls under a fixed frame as you move (`client/src/render/phaser.ts` `Minimap` class +
   `client/src/render/minimap-palette.ts`). It mirrors the tilemap at **1/32 scale** (one minimap

@@ -60,6 +60,20 @@ const PREDICT_RADIUS = 32 * 0.4;
 /** How often (ms) we sample input and send it to the server. */
 const INPUT_SEND_MS = 50; // 20 Hz, matching the server tick
 
+/**
+ * Fixed simulation timestep (seconds) for prediction AND replay.
+ *
+ * Both the live prediction step and the snapshot reconciliation replay MUST use
+ * this constant — NOT wall-clock dt — so they match the server's fixed-step sim
+ * exactly. The server consumes one input per tick at 1/TICK_RATE = 1/20 = 0.05s;
+ * using wall-clock dt would cause prediction to drift from the server whenever the
+ * input interval fires slightly early or late (a ~2-4ms jitter on a loaded tab),
+ * compounding into a visible rubber-band error at high latency. A named constant
+ * derived from INPUT_SEND_MS keeps this in one place so a TICK_RATE change lands
+ * in both prediction and replay without a hunt.
+ */
+const FIXED_DT = INPUT_SEND_MS / 1000; // 0.05 s — matches server 1/TICK_RATE
+
 /** World-units a robot must travel per footstep foley (≈ half a 32px tile, so a
  *  ~60u/s patrol is ~2.3 steps/s and a faster chase quickens naturally). */
 const ROBOT_STRIDE = 26;
@@ -446,6 +460,68 @@ async function main(): Promise<void> {
     for (const e of msg.entities) {
       entities.set(e.id, { ...entities.get(e.id), ...e });
     }
+
+    // --- Local-player reconciliation with input replay ---
+    //
+    // The problem without replay: the server snapshot carries the authoritative
+    // position as of the tick it was computed. On a high-RTT connection that tick
+    // was ~RTT ago, so a blind merge yanks the avatar back to where it was 100-200ms
+    // in the past — the reported "bounce-back / drift" at high latency.
+    //
+    // The fix: treat the server position as the START of a mini-simulation, then
+    // fast-forward through every input the server hasn't processed yet (its ack
+    // tells us exactly which inputs those are). The result is an estimate of where
+    // the server WILL place the player once it processes the in-flight inputs —
+    // which should be very close to where our prediction already has us, so the
+    // merge is smooth rather than a visible snap.
+    //
+    // This only applies to our LOCAL entity; remote entities keep the server-wins
+    // merge (they're interpolated by the renderer anyway, so a small position
+    // correction there isn't visible).
+    if (myId && localMap) {
+      const ackedSeq = typeof msg.acks[myId] === 'number' ? msg.acks[myId] : undefined;
+      if (ackedSeq !== undefined) {
+        // Step 1: server position is already merged into entities above — it is now
+        // the baseline for replay.
+
+        // Step 2: drop every buffered input the server has already applied (seq <=
+        // ackedSeq). These are "done" — the server's authoritative position already
+        // reflects them. Mutate in place (splice from front) to keep the array small.
+        let pruneCount = 0;
+        while (pruneCount < pendingInputs.length && pendingInputs[pruneCount].seq <= ackedSeq) {
+          pruneCount++;
+        }
+        if (pruneCount > 0) pendingInputs.splice(0, pruneCount);
+
+        // Step 3: replay the remaining (unacked) inputs on top of the server
+        // position. Each replay step uses FIXED_DT — the same fixed timestep the
+        // server uses per tick — so the re-integration is numerically identical to
+        // what the server will compute when it processes those inputs. Using
+        // wall-clock dt here would re-introduce jitter because each input frame was
+        // predicted with FIXED_DT (and the server integrates with FIXED_DT too), so
+        // any other dt would compound a mismatch instead of cancelling it.
+        const me = entities.get(myId);
+        if (me && pendingInputs.length > 0) {
+          for (const inp of pendingInputs) {
+            if (inp.dx !== 0 || inp.dy !== 0) {
+              moveWithCollision(
+                me as { x: number; y: number },
+                inp.dx,
+                inp.dy,
+                FIXED_DT,
+                moveSpeed(inp.sprint),
+                localMap.collision,
+                localMap.w,
+                localMap.h,
+                localMap.tile,
+                PREDICT_RADIUS,
+              );
+            }
+          }
+        }
+      }
+    }
+
     // Track the authoritative tick clock (for transient-stamp recency like
     // questBlocked) and capture the global panic/lockdown state for the HUD.
     if (typeof msg.tick === 'number') latestTick = msg.tick;
@@ -563,19 +639,41 @@ async function main(): Promise<void> {
 
   // --- Input send loop @ INPUT_SEND_MS: stamp seq, send, predict locally ---
   let seq = 0;
-  let lastSendTime = performance.now();
+
+  /**
+   * Ring buffer of unacknowledged inputs used for snapshot reconciliation.
+   *
+   * Every input we send is pushed here; the snapshot handler prunes all entries
+   * with seq <= acks[myId] (the server has already applied those) and then replays
+   * the survivors on top of the server's authoritative position. This closes the
+   * rubber-band loop at high RTT: instead of snapping the avatar back to where it
+   * was ~RTT ago, we land it where the server WOULD place it given all the inputs
+   * it hasn't processed yet.
+   *
+   * Entries are plain objects (no EntityRef) so they can't hold stale map state.
+   * Capped defensively: if myId or the map is absent for a long stretch the buffer
+   * would grow without bound, so we trim to MAX_PENDING_INPUTS as a safety valve.
+   */
+  interface PendingInput {
+    seq: number;
+    dx: number;
+    dy: number;
+    sprint: boolean;
+  }
+  const pendingInputs: PendingInput[] = [];
+  /** Hard cap on pending input buffer depth (~2.5s at 20Hz = 50 frames). If the
+   *  server stops acking (connection issue, myId unknown) we never grow past this. */
+  const MAX_PENDING_INPUTS = 50;
   // Named so the lifecycle handler (Android) can re-arm the interval on resume.
-  // `inputInterval` is reassigned there; `lastSendTime` is reset there too so the
-  // first post-resume dt isn't a huge gap.
+  // `inputInterval` is reassigned there on resume.
   function sendInputFrame(): void {
     // While the chat input is focused the player is typing: freeze movement. The
     // keydown handler already bails on `chatFocused` (so nothing new enters `keys`
     // and no action is queued), but a key held across the focus edge is cleared
     // there too — this zero is the authoritative guarantee we never walk while typing.
     const { dx, dy, sprint } = chatFocused ? { dx: 0, dy: 0, sprint: false } : inputVector();
-    const now = performance.now();
-    const dt = (now - lastSendTime) / 1000;
-    lastSendTime = now;
+    // (Wall-clock time is not recorded here — movement uses the fixed FIXED_DT step,
+    // not a wall-clock dt, so there is no per-frame timestamp to track.)
 
     seq += 1;
     const input: InputMsg = { seq, dx, dy, sprint };
@@ -596,12 +694,32 @@ async function main(): Promise<void> {
     }
     net.sendInput(input);
 
+    // Record this input for reconciliation replay in the snapshot handler.
+    // We store dx/dy/sprint (not the full InputMsg, since action is one-shot and
+    // doesn't affect position, so replaying it would be wrong). The seq ties this
+    // record to the server's ack: once the server has processed seq N, everything
+    // up to N is pruned and only the unacked tail is replayed.
+    pendingInputs.push({ seq, dx, dy, sprint });
+    // Safety cap: if myId or the map is temporarily absent the buffer grows;
+    // trim the oldest entries so it never becomes a memory / replay-time hazard.
+    if (pendingInputs.length > MAX_PENDING_INPUTS) {
+      pendingInputs.splice(0, pendingInputs.length - MAX_PENDING_INPUTS);
+    }
+
     // Client-side prediction: advance OUR entity immediately so movement feels
     // instant. We predict with the SAME collision-aware integration the server
     // runs authoritatively (shared moveWithCollision against the regenerated map's
     // grid, same speed + radius), so prediction stops at walls exactly where the
     // server will and reconciliation doesn't rubber-band. Before the map arrives
     // we simply don't predict movement (the first snapshot seeds our position).
+    //
+    // IMPORTANT: use FIXED_DT here (not wall-clock dt) so every prediction step
+    // is bit-identical to a server tick. Wall-clock jitter (the interval fires
+    // ~1-4ms early/late) would compound: over a ~100ms RTT that's ~2-8ms of
+    // drift per prediction step, and each replay step below must undo that same
+    // drift — they must agree or reconciliation introduces the very jitter we're
+    // trying to remove. Both sides (prediction and replay) use FIXED_DT, so the
+    // arithmetic always cancels cleanly.
     if (myId && localMap && (dx !== 0 || dy !== 0)) {
       const me = entities.get(myId);
       if (me) {
@@ -609,7 +727,7 @@ async function main(): Promise<void> {
           me as { x: number; y: number },
           dx,
           dy,
-          dt,
+          FIXED_DT,
           moveSpeed(sprint),
           localMap.collision,
           localMap.w,
@@ -1026,8 +1144,7 @@ async function main(): Promise<void> {
         // Reconnect first so the socket is live as the loops come back.
         net.connect(SERVER_URL);
         getAudioCtx()?.resume();
-        // Reset the send-loop clock so the first post-resume dt isn't a huge gap.
-        lastSendTime = performance.now();
+        // (No send-loop clock to reset — prediction uses FIXED_DT, not wall-clock dt.)
         connTickInterval = window.setInterval(
           () => renderConnView(net.tickConnection(Date.now())),
           250,
