@@ -26,15 +26,33 @@
  *     player (plus its own entity, unconditionally). The cull is per-socket, so the
  *     delta memory is per-socket too (see lastSentBySocket).
  *
- * Delta vs. full broadcast:
- *   - Every FULL_REFRESH_INTERVAL ticks we send a *full* snapshot (every IN-AOI
- *     entity) so late joiners and drifted clients resync.
- *   - On other ticks we send a *delta*: only IN-AOI entities whose serialized state
- *     changed since the last snapshot sent to that socket. Static props don't
- *     change (and NPC positions are quantized to whole pixels in toEntity so
- *     sub-pixel drift no longer counts as a change), so they ride only on a full
- *     refresh OR when they first ENTER this socket's AOI — see the force-send
+ * Delta broadcast + the full-refresh FLUSH tick:
+ *   - EVERY tick we send a *delta*: only IN-AOI entities that are NEW to this socket
+ *     (just entered its AOI) or whose serialized state changed since the last
+ *     snapshot we sent it. Static props don't change (and NPC positions are quantized
+ *     to whole pixels in toEntity so sub-pixel drift no longer counts as a change), so
+ *     they ride only when they first ENTER this socket's AOI — see the force-send
  *     invariant in broadcastSnapshots.
+ *   - Every FULL_REFRESH_INTERVAL ticks is a "flush" tick. It is STILL a delta (FIX 1
+ *     below), but it can NOT be deferred by the slow-client coalescer — it always
+ *     emits, flushing any accumulated pending delta. It is the backstop that resyncs a
+ *     client which fell behind under slow-consumer suppression.
+ *
+ *   FIX 1 — full-refresh trim. The full-refresh tick used to RE-SEND every in-AOI
+ *   entity to every socket, even ones whose serialization the socket already had. A
+ *   real client re-creates Phaser views/textures for a batch of entities on such a
+ *   burst → a periodic ~5s stall. With per-socket lastSent memory (P1) + the
+ *   AOI-entry force-send invariant already repainting re-entering entities, that
+ *   re-send is pure waste: lastSent holds EXACTLY what we CONFIRMED sending this
+ *   socket, so `!lastSent.has(id)` (AOI-new) ∪ `lastSent.get(id) !== serialized`
+ *   (changed) already covers every entity the socket could be missing. A client that
+ *   genuinely missed a delta still recovers: the entity it missed will either change
+ *   again (caught by the dirty diff) or — because a missed emit means the socket's
+ *   TCP stream stalled, and Socket.IO/WebSocket is an ordered reliable stream — it was
+ *   not actually lost, just delayed. (The slow-client path defers but never drops:
+ *   lastSent only advances on a CONFIRMED emit, and the pending-delta accumulator
+ *   re-sends precisely the deferred entities on the next flush.) So the full tick now
+ *   behaves like a normal delta tick that simply can't be deferred.
  *   Correctness over cleverness — the delta is a simple per-entity dirty check.
  */
 
@@ -50,6 +68,40 @@ const session = require('./session');
 // Full snapshot every N ticks (default 100 = 5s at 20Hz). Between fulls we
 // send deltas containing only changed entities.
 const FULL_REFRESH_INTERVAL = 100;
+
+// The FIXED simulation timestep, in seconds: exactly one tick's worth of time at
+// the nominal TICK_RATE (1/20 = 0.05s by default). EVERY per-second-rate system in
+// the sim is integrated with THIS dt — movement (shared moveWithCollision), the
+// suspicion decay (SUSPICION_DECAY_PER_SEC * dt), human-likeness (updateHumanLikeness),
+// and the panic meter (shared stepPanic) — NOT the wall-clock elapsed time.
+//
+// WHY FIXED, not wall-clock (the FIX-2 invariant):
+//   1. CLIENT PARITY. The client predicts its own movement by replaying each pending
+//      input through the SAME shared moveWithCollision at a FIXED step (client
+//      main.ts FIXED_DT = INPUT_SEND_MS/1000 = 0.05s) — it explicitly does NOT use
+//      wall-clock dt. If the server integrates the same input with a wall-clock dt
+//      that momentarily differs (a GC pause or scheduler hiccup stretches one tick's
+//      elapsed time), the server's authoritative position diverges from the client's
+//      prediction for that input, and the next snapshot yanks the avatar (the
+//      reconciliation snap). A fixed step makes server and client arithmetic
+//      bit-identical, so prediction reconciles with zero residual.
+//   2. DETERMINISM. With a fixed dt, replaying the same inputs from the same state
+//      always yields the same trajectory — no dependence on real elapsed time. This
+//      is the project's no-wall-clock-in-sim law (timing is in TICKS).
+//   3. NO BIG-STEP JUMPS. A wall-clock dt spike (event-loop stall) made a single
+//      tick integrate a large step — robots/NPCs teleported forward that tick
+//      ("strange robot movement"). A fixed step is immune: a late tick still moves
+//      everything exactly one nominal step; the only visible effect of a stall is
+//      that the tick simply happens late (the self-scheduler below absorbs that by
+//      shortening the next delay), never that the world lurches.
+//
+// Every dt-consuming system here is per-second-rate math (`rate * dt`) tuned against
+// the 20Hz nominal step (constants named `_PER_SEC`), and NONE of them reads a wall
+// clock — they all consume this single passed-in dt. So feeding the fixed step to
+// the whole tick keeps suspicion/panic/likeness ticking at exactly their nominal,
+// designed rate. (The loop still measures real elapsed time below, but ONLY to hold
+// the wall-clock TICK_RATE cadence — that scheduling math is separate from sim dt.)
+const FIXED_DT = 1 / config.TICK_RATE;
 
 // --- injected dependencies (set by init) ---
 let io = null;
@@ -156,32 +208,71 @@ function tick() {
 
   currentTick++;
 
+  // SIM dt is the FIXED timestep — NOT the wall-clock elapsed time. See FIXED_DT for
+  // the full rationale: a fixed step keeps the server's integration bit-identical to
+  // the client's fixed-step prediction (no reconciliation snap) and immune to
+  // event-loop stalls (no big-step NPC jumps on a late tick). The wall clock is read
+  // ONLY for the self-scheduling cadence below — never to advance the simulation.
   const now = Date.now();
-  const dt = (now - lastTickTime) / 1000; // seconds since last tick
-  lastTickTime = now;
 
   try {
-    integratePlayers(dt);
-    stepNpcs(dt);
+    integratePlayers(FIXED_DT);
+    stepNpcs(FIXED_DT);
     broadcastSnapshots();
   } catch (err) {
     // Never let one bad tick kill the loop.
     console.error('[engine] tick error:', err);
   }
 
-  // Schedule next tick, compensating for the work we just did.
+  // Schedule next tick, compensating for the work we just did. This is the ONLY
+  // place real elapsed time is used: to hold the wall-clock TICK_RATE cadence. A
+  // tick that ran late (stall) simply schedules its successor sooner (delay floors
+  // at 0) — the sim never compensates by integrating a larger step. lastTickTime is
+  // retained for diagnostics / future drift accounting; the sim no longer reads it.
+  lastTickTime = now;
   const interval = 1000 / config.TICK_RATE;
   const elapsed = Date.now() - now;
   const delay = Math.max(0, interval - elapsed);
   timer = setTimeout(tick, delay);
 }
 
-/** Apply each player's latest input to its position, advance its stealth state,
+/** Apply each player's next QUEUED input to its position, advance its stealth state,
  *  and fire any one-shot action it carried this tick. */
 function integratePlayers(dt) {
   if (!connectedPlayers) return;
 
   for (const player of connectedPlayers.values()) {
+    // ── INPUT FIFO drain (FIX 3): ONE input per tick ─────────────────────────────
+    // The client sends ~1 input/frame (~20Hz); the engine ticks ~20Hz; the two are
+    // NOT phase-locked, so occasionally two inputs land between ticks. We drain the
+    // queue ONE per tick (one fixed step), carrying any surplus to later ticks, and
+    // ack ONLY the seq we actually integrate (player.lastProcessedSeq below). That is
+    // the whole point of option (b):
+    //   - INPUT FIDELITY: every queued input gets its own fixed-step integration, so
+    //     the older of two same-gap inputs is no longer dropped (the old single-slot
+    //     overwrite lost it while still acking the newer seq → the client pruned an
+    //     input it never saw applied → a small position deficit, the "6u drop").
+    //   - ONE STEP PER TICK: we never integrate two inputs in one tick, so a burst
+    //     can't speed the player up (option (a)'s risk). A surplus simply trickles
+    //     out one-per-tick on following ticks.
+    //   - CLIENT RECONCILIATION STAYS HONEST: the client keeps every input whose seq
+    //     is still unacked in its pending buffer and replays them at FIXED_DT. Because
+    //     we ack only the integrated seq, an input still sitting in our queue is also
+    //     still unacked → the client keeps predicting it → the predicted and (soon-to-
+    //     be) authoritative positions agree when we DO integrate it next tick.
+    //
+    // When the queue is EMPTY we HOLD the last integrated input (player.input is left
+    // as-is): the player keeps moving with its last good frame for movement continuity
+    // (mirrors the client, which keeps replaying its unacked tail), and lastProcessedSeq
+    // is NOT advanced (we integrated nothing new this tick, so there is nothing new to
+    // ack). A rate-limited / dropped frame is therefore safe: the held input carries on.
+    if (player.inputQueue && player.inputQueue.length > 0) {
+      // Dequeue the OLDEST input and promote it to player.input — the single
+      // "this tick's integrated input" view that the facing + human-likeness reads
+      // below (and stealth.stepPlayerHumanLikeness) consume, so they stay coherent
+      // with the move we're about to apply.
+      player.input = player.inputQueue.shift();
+    }
     const input = player.input;
     if (!input) continue;
 
@@ -249,8 +340,13 @@ function integratePlayers(dt) {
       player.pendingAction = null;
     }
 
-    // Record the last input sequence we've now simulated, so the snapshot's
-    // `acks` lets clients reconcile their prediction.
+    // Record the seq we ACTUALLY simulated this tick, so the snapshot's `acks` lets
+    // clients reconcile. `input` is the frame we drained from the FIFO (or, on an
+    // empty-queue hold tick, the last integrated frame) — so this acks exactly the
+    // input whose movement is now reflected in player.x/y, never a seq we skipped.
+    // On a hold tick it re-stamps the same seq (a no-op ack), which is correct: we
+    // integrated nothing new, so the client's unacked tail (including any input still
+    // sitting in our queue) is preserved for replay until we drain + ack it.
     player.lastProcessedSeq = input.seq;
 
     // Persist any accumulated stat deltas (escapes/caught/orders/abilities) so a
@@ -435,7 +531,12 @@ function toEntity(player) {
 function broadcastSnapshots() {
   if (!rooms) return;
 
-  const isFull = currentTick % FULL_REFRESH_INTERVAL === 0;
+  // The periodic "flush" tick (FIX 1). It is no longer a force-send-everything full
+  // snapshot — it is a normal per-socket delta that simply can NOT be deferred by the
+  // slow-client coalescer (it always emits, draining any held pending delta). The name
+  // `isFull` is retained because it still gates the un-deferrable flush; what changed
+  // is that it no longer overrides the per-entity dirty check below.
+  const isFlushTick = currentTick % FULL_REFRESH_INTERVAL === 0;
 
   for (const [roomName, socketIds] of rooms) {
     if (!socketIds || socketIds.size === 0) continue;
@@ -496,12 +597,22 @@ function broadcastSnapshots() {
         // even if its serialization is byte-identical to the last time this socket
         // saw it long ago. A pure dirty-check (`lastSent.get(id) !== serialized`)
         // would WRONGLY skip an unchanged-but-re-entering entity, leaving it invisible
-        // on the client until the next full refresh (up to ~5s). `lastSent.has(id)`
-        // is exactly the "did this socket know about it last tick" test: a miss means
-        // it just entered AOI → force-send. A hit falls through to the normal dirty
-        // check. (On a full-refresh tick everything in-AOI is sent regardless.)
+        // on the client. `lastSent.has(id)` is exactly the "did this socket know about
+        // it last tick" test: a miss means it just entered AOI → force-send. A hit
+        // falls through to the normal dirty check.
+        //
+        // FIX 1: the flush tick (isFlushTick) is NO LONGER an override here. It used
+        // to be `if (isFull || isNewToSocket || changed)`, which re-sent every in-AOI
+        // entity every FULL_REFRESH_INTERVAL ticks regardless of whether the socket
+        // already had it — a periodic ~5s batch the real client choked on (Phaser
+        // view/texture re-creation). lastSent holds EXACTLY what we CONFIRMED sending
+        // this socket, so (AOI-new ∪ changed) already covers everything the socket
+        // could be missing; re-sending an entity whose serialization the socket
+        // already holds is pure waste. The flush tick still matters — but only as the
+        // un-deferrable emit below (it flushes the slow-client accumulator), NOT as a
+        // force-resend of unchanged state.
         const isNewToSocket = !lastSent.has(c.entity.id);
-        if (isFull || isNewToSocket || lastSent.get(c.entity.id) !== serialized) {
+        if (isNewToSocket || lastSent.get(c.entity.id) !== serialized) {
           entities.push(c.entity);
         }
         lastSent.set(c.entity.id, serialized);
@@ -530,9 +641,9 @@ function broadcastSnapshots() {
       // is blocked stops sending inputs (timer callbacks don't fire during a spin).
       // When the last input arrived > SLOW_CLIENT_THRESHOLD_MS ago, we hold back the
       // snapshot this tick and accumulate the delta. On the next "send-allowed" tick
-      // (fresh input OR a full-refresh tick), we emit the UNION of all accumulated
-      // entity updates. This ensures no entity change is lost — it is just deferred
-      // by at most one extra send interval. Pong responses travel on the same
+      // (fresh input OR a flush tick), we emit the UNION of all accumulated entity
+      // updates. This ensures no entity change is lost — it is just deferred by at
+      // most one extra send interval. Pong responses travel on the same
       // connection but are emitted outside this path (in the ping handler) and are
       // never held back, so the RTT measurement drains freely.
       //
@@ -551,16 +662,17 @@ function broadcastSnapshots() {
       // and single-threaded). New entries overwrite stale ones (latest always wins).
       for (const e of entities) pendingDelta.set(e.id, e);
 
-      // Decide whether to emit this tick. A full-refresh tick always flushes (it is
-      // the correctness backstop that resyncs clients who missed deltas during
-      // suppression). Otherwise, only emit if the client showed signs of life recently
-      // (last input arrived within SLOW_CLIENT_THRESHOLD_MS). No lastInputAt means
-      // the client joined but hasn't sent an input yet — treat as "active" so the
-      // join snapshot reaches the client without waiting for the first key-press.
+      // Decide whether to emit this tick. A flush tick (isFlushTick) ALWAYS emits — it
+      // is the un-deferrable backstop that resyncs a client which missed deltas during
+      // slow-consumer suppression (it drains the pending-delta accumulator below).
+      // Otherwise, only emit if the client showed signs of life recently (last input
+      // arrived within SLOW_CLIENT_THRESHOLD_MS). No lastInputAt means the client
+      // joined but hasn't sent an input yet — treat as "active" so the join snapshot
+      // reaches the client without waiting for the first key-press.
       const lastInputAge = me.lastInputAt ? (Date.now() - me.lastInputAt) : 0;
       const clientIsActive = lastInputAge <= SLOW_CLIENT_THRESHOLD_MS;
 
-      if (!isFull && !clientIsActive) {
+      if (!isFlushTick && !clientIsActive) {
         // Client appears slow: hold back and keep accumulating. The pong handler
         // (in the ping socket.on handler, NOT in this path) still fires immediately
         // when the client sends a ping, so RTT stays clean for fast messages.
@@ -568,8 +680,9 @@ function broadcastSnapshots() {
       }
 
       // Flush the accumulated delta (this tick's entities PLUS any held from prior
-      // ticks). On a full-refresh tick the accumulator already holds the full AOI
-      // subset (built above), so no extra work is needed.
+      // ticks). FIX 1: a flush tick no longer rebuilds the whole AOI subset — the
+      // accumulator holds exactly the (AOI-new ∪ changed) entities seen since the
+      // last emit, so this drains precisely what the socket is owed and nothing more.
       const entitiesToSend = [...pendingDelta.values()];
       pendingDelta.clear();
 

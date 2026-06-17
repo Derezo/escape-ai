@@ -344,15 +344,34 @@ class Minimap {
   /**
    * Keep the two-camera split intact: the HUD camera must render ONLY the minimap
    * container, so it ignores every other root the scene has spawned since last call
-   * (tilemap layers, entity views, FX — all added dynamically). Cheap: the scene's
-   * root list is small, and Camera.ignore is idempotent per object. Called each
-   * frame from WorldScene.drawMinimap so newly-created world objects never leak into
-   * the HUD camera.
+   * (tilemap layers, entity views, FX — all added dynamically).
+   *
+   * PERF FIX (O(1) amortised, was O(scene) per frame): instead of iterating the
+   * whole DisplayList every frame and calling hudCam.ignore() on every object (which
+   * visits ~538 static images even when nothing changed), we maintain a Set of
+   * already-registered objects and only process the new entries added since the last
+   * call.  hudCam.ignore() is idempotent, but the iteration itself costs O(scene)
+   * even when idempotent — a full-refresh tick that adds ~N entity views therefore
+   * paid O(scene) for each of the N new adds, stacking on the texture-upload stall.
+   * With the Set, new objects cost O(new) total per frame, not O(scene) per frame.
    */
+  private readonly hudIgnored = new Set<Phaser.GameObjects.GameObject>();
+
   refreshCameras(): void {
     // scene.children is a DisplayList; .list is its public GameObject[] backing array.
     for (const obj of this.scene.children.list) {
-      if (obj !== this.container) this.hudCam.ignore(obj);
+      if (obj === this.container) continue;
+      if (this.hudIgnored.has(obj)) continue; // already registered — skip
+      this.hudCam.ignore(obj);
+      this.hudIgnored.add(obj);
+    }
+    // Prune stale references: objects that have been destroyed are no longer in the
+    // DisplayList, so remove them from the Set to avoid unbounded growth.
+    if (this.hudIgnored.size > this.scene.children.list.length + 64) {
+      const live = new Set(this.scene.children.list);
+      for (const obj of this.hudIgnored) {
+        if (!live.has(obj)) this.hudIgnored.delete(obj);
+      }
     }
   }
 
@@ -580,8 +599,44 @@ class Minimap {
  * builds directional animations in create(), and reconciles views to the latest
  * entity list in update().
  */
+/**
+ * How long (ms) a parked EntityView stays in the pool before it is permanently
+ * destroyed.  Must be longer than one full-refresh interval (~5 000 ms) so an
+ * entity that briefly leaves the AOI and comes back on the very next full-refresh
+ * tick reuses its pooled view instead of recreating it.  6 000 ms gives one full
+ * cycle of margin.
+ */
+const VIEW_POOL_TTL_MS = 6_000;
+/**
+ * Maximum number of views that may sit in the park pool at once.  The AOI cap
+ * limits how many entities can be in view simultaneously, so in practice the pool
+ * never gets large; this is a safety ceiling against a pathological server that
+ * churns many entities rapidly.
+ */
+const VIEW_POOL_MAX = 64;
+
 class WorldScene extends Phaser.Scene {
   private views = new Map<string, EntityView>();
+  /**
+   * Parked EntityViews for entities that left the AOI but may return.
+   *
+   * Lifecycle:
+   *   PARK   – entity disappears from the snapshot → hideView() → pool.set(id, entry)
+   *   REUSE  – entity reappears → unhideView() + snap position → moved back to views
+   *   EVICT  – entry is older than VIEW_POOL_TTL_MS, or pool exceeds VIEW_POOL_MAX
+   *            → destroyView() + pool.delete(id)
+   *
+   * The pool is keyed by entity id.  Only views whose kind+species would still match
+   * the returning entity are reused; a kind/species change goes through destroyView
+   * + createView as before (the eviction + createView path).
+   *
+   * This eliminates the batched WebGL texture upload spike that occurred every 5 s
+   * when the server full-refresh snapshot re-included all in-AOI entities: previously
+   * each re-entry called createView → makeLabel → this.add.text (canvas rasterise +
+   * WebGL texture upload per entity).  With pooling the label texture is kept alive
+   * and reused, so the 5 s tick is no more expensive than any other tick.
+   */
+  private viewPool = new Map<string, { view: EntityView; parkedAt: number }>();
   /** Latest entity list to draw; updated by the renderer, consumed in update(). */
   private pending: Entity[] = [];
   /** True once the atlas texture loaded; gates the sprite path (else shapes). */
@@ -686,9 +741,13 @@ class WorldScene extends Phaser.Scene {
     this.minimap = new Minimap(this, this.atlasReady);
     // Tear down the minimap (and its game-level RESIZE listener) on scene shutdown
     // so a scene restart can't leave a dangling minimap or duplicate listeners.
+    // Also drain the view pool so parked GameObjects are properly destroyed rather
+    // than leaked into a restarted scene.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.minimap?.destroy();
       this.minimap = null;
+      for (const entry of this.viewPool.values()) this.destroyView(entry.view);
+      this.viewPool.clear();
     });
   }
 
@@ -1159,9 +1218,37 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** Upsert (create/move) present entities, destroy vanished ones. */
+  /**
+   * Upsert (create/move) present entities, park or destroy vanished ones.
+   *
+   * View lifecycle with pooling:
+   *
+   *   ACTIVE  – id in this.views; rendered every frame by interpolate().
+   *   PARKED  – id in this.viewPool; hidden (body/label invisible), not interpolated.
+   *             Stays parked for up to VIEW_POOL_TTL_MS, then evicted.
+   *   DEAD    – permanently destroyed; id absent from both maps.
+   *
+   * When an entity disappears from the snapshot we PARK rather than destroy, so
+   * that if it reappears (e.g. on the next full-refresh tick after briefly leaving
+   * AOI) we skip the expensive createView → makeLabel → this.add.text path entirely.
+   * That call rasterises a canvas + uploads a WebGL texture per entity; when 20–30
+   * entities all re-enter on the same 5 s full-refresh tick the batch stalls the
+   * render thread by ~2 400 ms.  Pooling prevents any texture re-upload on re-entry.
+   *
+   * A view is NOT pooled (destroyed immediately) when:
+   *   • the entity's kind or species changed — the pooled view would be mismatched.
+   *   • the pool is at capacity (VIEW_POOL_MAX) — we evict the oldest entry first.
+   *   • the entity carries _local=true (the local player never leaves the snapshot).
+   *
+   * Eviction runs inline on the "park" path (O(pool) only when at cap, rare) and
+   * every upsert frame via evictStalePools() (O(pool), not O(views), which is small).
+   */
   private upsert(entities: Entity[]): void {
     const seen = new Set<string>();
+
+    // Evict pool entries whose TTL has expired before processing new entities, so
+    // a re-entry after the TTL falls through to createView cleanly.
+    this.evictStalePools();
 
     for (const e of entities) {
       // Hide the local player's OWN per-species quest star when it's a misleading
@@ -1173,7 +1260,7 @@ class WorldScene extends Phaser.Scene {
         continue;
       }
       seen.add(e.id);
-      const view = this.views.get(e.id);
+
       // For 'animal' entities a respawn can change the species on the same id while
       // kind stays 'animal'.  species drives the body type (Sprite vs Shape), the
       // animation key (view.anim), the halo, and view.isSprite — all set at creation
@@ -1183,8 +1270,11 @@ class WorldScene extends Phaser.Scene {
       // never spuriously rebuilds every frame.  Non-animal kinds (robots) carry no
       // meaningful species field and are excluded from this check.
       const effectiveSpecies = typeof e.species === 'string' ? e.species : 'ape';
+
+      const view = this.views.get(e.id);
       const sameSpecies = e.kind !== 'animal' || effectiveSpecies === view?.species;
       if (view && view.kind === e.kind && sameSpecies) {
+        // ── FAST PATH: view already active and compatible ──────────────────────
         // New target position from the snapshot; the local entity snaps (it is
         // already client-predicted), remote entities interpolate (see interpolate()).
         view.targetX = e.x;
@@ -1200,23 +1290,145 @@ class WorldScene extends Phaser.Scene {
         this.updateFx(view, e);
         this.updateFollowRing(view, e);
       } else {
+        // ── MISS: entity not in active views ───────────────────────────────────
+        // Destroy any existing incompatible active view first (kind/species change).
         if (view) this.destroyView(view);
-        const created = this.createView(e);
-        created.isLocal = e._local === true;
-        this.updateAnimation(created, e);
-        this.restyle(created, e);
-        this.updateFx(created, e);
-        this.updateFollowRing(created, e);
-        this.views.set(e.id, created);
-        if (e._local === true) this.startFollow(created);
+
+        // Try to reclaim from the park pool before creating a new view.
+        const pooled = this.viewPool.get(e.id);
+        const poolSameSpecies = e.kind !== 'animal' || effectiveSpecies === pooled?.view.species;
+        const recycled = pooled && pooled.view.kind === e.kind && poolSameSpecies
+          ? this.unhideView(pooled.view, e)
+          : null;
+        if (pooled) this.viewPool.delete(e.id); // pulled out regardless (matched or stale)
+
+        const active = recycled ?? this.createView(e);
+        active.isLocal = e._local === true;
+        this.updateAnimation(active, e);
+        this.restyle(active, e);
+        this.updateFx(active, e);
+        this.updateFollowRing(active, e);
+        this.views.set(e.id, active);
+        if (e._local === true) this.startFollow(active);
       }
     }
 
-    // Destroy views for entities no longer present.
+    // Park views for entities no longer present (instead of destroying them outright).
     for (const [id, view] of this.views) {
       if (!seen.has(id)) {
-        this.destroyView(view);
+        // The local player's view is never pooled — it can't leave the snapshot
+        // while the player is in the room.  If it does, destroy it immediately
+        // (an edge case like a network reconnect; pooling a stale _local view
+        // could resurrect a camera-follow target that no longer corresponds to
+        // the authoritative player position).
+        if (view.isLocal) {
+          this.destroyView(view);
+        } else {
+          this.parkView(view, id);
+        }
         this.views.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Hide a view's GameObjects without destroying them, and add it to the pool.
+   * The body is hidden via setVisible(false) rather than setActive(false) so that
+   * Phaser does not zero its position or remove it from the display list — it
+   * simply renders nothing.  The label, ring, halo, fxGlow are also hidden.
+   * followRing (a Graphics) is destroyed — it redraws each frame when active and
+   * is cheap to recreate; keeping it live while hidden wastes a redraw slot.
+   */
+  private parkView(view: EntityView, id: string): void {
+    // If the pool is already at capacity, evict the oldest entry to make room.
+    // This is rare (bounded by the AOI entity count, typically <32 concurrent).
+    if (this.viewPool.size >= VIEW_POOL_MAX) {
+      let oldestId = '';
+      let oldestAt = Infinity;
+      for (const [pid, entry] of this.viewPool) {
+        if (entry.parkedAt < oldestAt) { oldestAt = entry.parkedAt; oldestId = pid; }
+      }
+      if (oldestId) {
+        this.destroyView(this.viewPool.get(oldestId)!.view);
+        this.viewPool.delete(oldestId);
+      }
+    }
+
+    // Tear down the follow ring — it redraws each frame at absolute world coords
+    // and is trivially recreated on un-parking.
+    if (view.followRing) { view.followRing.destroy(); view.followRing = undefined; }
+    view.followFrac = undefined;
+    view.followMine = undefined;
+
+    // Clear any sustained FX glow — it belongs to the prior activation and should
+    // not persist across AOI exit/re-entry.
+    if (view.fxGlow) { view.fxGlow.destroy(); view.fxGlow = undefined; }
+    view.fxStartTick = undefined;
+
+    // Mark invisible; setVisible propagates to Container children automatically.
+    view.body.setVisible(false);
+    view.label?.setVisible(false);
+    view.ring?.setVisible(false);
+    view.halo?.setVisible(false);
+
+    this.viewPool.set(id, { view, parkedAt: this.time.now });
+  }
+
+  /**
+   * Reclaim a parked view for a returning entity.
+   *
+   * SNAP-ON-REENTRY INVARIANT: renderX/Y is set to the server position (e.x, e.y)
+   * so the entity appears immediately at its authoritative location rather than
+   * lerping from wherever it was when it left AOI.  This prevents the "teleporting
+   * robots" artefact where a remote entity that had been parked mid-walk resumes
+   * interpolation from a stale anchor dozens of tiles away from its current position.
+   *
+   * Normal smooth-lerp for continuously-visible entities is unaffected: those views
+   * never leave the active map and therefore never go through this path.
+   */
+  private unhideView(view: EntityView, e: Entity): EntityView {
+    // Snap both render and target to the fresh server position — no stale lerp anchor.
+    view.renderX = e.x;
+    view.renderY = e.y;
+    view.targetX = e.x;
+    view.targetY = e.y;
+    view.prevTargetX = e.x;
+    view.prevTargetY = e.y;
+    // Reset movement state so the entity starts idle (avoids a phantom walk cycle
+    // if movingUntil was still in the future when it was parked).
+    view.movingUntil = 0;
+    view.anim = undefined; // force animation re-evaluation on the first update
+
+    // Restore visibility — setVisible on a Container propagates to children.
+    view.body.setVisible(true);
+    view.body.setPosition(e.x, e.y);
+    view.label?.setVisible(true);
+    view.label?.setPosition(e.x, e.y - SPRITE_SIZE * 0.55);
+    // Ring and halo start hidden; restyle() and styleSuspicionRing() will re-show
+    // them once the snapshot data is applied immediately after unhideView returns.
+    view.ring?.setVisible(false);
+    view.halo?.setVisible(false);
+
+    // Clear stale Three-Laws cache so restyle() re-evaluates unconditionally.
+    view.humanLikeness = undefined;
+    view.mode = undefined;
+    view.suspicion = undefined;
+    view.terminalActive = undefined;
+
+    return view;
+  }
+
+  /**
+   * Scan the pool and permanently destroy any entry that has exceeded VIEW_POOL_TTL_MS.
+   * Called once per upsert() frame (before the entity loop) so the pool stays bounded
+   * and expired entries never lurk past their useful window.  O(pool), not O(scene).
+   */
+  private evictStalePools(): void {
+    const now = this.time.now;
+    for (const [id, entry] of this.viewPool) {
+      if (now - entry.parkedAt > VIEW_POOL_TTL_MS) {
+        this.destroyView(entry.view);
+        this.viewPool.delete(id);
       }
     }
   }

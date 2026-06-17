@@ -4,6 +4,87 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.213: **Server netcode — three fixes: full-refresh trim, fixed-step sim dt, input FIFO.**
+  All three land in `server/game/engine.js` + `server/socket/lobby.js`, on top of the committed P1
+  AOI culling and P2 slow-client deferral.
+
+  1. **Full-refresh trim (`engine.js` `broadcastSnapshots`) — the server half of the 5 s spike.**
+     The periodic full-refresh tick (`currentTick % FULL_REFRESH_INTERVAL === 0`) used to RE-SEND
+     every in-AOI entity to every socket regardless of whether the socket already had an up-to-date
+     serialization — the batch the real client choked on (the 0.2.212 view/texture re-creation).
+     With per-socket `lastSent` memory (P1) and the AOI-entry force-send invariant already repainting
+     re-entering entities, that re-send is pure waste. The flush tick is now a normal per-socket
+     delta — send only AOI-new (`!lastSent.has(id)`) ∪ changed (`lastSent.get(id) !== serialized`)
+     entities — that simply CAN'T be deferred by the slow-client coalescer (still drains the pending
+     accumulator). A client that missed a delta still recovers: `lastSent` only advances on a
+     CONFIRMED emit, so the dirty diff + the deferral accumulator together cover every owed entity
+     (and the WS stream is ordered+reliable — a delayed emit is not a lost one). `isFull` renamed
+     `isFlushTick` to reflect the new role. Empirically `entities/snap` drops to ~13 (no periodic
+     re-send burst), KB/s ~36.
+
+  2. **Fixed/clamped tick dt (`engine.js` `tick`) — kills NPC big-step jumps + restores client parity.**
+     `tick()` integrated with the WALL-CLOCK elapsed `dt = (now - lastTickTime)/1000`; a GC/scheduler
+     stall stretched one tick's dt → `integratePlayers`/`stepNpcs` moved everything a big step that
+     tick (robots "jumped") AND diverged from the client, which predicts at a FIXED step. Switched
+     the WHOLE sim to a fixed `FIXED_DT = 1/TICK_RATE` (0.05 s). Chosen over clamping because the
+     client's prediction replay already uses FIXED_DT through the SAME shared `moveWithCollision`
+     (client `main.ts`) — a fixed server step makes the two bit-identical (zero reconciliation snap).
+     Every dt-consuming system is per-second-rate math (`rate * dt`, constants named `_PER_SEC`,
+     tuned for 20 Hz) and NONE reads a wall clock — movement, suspicion decay, human-likeness, and
+     the shared panic meter all just tick at their nominal designed rate. The wall clock is now read
+     ONLY for the self-scheduling cadence (holding 20 Hz), never to advance the sim.
+
+  3. **Input FIFO (`lobby.js` input handler + `engine.js` `integratePlayers`) — fixes the coalescing drop.**
+     The handler stored only the LATEST input (single-slot overwrite): when two inputs arrived between
+     ticks the older's movement was dropped while the engine acked the newer seq, so the client pruned
+     a pending input that was never integrated → a small position deficit (the "6u drop"). Replaced the
+     slot with a per-player `inputQueue` FIFO (cap `MAX_INPUT_QUEUE = 8`, drop-oldest). The engine
+     drains ONE input per tick (one fixed step), carrying surplus to later ticks, and acks ONLY the seq
+     it actually integrated (option (b)). This preserves input fidelity AND one-step-per-tick movement
+     (no burst speed-up), and keeps client reconciliation honest: an input still in our queue is still
+     unacked, so the client keeps replaying it until we integrate + ack it. A too-fast client (>20 Hz)
+     pins the ack gap at the cap (empirically max 8 at ~33 Hz; 0 at the normal 20 Hz) — bounded, with
+     the client's pending-input tail covering the dropped step.
+
+  `cd shared && npm run build` green; `cd server && npm test` 22/22; `cd scripts && npm run verify`
+  all 9 gates green (incl. the 533-assertion reconciliation + facing determinism); live gate
+  `check-netcode-live.mjs` Gates A+B green (Gate A maxGap=0, Gate B rtt max 160 ms, 0 disconnects);
+  `e2e-follow.js` green. No `client/` or shared changes (client view pooling is the parallel 0.2.212).
+
+- 0.2.212: **Client render — three perf fixes eliminating the ~2 400 ms jank spike every 5 s.**
+  Root cause: every 5 s the server sends a full-refresh snapshot re-including all in-AOI entities.
+  On re-entry each entity hit `createView → makeLabel → this.add.text(...)` — Phaser Text creation
+  rasterises a canvas + uploads a WebGL texture (expensive).  Batching 20-30 of these onto one tick
+  stalled the render thread by ~2 400 ms.  Three targeted fixes in `client/src/render/phaser.ts`:
+
+  1. **EntityView / label pooling (PRIMARY, eliminates the texture-upload batch).**
+     On AOI exit (`upsert` removes entity from `seen`) the view is now PARKED — hidden via
+     `setVisible(false)` — into `viewPool: Map<id, {view, parkedAt}>` rather than destroyed.
+     On re-entry the pool is checked first; a matching kind+species entry is UNPARKED via
+     `unhideView()`, which skips `createView + makeLabel` entirely (the label texture already
+     exists in VRAM).  Eviction: TTL = 6 000 ms (longer than the 5 s full-refresh interval
+     so a re-entry on the next full-refresh tick always hits the pool), cap = 64 entries (evict
+     oldest when at cap).  Pool is drained on scene SHUTDOWN so no GameObjects leak.  The
+     local player's view is never pooled (it does not leave the snapshot during normal play).
+
+  2. **Snap-on-reentry (`unhideView`) — fixes teleporting robots.**
+     When a view is un-pooled, `renderX/Y` and `targetX/Y` are snapped to `e.x, e.y` so the
+     entity appears at its current authoritative position instead of lerping from the stale
+     position it held when it was parked.  `movingUntil` is reset and `anim` cleared so the
+     entity starts idle.  Continuously-visible entities (never parked) are unaffected — they
+     follow the normal smooth-lerp path unchanged.
+
+  3. **`refreshCameras()` O(scene) → O(new) per frame.**
+     Previously iterated the whole scene DisplayList (~538 objects) each frame to call
+     `hudCam.ignore(obj)`.  Now maintains `hudIgnored: Set<GameObject>` on `Minimap`; on each
+     call it skips already-registered objects and only calls `hudCam.ignore()` on new additions.
+     A periodic prune removes stale (destroyed) entries when the Set outgrows the live list by
+     more than 64.  The minimap/HUD split is functionally unchanged — new world objects are
+     still registered on the first frame they appear, never leaking into the HUD camera.
+
+  `cd client && npm run build` green (tsc strict + vite).  `cd scripts && npm run verify` all
+  9 gates green.  No shared or server changes.
+
 - 0.2.211: **Netcode Phase 2 — slow-client HOL unblocking (server-side coalescing + client-side rAF drain).**
   Phase 1 cut server payload 23× via AOI culling. Phase 2 eliminates the residual head-of-line blocking
   that occurred when a slow client (Android WebView spinning 80ms per snapshot) couldn't drain the 20Hz
