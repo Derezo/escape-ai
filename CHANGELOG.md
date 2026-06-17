@@ -4,6 +4,40 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.211: **Netcode Phase 2 — slow-client HOL unblocking (server-side coalescing + client-side rAF drain).**
+  Phase 1 cut server payload 23× via AOI culling. Phase 2 eliminates the residual head-of-line blocking
+  that occurred when a slow client (Android WebView spinning 80ms per snapshot) couldn't drain the 20Hz
+  stream fast enough, causing pong responses to pile behind queued snapshots → unbounded RTT climb.
+
+  **Server-side (`server/game/engine.js`, `server/socket/lobby.js`):**
+  - `player.lastInputAt = Date.now()` stamped on every `input` event in `lobby.js`.
+  - Per-socket accumulated delta buffer (`pendingDeltaBySocket`: `Map<socketId, Map<entityId, entity>>`)
+    in `engine.js`. When a socket's last input was > `SLOW_CLIENT_THRESHOLD_MS` (65 ms) ago and we're
+    not on a full-refresh tick, the snapshot for that socket is HELD BACK and its entity delta is
+    accumulated into `pendingDeltaBySocket`. On the next send-allowed tick (fresh input or full-refresh),
+    the UNION of all accumulated entity updates is sent in one burst. No entity update is ever lost —
+    it is deferred by at most one additional interval. `clearSocket()` clears the accumulator on disconnect.
+  - Normal clients (input every ~50 ms) are unaffected: `lastInputAge ≤ 65ms` → always send. Gate A
+    still passes (snapRate 20/s, KB/s 36, entities/snap 14, ack gap 0–1). Slow clients receive snapshots
+    at their actual processing rate (~12.5/sec matching the 80ms spin) so pong responses drain freely.
+
+  **Client-side (`client/src/net/client.ts`):**
+  - `snapshotBuffer: SnapshotMsg[]` + `drainSnapshotBuffer()` + `snapshotRafPending` flag replace the
+    synchronous `snapshotCb(msg)` call in the socket `snapshot` handler.
+  - Each received snapshot is pushed to the buffer. The drain fires on the next `requestAnimationFrame`
+    (or immediately when buffer ≥ `MAX_SNAPSHOT_BUFFER = 10` for background-tab safety).
+  - On drain: 1 queued → pass-through (no overhead). N > 1 queued → merge entity arrays in tick order
+    (latest entity for each id wins) into a single synthetic `SnapshotMsg` with the newest tick/acks/world;
+    call `snapshotCb` once. This caps expensive downstream work (prediction rebuild, HUD update) at
+    once-per-frame on real Android WebViews using our code.
+  - Coalesce-equals-sequential: merging N last-writer-wins delta maps is associative and idempotent —
+    the final per-id entity is identical to processing them one-by-one.
+
+  **Result:** `DB_PATH=/tmp/p2.db node scripts/check-netcode-live.mjs --port=3221`:
+  Gate A PASSES (unchanged). Gate B PASSES: RTT max 160ms (≤1500ms bound), growth ≤27ms (≤800ms),
+  0 disconnects. Was: max ~1680–10321ms, growth up to 9281ms depending on run.
+  `cd client && npm run build` green. `cd scripts && npm run verify` all 9 gates green.
+
 - 0.2.210: **Server — netcode PRIMARY fix: per-socket Area-of-Interest culling + NPC wire-shape + position quantization (snapshot bloat).**
   Empirical root cause (measured against prod with `scripts/prod-wire-probe.mjs`, reproduced by
   `scripts/check-netcode-live.mjs`): the server broadcast ~105 entities / ~44KB to EVERY client

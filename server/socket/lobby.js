@@ -298,6 +298,12 @@ function register(socket, deps) {
 
     player.inputSeq = seq;
     player.input = { seq, dx, dy, sprint };
+    // Stamp the wall-clock time of this input. The engine's slow-client detector
+    // (broadcastSnapshots) reads this to decide whether to suppress a snapshot tick
+    // for a socket whose event loop appears blocked: normal clients send every ~50 ms;
+    // a blocked client stops sending (timer callbacks can't fire during a spin), so
+    // lastInputAt falls behind and the snapshot is held back to prevent HOL pileup.
+    player.lastInputAt = Date.now();
   });
 }
 

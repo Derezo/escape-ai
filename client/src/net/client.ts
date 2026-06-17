@@ -11,6 +11,7 @@
 
 import { io, type Socket } from 'socket.io-client';
 import { ConnectionState, type ConnectionView } from './connection-state';
+import type { Entity } from '@shared/types';
 import {
   CLIENT_EVENTS,
   SERVER_EVENTS,
@@ -31,11 +32,43 @@ import {
 /** How often (ms) to send a ping for the latency estimate. */
 const PING_INTERVAL_MS = 1000;
 
+/**
+ * Maximum number of raw snapshots to buffer before force-draining synchronously.
+ * Guards against unbounded memory growth when the tab is backgrounded (rAF stops
+ * firing) or when the device is extremely slow. At 20 Hz, 10 frames = 0.5 s of
+ * backlog — enough to absorb brief pauses without losing deltas permanently.
+ */
+const MAX_SNAPSHOT_BUFFER = 10;
+
 export class NetClient {
   private socket?: Socket;
   /** Smoothed round-trip latency in ms; -1 until the first pong arrives. */
   private latencyMs = -1;
   private pingTimer?: ReturnType<typeof setInterval>;
+
+  /**
+   * Incoming snapshot buffer for client-side coalescing.
+   *
+   * Instead of calling snapshotCb synchronously inside the socket 'snapshot'
+   * event handler (which blocks the JS event loop once per received frame), we
+   * push each raw SnapshotMsg here and drain on the next requestAnimationFrame.
+   *
+   * On drain:
+   *   - If 1 queued → process normally (identical to the pre-coalescing path).
+   *   - If N > 1 queued → merge all entity arrays in order (later entity for the
+   *     same id wins), then call snapshotCb ONCE with a synthetic snapshot carrying
+   *     the union of entity updates + the NEWEST snapshot's tick/acks/world. This
+   *     caps the expensive downstream work (prediction rebuild, HUD update) at
+   *     once-per-drain regardless of backlog depth, while preserving every entity
+   *     update (no delta is lost — they're merged, not discarded).
+   *
+   * Background-tab safety: rAF doesn't fire while the tab/app is hidden. The
+   * MAX_SNAPSHOT_BUFFER cap triggers a synchronous drain before the buffer can grow
+   * without bound, so a long background pause (e.g., Android home button) cannot
+   * accumulate unbounded memory.
+   */
+  private snapshotBuffer: SnapshotMsg[] = [];
+  private snapshotRafPending = false;
 
   private snapshotCb: (msg: SnapshotMsg) => void = () => {};
   private lobbyCb: (msg: LobbyState) => void = () => {};
@@ -73,7 +106,22 @@ export class NetClient {
     });
 
     this.socket.on(SERVER_EVENTS.SNAPSHOT, (msg: SnapshotMsg) => {
-      this.snapshotCb(msg);
+      // Buffer the raw snapshot instead of calling snapshotCb synchronously.
+      // Draining happens on the next rAF (or immediately when the buffer is full)
+      // so multiple snapshots received within one frame are coalesced into a single
+      // expensive downstream call — preventing head-of-line blocking on slow devices.
+      this.snapshotBuffer.push(msg);
+      if (this.snapshotBuffer.length >= MAX_SNAPSHOT_BUFFER) {
+        // Buffer full (tab backgrounded or device extremely slow): drain now so we
+        // don't accumulate unbounded memory. Skips the rAF schedule.
+        this.drainSnapshotBuffer();
+      } else if (!this.snapshotRafPending) {
+        this.snapshotRafPending = true;
+        requestAnimationFrame(() => {
+          this.snapshotRafPending = false;
+          this.drainSnapshotBuffer();
+        });
+      }
     });
 
     this.socket.on(SERVER_EVENTS.LOBBY_STATE, (msg: LobbyState) => {
@@ -218,6 +266,59 @@ export class NetClient {
    */
   sendInput(input: InputMsg): void {
     this.socket?.volatile.emit(CLIENT_EVENTS.INPUT, input);
+  }
+
+  /**
+   * Drain all buffered snapshots into a single coalesced call to snapshotCb.
+   *
+   * Coalesce-equals-sequential property: merging N delta snapshots in tick order
+   * yields the same entities map state as processing them one-by-one, because each
+   * snapshot is itself a last-writer-wins delta (later fields for the same entity id
+   * overwrite earlier ones). Applying them in sequence:
+   *   entities.set(id, {...prev, ...e1}), entities.set(id, {...prev2, ...e2}), ...
+   * is equivalent to building a merged entity map where the LATEST update for each
+   * id wins — which is exactly what pendingEntities does here.
+   *
+   * We use the NEWEST snapshot's tick, acks, and world because:
+   *   - tick: the authoritative clock must advance to the latest seen value.
+   *   - acks: the server's acknowledged seq for each client is cumulative and
+   *     monotone — only the highest value (latest snapshot) is meaningful.
+   *   - world: the global panic/lockdown state is not accumulative; latest wins.
+   */
+  private drainSnapshotBuffer(): void {
+    const buf = this.snapshotBuffer;
+    if (buf.length === 0) return;
+    // Splice the buffer first so any new snapshots that arrive during snapshotCb
+    // (synchronous re-entrancy guard) start a fresh buffer rather than modifying
+    // the one we're iterating over.
+    this.snapshotBuffer = [];
+
+    if (buf.length === 1) {
+      // Fast path: single snapshot — call directly, no merge overhead.
+      this.snapshotCb(buf[0]);
+      return;
+    }
+
+    // Slow path: N > 1 snapshots queued. Merge entity arrays in tick order so the
+    // final state per entity is the latest update we received. pendingEntities acts
+    // as a last-writer-wins accumulator over all N snapshots.
+    const pendingEntities = new Map<string, Entity>();
+    for (const snap of buf) {
+      for (const e of snap.entities) {
+        pendingEntities.set(e.id, e);
+      }
+    }
+
+    // The synthetic snapshot carries the union of all entity updates plus the
+    // newest snapshot's tick, acks, and world (all three are monotone / last-wins).
+    const newest = buf[buf.length - 1];
+    const merged: SnapshotMsg = {
+      tick: newest.tick,
+      entities: [...pendingEntities.values()],
+      acks: newest.acks,
+      world: newest.world,
+    };
+    this.snapshotCb(merged);
   }
 
   /** Register the snapshot handler. */

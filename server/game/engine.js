@@ -72,6 +72,27 @@ let timer = null;
 // Map<socketId, Map<entityId, string>>
 const lastSentBySocket = new Map();
 
+// Per-SOCKET accumulated entity delta for slow-client coalescing.
+//
+// When a client falls behind (last input arrived > SLOW_CLIENT_THRESHOLD_MS ago),
+// we skip emitting a snapshot that tick and instead accumulate the entity changes
+// here. On the next "send" tick (fresh input or full-refresh), we emit the UNION
+// of all accumulated entity updates — so no delta is ever lost, just deferred.
+//
+// The correctness invariant: lastSentBySocket always advances (dirty-check uses it
+// as the "already acknowledged" baseline), so accumulated deltas are exactly the
+// entities that changed between the last emission and now. Flushing the accumulator
+// sends precisely those. Map<socketId, Map<entityId, entity>>
+const pendingDeltaBySocket = new Map();
+
+// If the most recent input from a socket arrived more than this many milliseconds
+// ago, the client is considered "slow" (event loop blocked — typical of an Android
+// WebView spinning on snapshot processing). We skip emitting a snapshot for that
+// socket this tick and accumulate the delta instead. Normal clients send input
+// every 50 ms; 65 ms is above the normal interval but below a typical slow-
+// consumer spin (80 ms), so normal play is never rate-limited.
+const SLOW_CLIENT_THRESHOLD_MS = 65;
+
 // Squared AOI radius — computed once so the hot per-entity cull is a cheap dist2
 // compare with no per-call sqrt. (config.AOI_RADIUS is the human-facing tunable.)
 const AOI_RADIUS2 = config.AOI_RADIUS * config.AOI_RADIUS;
@@ -497,6 +518,61 @@ function broadcastSnapshots() {
         if (!seenIds.has(id)) lastSent.delete(id);
       }
 
+      // ── Slow-client coalescing ────────────────────────────────────────────────
+      //
+      // If the client is behind (event loop blocked — typical of an Android WebView
+      // spinning on each received snapshot), snapshot messages pile up in its TCP
+      // receive buffer. Subsequent messages (including pong responses) queue behind
+      // them, causing RTT to climb without bound.
+      //
+      // Solution: detect slowness via the recency of the last input we received from
+      // this socket. Normal clients send inputs every 50 ms; a client whose event loop
+      // is blocked stops sending inputs (timer callbacks don't fire during a spin).
+      // When the last input arrived > SLOW_CLIENT_THRESHOLD_MS ago, we hold back the
+      // snapshot this tick and accumulate the delta. On the next "send-allowed" tick
+      // (fresh input OR a full-refresh tick), we emit the UNION of all accumulated
+      // entity updates. This ensures no entity change is lost — it is just deferred
+      // by at most one extra send interval. Pong responses travel on the same
+      // connection but are emitted outside this path (in the ping handler) and are
+      // never held back, so the RTT measurement drains freely.
+      //
+      // Per-socket accumulator: Map<entityId, entity> — latest entity object wins,
+      // so applying it in order is equivalent to processing each queued snapshot
+      // individually (the merge is associative and commutative for last-writer-wins).
+      let pendingDelta = pendingDeltaBySocket.get(socketId);
+      if (!pendingDelta) {
+        pendingDelta = new Map();
+        pendingDeltaBySocket.set(socketId, pendingDelta);
+      }
+
+      // Accumulate this tick's delta into the per-socket pending buffer. Entity
+      // objects reference the same candidate array as this tick, which is fine — we
+      // emit before the next tick mutates the live world (the engine is synchronous
+      // and single-threaded). New entries overwrite stale ones (latest always wins).
+      for (const e of entities) pendingDelta.set(e.id, e);
+
+      // Decide whether to emit this tick. A full-refresh tick always flushes (it is
+      // the correctness backstop that resyncs clients who missed deltas during
+      // suppression). Otherwise, only emit if the client showed signs of life recently
+      // (last input arrived within SLOW_CLIENT_THRESHOLD_MS). No lastInputAt means
+      // the client joined but hasn't sent an input yet — treat as "active" so the
+      // join snapshot reaches the client without waiting for the first key-press.
+      const lastInputAge = me.lastInputAt ? (Date.now() - me.lastInputAt) : 0;
+      const clientIsActive = lastInputAge <= SLOW_CLIENT_THRESHOLD_MS;
+
+      if (!isFull && !clientIsActive) {
+        // Client appears slow: hold back and keep accumulating. The pong handler
+        // (in the ping socket.on handler, NOT in this path) still fires immediately
+        // when the client sends a ping, so RTT stays clean for fast messages.
+        continue; // eslint-disable-line no-continue
+      }
+
+      // Flush the accumulated delta (this tick's entities PLUS any held from prior
+      // ticks). On a full-refresh tick the accumulator already holds the full AOI
+      // subset (built above), so no extra work is needed.
+      const entitiesToSend = [...pendingDelta.values()];
+      pendingDelta.clear();
+
       // Attach ONLY the receiving player's ack (clients reconcile against their own
       // lastProcessedSeq). Even on a delta tick with nothing changed we still emit so
       // the client keeps advancing its tick clock and gets a fresh ack; the tiny
@@ -506,7 +582,7 @@ function broadcastSnapshots() {
 
       io.to(socketId).emit(SERVER_EVENTS.SNAPSHOT, {
         tick: currentTick,
-        entities,
+        entities: entitiesToSend,
         acks,
         world: worldState
       });
@@ -591,12 +667,14 @@ function sendFullSnapshotTo(socket, roomName) {
 
 /**
  * Drop a socket's per-socket delta memory. Called from connection.js on disconnect
- * so lastSentBySocket can't grow without bound across a session's joins/leaves.
- * (The map is keyed by socket.id; a stale entry would otherwise linger forever.)
+ * so lastSentBySocket / pendingDeltaBySocket can't grow without bound across a
+ * session's joins/leaves. (Both maps are keyed by socket.id; stale entries would
+ * otherwise linger forever.)
  * @param {string} socketId
  */
 function clearSocket(socketId) {
   lastSentBySocket.delete(socketId);
+  pendingDeltaBySocket.delete(socketId);
 }
 
 module.exports = {
