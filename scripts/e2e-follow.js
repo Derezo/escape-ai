@@ -5,9 +5,16 @@
  * End-to-end WIRE check for the animal-collection feature, over the real
  * socket.io contract. A headless client auths + joins and we assert the
  * snapshot-borne facts that prove the client↔server plumbing:
- *   - all 14 kind:'food' sources arrive in the snapshot, each carrying a foodKey
- *     and a display name (so the renderer can tint + label them);
+ *   - kind:'food' sources arrive in the snapshot, each carrying a foodKey and a
+ *     display name (so the renderer can tint + label them);
  *   - the server accepts the new 'feed' PlayerAction verb without erroring.
+ *
+ * AOI NOTE: snapshots are now per-socket Area-of-Interest culled (server
+ * config.AOI_RADIUS) — a client receives only the entities NEAR it, not the whole
+ * world. So this asserts that food sources WITHIN the joining player's AOI ride the
+ * wire (the ape spawn sees ~5 of the 14), not that all 14 arrive; whichever ones do
+ * arrive must carry the full foodKey + name fields. That the count is bounded by
+ * AOI — and not the full roster — is the intended behavior of the bandwidth fix.
  *
  * NOTE: this does NOT navigate a bot to a food source to exercise collect/feed —
  * straight-line steering can't path through the zoo's walls, and pathfinding is
@@ -43,7 +50,11 @@ const check = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`);
   await sleep(900); // let the map + a full snapshot refresh arrive
 
   const food = [...entities.values()].filter((e) => e.kind === 'food');
-  check(food.length === SPECIES_KEYS.length, `all ${SPECIES_KEYS.length} food sources ride the snapshot (got ${food.length})`);
+  // Per-socket AOI culling: the joiner sees only food sources within config.AOI_RADIUS
+  // of its spawn (a strict, non-empty subset of the SPECIES_KEYS.length total), so
+  // assert at-least-one rides (food plumbing works) rather than the full roster.
+  check(food.length >= 1 && food.length <= SPECIES_KEYS.length,
+    `food sources within AOI ride the snapshot (got ${food.length} of ${SPECIES_KEYS.length}, AOI-culled)`);
   check(food.every((f) => typeof f.foodKey === 'string' && f.foodKey), 'every food source carries a foodKey over the wire');
   check(food.every((f) => typeof f.name === 'string' && f.name), 'every food source carries a display name over the wire');
 

@@ -4,6 +4,49 @@ All notable changes to Escape AI. Update this file in every commit.
 
 ## 0.2 — *Escape AI* (jam build)
 
+- 0.2.210: **Server — netcode PRIMARY fix: per-socket Area-of-Interest culling + NPC wire-shape + position quantization (snapshot bloat).**
+  Empirical root cause (measured against prod with `scripts/prod-wire-probe.mjs`, reproduced by
+  `scripts/check-netcode-live.mjs`): the server broadcast ~105 entities / ~44KB to EVERY client
+  EVERY tick (~530-835 KB/s per client), flooding the client pipe into inbound head-of-line blocking
+  → broken movement + RTT climbing to ~20s. Two prior CLIENT fixes (0.2.208/0.2.209) couldn't help —
+  the bug was server-side. Three compounding server changes, all in `server/game/engine.js`
+  `broadcastSnapshots`:
+  1. **Per-socket AOI culling.** The room-wide `io.to(roomName).emit` becomes a PER-SOCKET emit; each
+     socket receives only entities within `config.AOI_RADIUS` (= 800 world units = 25 tiles, generously
+     larger than the client's ~10-tile-tall viewport so nothing pops in at the screen edge) of THAT
+     player, plus its own entity unconditionally. New `config.AOI_RADIUS` constant (env-overridable),
+     squared once at module-eval for a sqrt-free hot-loop cull.
+  2. **Per-socket delta memory.** `lastSentByRoom` (per-room) → `lastSentBySocket` (Map keyed by
+     socketId), because each socket now gets a different entity subset. CRITICAL force-send invariant:
+     when an entity ENTERS a socket's AOI (was culled last tick) it is sent in FULL this tick even if
+     its serialization is byte-identical to the last time that socket saw it — else it'd be invisible
+     until the next full refresh (`!lastSent.has(id)` is the "new to this socket" test). On AOI exit
+     the entity is dropped from that socket's `lastSent`; no remove signal is sent because AOI_RADIUS
+     is far larger than the viewport, so a just-exited entity is well off-screen (the client culls
+     off-screen draws) and is force-repainted on re-entry before it could reach the screen edge — so
+     NO net-contract change was needed. Dropped on disconnect via new `engine.clearSocket(socketId)`
+     (wired from `server/socket/connection.js`) so the map can't leak across joins/leaves.
+  3. **NPC wire-shape + position quantization.** Live NPC objects accumulate heavy server-internal
+     scratch — the A* `path` waypoint array (30+ points on a patrolling robot!), FSM state
+     (`patrolIndex`, `localLoop`, `headAngle`, `pathGoalTx`…), return-home bookkeeping — which rode the
+     wire via the `Entity` index signature AND changed every tick (defeating the delta diff and
+     bloating each entity ~3×). New `serializeWorldEntity` projects each world entity onto a WHITELIST
+     of the client-visible fields (`WORLD_WIRE_FIELDS`) and rounds x/y to whole pixels, so a stationary
+     prop serializes identically tick-over-tick (drops out of the delta) and an NPC carries just its
+     render state (~120B instead of ~450B). `sendFullSnapshotTo` (the per-join full snapshot) is now
+     AOI-scoped and PRIMES the joiner's per-socket delta memory with the same wire shape (no redundant
+     force-resend next tick). acks are trimmed to the receiving player's own `lastProcessedSeq` (the
+     client only reads `acks[myId]`).
+
+  **Result — `node scripts/check-netcode-live.mjs` Gate A PASSES:** snapRate 20.1/s (≥15), KB/s 36
+  (≤50, was 835), entities/snap 13-14 (≤45, was 105), ack gap 0-1 (≤8). Two-client sync verified:
+  same-pen players see each other + themselves; a far player is correctly culled and force-sent on AOI
+  entry/re-entry (the subtle invariant). `cd server && npm test` (22) green; `cd scripts && npm run
+  verify` (9 gates, incl. 533-assertion netcode reconciliation) green; `node scripts/e2e-follow.js`
+  green (its "all 14 food sources" assertion was updated to the AOI-correct "food within AOI rides the
+  wire" — that the count is bounded by AOI is the intended behavior of this fix); 20-bot
+  `sim-clients.js` stable at ~23 ent/snap, RTT <5ms.
+
 - 0.2.209: **Client — netcode re-fix: Variant B separate-baseline/pure-rebuild; latency hardening.**
   The 0.2.208 fix (commit 9194fc1) regressed production with wild bouncing and a 20-second latency
   display. Root cause: the old reconciliation updated `confirmedX/Y` from the entity map *every*

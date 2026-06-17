@@ -10,6 +10,7 @@ const { broadcastLobbyState } = require('./lobby');
 const follow = require('../game/follow');
 const session = require('../game/session');
 const world = require('../game/world');
+const engine = require('../game/engine');
 const config = require('../config');
 const { limiter } = require('./rate-limit');
 
@@ -48,6 +49,11 @@ function cleanup(socket, deps) {
   // Free this socket's rate-limiter buckets so limiter state can't grow
   // unboundedly across reconnects (socket.id is unique per connection).
   limiter.drop(socket.id);
+
+  // Drop this socket's per-socket AOI delta memory (engine.lastSentBySocket) for
+  // the same reason — socket.id is unique per connection, so a stale entry would
+  // otherwise linger forever after the player leaves.
+  engine.clearSocket(socket.id);
 
   // Persist this session's stats before dropping the player. Attribute play time
   // (session length) plus any stat deltas the engine hadn't yet flushed this

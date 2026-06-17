@@ -16,12 +16,25 @@
  * idle animals, terminals, the gate — owned by game/world.js). The WorldState
  * {panic, panicCapacity, lockdown} rides along on every snapshot; it's tiny.
  *
+ * Per-socket Area-of-Interest (AOI) culling:
+ *   - The room holds ~140 entities, most of them idle pen animals that drift a
+ *     fraction of a pixel every tick. Pre-AOI we broadcast the WHOLE room to every
+ *     socket each tick; the sub-pixel drift defeated the delta diff, so ~105
+ *     entities (~530-835 KB/s) shipped per client per tick — flooding the client
+ *     pipe into inbound head-of-line blocking (broken movement, climbing RTT).
+ *   - Now each socket receives ONLY the entities within config.AOI_RADIUS of THAT
+ *     player (plus its own entity, unconditionally). The cull is per-socket, so the
+ *     delta memory is per-socket too (see lastSentBySocket).
+ *
  * Delta vs. full broadcast:
- *   - Every FULL_REFRESH_INTERVAL ticks we send a *full* snapshot (every entity
- *     in the room) so late joiners and drifted clients resync.
- *   - On other ticks we send a *delta*: only entities whose serialized state
- *     changed since the last snapshot sent to that room. Static props don't
- *     change, so they only ride on full refreshes — which is what we want.
+ *   - Every FULL_REFRESH_INTERVAL ticks we send a *full* snapshot (every IN-AOI
+ *     entity) so late joiners and drifted clients resync.
+ *   - On other ticks we send a *delta*: only IN-AOI entities whose serialized state
+ *     changed since the last snapshot sent to that socket. Static props don't
+ *     change (and NPC positions are quantized to whole pixels in toEntity so
+ *     sub-pixel drift no longer counts as a change), so they ride only on a full
+ *     refresh OR when they first ENTER this socket's AOI — see the force-send
+ *     invariant in broadcastSnapshots.
  *   Correctness over cleverness — the delta is a simple per-entity dirty check.
  */
 
@@ -50,9 +63,18 @@ let currentTick = 0;
 let lastTickTime = 0;
 let timer = null;
 
-// Per-room memory of the last entity state we broadcast, for delta diffing.
-// Map<roomName, Map<entityId, string>> where the string is the serialized snapshot.
-const lastSentByRoom = new Map();
+// Per-SOCKET memory of the last entity state we broadcast to that socket, for
+// delta diffing. It MUST be per-socket (not per-room) because AOI culling gives
+// each socket a different entity subset — a room-wide memory would wrongly skip an
+// entity for socket B just because socket A was sent it. Keyed by socket id; the
+// inner Map is entityId -> serialized snapshot string (what this socket last saw).
+// Dropped on disconnect (clearSocket, wired from connection.js) so it can't leak.
+// Map<socketId, Map<entityId, string>>
+const lastSentBySocket = new Map();
+
+// Squared AOI radius — computed once so the hot per-entity cull is a cheap dist2
+// compare with no per-call sqrt. (config.AOI_RADIUS is the human-facing tunable.)
+const AOI_RADIUS2 = config.AOI_RADIUS * config.AOI_RADIUS;
 
 /**
  * Wire up the engine. Call once at boot, before start(). ASYNC because it loads
@@ -269,6 +291,68 @@ function stepNpcs(dt) {
   }
 }
 
+/**
+ * The ONLY world-entity fields the client renders. The live NPC objects accumulate
+ * a lot of server-internal state at runtime — the A* `path` waypoint array (30+
+ * points on a patrolling robot!), FSM scratch (`patrolIndex`, `localLoop`,
+ * `headAngle`, `pathGoalTx`…), return-home bookkeeping — none of which the client
+ * needs (it derives gait from `species` via the shared locomotion registry). That
+ * scratch was riding the wire via the Entity index signature AND mutating every
+ * tick, which both bloated each entity ~3× (a robot serialized to ~450B instead of
+ * ~140B) AND defeated the delta diff (the path/headAngle change every tick). This
+ * whitelist is the companion to AOI culling + quantization: it ships only the
+ * client-visible projection of the entity, so a stationary prop serializes
+ * identically tick-over-tick and an NPC carries just its render state.
+ *
+ * Fields are added only when present (so a robot doesn't carry `species`, an animal
+ * doesn't carry `mode`, etc.) to keep deltas tight and the dirty-check honest.
+ */
+const WORLD_WIRE_FIELDS = [
+  // Common
+  'name', 'kind',
+  // animal / food / questObject identity + render
+  'species', 'humanLikeness', 'facing', 'foodKey', 'meta',
+  // robot render
+  'mode', 'suspicion',
+  // terminal contention LED (the only terminal field the client reads)
+  'activatedBy',
+  // prop (the carryable clipboard) carrier
+  'carrierId',
+  // follower render (the decaying follow-ring + steal flagging)
+  'followerOf', 'followUntilTick', 'followSince', 'stolen', 'returningHome',
+  // sticky/echo render flags
+  'escaped', 'fx'
+];
+
+/**
+ * Project a live world (NPC/animal/food/prop/hazard) entity onto its WIRE shape:
+ * the whitelisted client-visible fields (WORLD_WIRE_FIELDS), with x/y QUANTIZED to
+ * whole pixels.
+ *
+ * Quantization rationale: idle pen animals drift ~2px/tick and patrolling robots
+ * move every tick, but at full float precision even a truly-stationary prop can
+ * jitter sub-pixel and serialize-differ. Rounding x/y to integer pixels collapses
+ * that: an entity that hasn't moved a whole pixel serializes IDENTICALLY and drops
+ * out of the delta. At 32px tiles, whole-pixel rounding is far below anything the
+ * eye can see, and the client interpolates between snapshots, so movement stays
+ * smooth. Returns a FRESH object — never mutates the live entity (stealth.js /
+ * follow.js own those and integrate at full precision).
+ *
+ * @param {object} entity  a live world entity
+ * @returns {object} a wire-ready, whitelisted, position-quantized copy
+ */
+function serializeWorldEntity(entity) {
+  const wire = {
+    id: entity.id,
+    x: Math.round(entity.x),
+    y: Math.round(entity.y)
+  };
+  for (const f of WORLD_WIRE_FIELDS) {
+    if (entity[f] !== undefined) wire[f] = entity[f];
+  }
+  return wire;
+}
+
 /** Serialize one player into a snapshot entity. Players are tagged 'animal' so
  *  the client can render them alongside the world's idle animals. humanLikeness
  *  and carrying ride along so the client can show stealth feedback (the bar /
@@ -326,7 +410,7 @@ function toEntity(player) {
   return entity;
 }
 
-/** Broadcast a snapshot to every active room. */
+/** Broadcast a snapshot to every active room, PER SOCKET, with AOI culling. */
 function broadcastSnapshots() {
   if (!rooms) return;
 
@@ -335,73 +419,116 @@ function broadcastSnapshots() {
   for (const [roomName, socketIds] of rooms) {
     if (!socketIds || socketIds.size === 0) continue;
 
-    // Build this room's entity list + acks, and diff against what we last sent.
-    let lastSent = lastSentByRoom.get(roomName);
-    if (!lastSent) {
-      lastSent = new Map();
-      lastSentByRoom.set(roomName, lastSent);
-    }
-
-    const entities = [];
-    const acks = {};
-    const seenIds = new Set();
-
-    // Per-entity dirty check shared by players and world props.
-    const diffEntity = (entity) => {
-      seenIds.add(entity.id);
-      const serialized = JSON.stringify(entity);
-      if (isFull || lastSent.get(entity.id) !== serialized) {
-        entities.push(entity);
-        lastSent.set(entity.id, serialized);
-      }
-    };
-
+    // Build the room's candidate entity set ONCE per tick (it's the same for every
+    // socket; only the per-socket AOI cull differs). Players serialize via toEntity;
+    // world props are quantized to whole pixels so sub-pixel NPC drift stops riding
+    // the delta. acks is room-wide (every player's lastProcessedSeq), but we only
+    // ATTACH the entry for the receiving player below — a socket doesn't need rival
+    // ack values. We keep the full map here and pick from it per socket.
+    const worldState = world.getWorldState(roomName);
+    const allAcks = {};
+    const candidates = []; // { entity, x, y } for every player + world entity
     for (const socketId of socketIds) {
       const player = connectedPlayers.get(socketId);
       if (!player) continue;
-
       const entity = toEntity(player);
-      acks[entity.id] = player.lastProcessedSeq || 0;
-      diffEntity(entity);
+      allAcks[entity.id] = player.lastProcessedSeq || 0;
+      candidates.push({ entity, x: player.x, y: player.y });
+    }
+    for (const raw of world.getWorldEntities(roomName)) {
+      const entity = serializeWorldEntity(raw);
+      candidates.push({ entity, x: entity.x, y: entity.y });
     }
 
-    // Merge in the room's static world props. They never change, so they only
-    // ride on full refreshes — no per-tick bandwidth cost.
-    for (const entity of world.getWorldEntities(roomName)) {
-      diffEntity(entity);
-    }
+    // Now emit a SOCKET-SPECIFIC snapshot: each player sees only what's within
+    // config.AOI_RADIUS of THEM (plus their own entity, unconditionally).
+    for (const socketId of socketIds) {
+      const me = connectedPlayers.get(socketId);
+      if (!me) continue;
 
-    // Drop delta-memory for entities that left the room.
-    for (const id of lastSent.keys()) {
-      if (!seenIds.has(id)) lastSent.delete(id);
-    }
+      // Per-socket delta memory: what THIS socket currently knows about. Each socket
+      // gets a different AOI subset, so the memory MUST be per-socket — sharing it
+      // would skip an entity for one socket because another socket already saw it.
+      let lastSent = lastSentBySocket.get(socketId);
+      if (!lastSent) {
+        lastSent = new Map();
+        lastSentBySocket.set(socketId, lastSent);
+      }
 
-    // On a delta tick with nothing changed, still send a heartbeat so clients
-    // keep advancing their tick clock and receive fresh acks. The WorldState
-    // rides along every tick — it's tiny — so the client always has it fresh.
-    io.to(roomName).emit(SERVER_EVENTS.SNAPSHOT, {
-      tick: currentTick,
-      entities,
-      acks,
-      world: world.getWorldState(roomName)
-    });
+      const entities = [];
+      const seenIds = new Set(); // ids IN-AOI this tick (for the AOI-exit prune below)
+
+      for (const c of candidates) {
+        // AOI test. The player's OWN entity is always in range (it's at the centre),
+        // so the dist2 compare admits it; rival players + world entities pass only
+        // within AOI_RADIUS. Squared distance — no sqrt in the hot loop.
+        const dx = c.x - me.x;
+        const dy = c.y - me.y;
+        if (dx * dx + dy * dy > AOI_RADIUS2) continue; // culled: outside this socket's AOI
+
+        seenIds.add(c.entity.id);
+        const serialized = JSON.stringify(c.entity);
+
+        // THE AOI-ENTRY FORCE-SEND INVARIANT (the subtle correctness bug):
+        // When an entity ENTERS this socket's AOI (it was culled last tick, so the
+        // socket has NO lastSent memory of it), we MUST send it in full THIS tick —
+        // even if its serialization is byte-identical to the last time this socket
+        // saw it long ago. A pure dirty-check (`lastSent.get(id) !== serialized`)
+        // would WRONGLY skip an unchanged-but-re-entering entity, leaving it invisible
+        // on the client until the next full refresh (up to ~5s). `lastSent.has(id)`
+        // is exactly the "did this socket know about it last tick" test: a miss means
+        // it just entered AOI → force-send. A hit falls through to the normal dirty
+        // check. (On a full-refresh tick everything in-AOI is sent regardless.)
+        const isNewToSocket = !lastSent.has(c.entity.id);
+        if (isFull || isNewToSocket || lastSent.get(c.entity.id) !== serialized) {
+          entities.push(c.entity);
+        }
+        lastSent.set(c.entity.id, serialized);
+      }
+
+      // AOI-EXIT: drop delta-memory for any entity the socket knew about that is no
+      // longer in range (or left the room). We do NOT send a "removed" signal — the
+      // client keeps the entity in its map at its last position, but AOI_RADIUS is far
+      // larger than the client viewport, so a just-exited entity is well off-screen and
+      // never visibly stale; if the player walks back, the force-send above repaints it
+      // before it could reach the screen edge. (If we ever shrink AOI below the
+      // viewport, this is where a remove-id list would be added to the contract.)
+      for (const id of lastSent.keys()) {
+        if (!seenIds.has(id)) lastSent.delete(id);
+      }
+
+      // Attach ONLY the receiving player's ack (clients reconcile against their own
+      // lastProcessedSeq). Even on a delta tick with nothing changed we still emit so
+      // the client keeps advancing its tick clock and gets a fresh ack; the tiny
+      // WorldState rides every tick so panic/lockdown stays current.
+      const acks = {};
+      if (typeof allAcks[me.id] === 'number') acks[me.id] = allAcks[me.id];
+
+      io.to(socketId).emit(SERVER_EVENTS.SNAPSHOT, {
+        tick: currentTick,
+        entities,
+        acks,
+        world: worldState
+      });
+    }
   }
 }
 
 /**
- * Send a ONE-TIME full snapshot (every player + every static world prop) to a
+ * Send a ONE-TIME full snapshot of everything within the joining player's AOI to a
  * single just-joined socket, immediately on join — so a player who joins an
- * already-populated room sees the whole world AT ONCE instead of waiting up to
- * FULL_REFRESH_INTERVAL ticks (~5s) for the next room-wide full refresh. Between
- * full refreshes the room broadcast is a delta keyed by the room's shared
- * `lastSent` memory, and the static props were already marked sent before this
- * socket existed — so without this nudge the new client would render an almost
- * empty world until the next full tick (the visible "lag before spawn").
+ * already-populated room sees the world around it AT ONCE instead of waiting up to
+ * FULL_REFRESH_INTERVAL ticks (~5s) for the next full refresh. Between full
+ * refreshes the broadcast is a per-socket delta; without this nudge the new client
+ * would render an almost empty world until the next full tick (the "lag before
+ * spawn"). AOI-scoped to match what the per-tick broadcast will send (and to keep
+ * the join burst lean — no point shipping the far half of the map the client will
+ * never look at).
  *
- * CRITICAL: this builds its own entity list and DOES NOT touch `lastSentByRoom`.
- * The room delta memory tracks what the ROOM broadcast last sent; mutating it
- * here would make the very next room delta wrongly SKIP these entities for every
- * OTHER client. So this is a pure read-only serialization sent only to `socket`.
+ * It PRIMES this socket's own per-socket delta memory (lastSentBySocket) with what
+ * it sends, so the very next broadcast tick doesn't redundantly re-send the same
+ * in-AOI entities as "new to socket". This only touches THIS socket's memory — never
+ * another socket's — so it can't make a delta wrongly skip an entity for anyone else.
  * Idempotent and side-effect-free on sim state.
  *
  * @param {import('socket.io').Socket} socket  the joining socket
@@ -412,22 +539,46 @@ function sendFullSnapshotTo(socket, roomName) {
   const members = rooms.get(roomName);
   if (!members) return;
 
+  const me = connectedPlayers.get(socket.id);
+  if (!me) return;
+
+  // Fresh per-socket delta memory for the joiner, primed with what we send below so
+  // the next broadcast tick treats these as already-known (no duplicate force-send).
+  let lastSent = lastSentBySocket.get(socket.id);
+  if (!lastSent) {
+    lastSent = new Map();
+    lastSentBySocket.set(socket.id, lastSent);
+  }
+
   const entities = [];
   const acks = {};
 
-  // Every player currently in the room (includes the just-joined one, so the
-  // client immediately gets its own authoritative spawn position).
+  const consider = (entity, ex, ey) => {
+    const dx = ex - me.x;
+    const dy = ey - me.y;
+    if (dx * dx + dy * dy > AOI_RADIUS2) return; // outside the joiner's AOI — skip
+    entities.push(entity);
+    lastSent.set(entity.id, JSON.stringify(entity));
+  };
+
+  // Every player in the room within AOI (includes the just-joined one — it's at the
+  // AOI centre, so the dist2 test admits it: the client gets its own spawn position).
   for (const socketId of members) {
     const player = connectedPlayers.get(socketId);
     if (!player) continue;
     const entity = toEntity(player);
-    acks[entity.id] = player.lastProcessedSeq || 0;
-    entities.push(entity);
+    consider(entity, player.x, player.y);
   }
+  // The joiner only needs its OWN ack (it reconciles against its own lastProcessedSeq).
+  acks[me.id] = me.lastProcessedSeq || 0;
 
-  // Every static world prop (pens, food, gate, robots, idle animals, terminals).
-  for (const entity of world.getWorldEntities(roomName)) {
-    entities.push(entity);
+  // Every static world prop (pens, food, gate, robots, idle animals, terminals)
+  // within AOI, projected to the SAME wire shape (whitelist + quantize) as the
+  // per-tick broadcast (so the primed memory is byte-identical to what the next
+  // delta would compare to — no spurious force-resend next tick).
+  for (const raw of world.getWorldEntities(roomName)) {
+    const entity = serializeWorldEntity(raw);
+    consider(entity, entity.x, entity.y);
   }
 
   socket.emit(SERVER_EVENTS.SNAPSHOT, {
@@ -438,6 +589,16 @@ function sendFullSnapshotTo(socket, roomName) {
   });
 }
 
+/**
+ * Drop a socket's per-socket delta memory. Called from connection.js on disconnect
+ * so lastSentBySocket can't grow without bound across a session's joins/leaves.
+ * (The map is keyed by socket.id; a stale entry would otherwise linger forever.)
+ * @param {string} socketId
+ */
+function clearSocket(socketId) {
+  lastSentBySocket.delete(socketId);
+}
+
 module.exports = {
   init,
   start,
@@ -445,6 +606,9 @@ module.exports = {
   // Send a just-joined socket its initial full snapshot (lobby.js calls this on
   // join so a late joiner doesn't wait for the next room-wide full refresh).
   sendFullSnapshotTo,
+  // Drop a socket's per-socket AOI delta memory (connection.js calls this on
+  // disconnect so lastSentBySocket can't leak across a session's joins/leaves).
+  clearSocket,
   // Read-only accessors used by the /health endpoint.
   getCurrentTick: () => currentTick,
   isRunning: () => running,
