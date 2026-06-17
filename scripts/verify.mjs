@@ -49,6 +49,7 @@ const GATES = [
   { name: 'client tests', cmd: 'npm', args: ['test'], cwd: join(ROOT, 'client') },
   { name: 'client typecheck', cmd: 'npx', args: ['tsc', '--noEmit'], cwd: join(ROOT, 'client') },
   { name: 'facing determinism', cmd: 'node', args: ['check-facing.js'], cwd: SCRIPTS_DIR },
+  { name: 'netcode reconciliation', cmd: 'node', args: ['check-netcode.mjs'], cwd: SCRIPTS_DIR },
   // Asset rasterisation gates — skipped under --quick (slower; rarely change).
   { name: 'atlas verify', cmd: 'node', args: ['verify-atlas.js'], cwd: SCRIPTS_DIR, asset: true },
   { name: 'tileset verify', cmd: 'node', args: ['verify-tileset.js'], cwd: SCRIPTS_DIR, asset: true },

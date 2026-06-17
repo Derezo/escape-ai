@@ -102,6 +102,12 @@ export class NetClient {
     // Latency: server echoes our timestamp back in pong {t}; rtt = now - t.
     this.socket.on(SERVER_EVENTS.PONG, (msg: Pong) => {
       const rtt = Date.now() - msg.t;
+      // Drop implausible samples before they corrupt the EMA. A valid rtt is
+      // non-negative (clock can't go backward), finite (NaN/Infinity from a bad
+      // msg.t would poison the EMA forever), and below 4× the ping interval (~4s).
+      // A genuine 4s RTT means the connection is effectively dead — the connection-
+      // state overlay will surface that; tainting the HUD counter adds no signal.
+      if (!Number.isFinite(rtt) || rtt < 0 || rtt > PING_INTERVAL_MS * 4) return;
       // Exponential moving average to keep the HUD readable.
       this.latencyMs = this.latencyMs < 0 ? rtt : Math.round(this.latencyMs * 0.7 + rtt * 0.3);
     });
@@ -276,7 +282,12 @@ export class NetClient {
     this.stopPingLoop();
     const sendPing = () => {
       const payload: Ping = { t: Date.now() };
-      this.socket?.emit(CLIENT_EVENTS.PING, payload);
+      // Volatile: if the socket is temporarily buffering (reconnecting), we drop
+      // stale pings rather than replay a burst of them on reconnect. A skipped ping
+      // sample is invisible (the next one arrives at most PING_INTERVAL_MS later);
+      // a burst of replayed pings would spike the EMA wildly. This mirrors how
+      // sendInput is emitted volatile (real-time movement, same semantics).
+      this.socket?.volatile.emit(CLIENT_EVENTS.PING, payload);
     };
     sendPing(); // immediate first sample
     this.pingTimer = setInterval(sendPing, PING_INTERVAL_MS);

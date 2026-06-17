@@ -455,73 +455,65 @@ async function main(): Promise<void> {
   });
 
   net.onSnapshot((msg) => {
-    // Merge the delta: server positions WIN (reconciliation). New fields (kind,
-    // species, quest, ...) ride through the spread and reach the renderer untouched.
+    // ── A. Merge delta ────────────────────────────────────────────────────────
+    // Server fields WIN for every entity. New fields (kind, species, quest, ...)
+    // ride through the spread and reach the renderer untouched. NOTE: this
+    // transiently overwrites local x/y IF our entity is present in this snapshot;
+    // step D (rebuildLocalPredicted) corrects it synchronously in this same handler
+    // before the frame loop ever reads it — keep A and D in the same synchronous
+    // handler so there is no window where stale x/y are visible.
     for (const e of msg.entities) {
       entities.set(e.id, { ...entities.get(e.id), ...e });
     }
 
-    // --- Local-player reconciliation with input replay ---
+    // ── B. Capture baseline, PRESENT-ONLY ────────────────────────────────────
+    // THE CENTRAL FIX: confirmedX/Y are updated ONLY when our entity is actually
+    // in this snapshot's entities array. When our entity is OMITTED (delta
+    // snapshot — it hasn't moved server-side), we leave confirmedX/Y UNTOUCHED.
     //
-    // The problem without replay: the server snapshot carries the authoritative
-    // position as of the tick it was computed. On a high-RTT connection that tick
-    // was ~RTT ago, so a blind merge yanks the avatar back to where it was 100-200ms
-    // in the past — the reported "bounce-back / drift" at high latency.
-    //
-    // The fix: treat the server position as the START of a mini-simulation, then
-    // fast-forward through every input the server hasn't processed yet (its ack
-    // tells us exactly which inputs those are). The result is an estimate of where
-    // the server WILL place the player once it processes the in-flight inputs —
-    // which should be very close to where our prediction already has us, so the
-    // merge is smooth rather than a visible snap.
-    //
-    // This only applies to our LOCAL entity; remote entities keep the server-wins
-    // merge (they're interpolated by the renderer anyway, so a small position
-    // correction there isn't visible).
-    if (myId && localMap) {
-      const ackedSeq = typeof msg.acks[myId] === 'number' ? msg.acks[myId] : undefined;
-      if (ackedSeq !== undefined) {
-        // Step 1: server position is already merged into entities above — it is now
-        // the baseline for replay.
-
-        // Step 2: drop every buffered input the server has already applied (seq <=
-        // ackedSeq). These are "done" — the server's authoritative position already
-        // reflects them. Mutate in place (splice from front) to keep the array small.
-        let pruneCount = 0;
-        while (pruneCount < pendingInputs.length && pendingInputs[pruneCount].seq <= ackedSeq) {
-          pruneCount++;
-        }
-        if (pruneCount > 0) pendingInputs.splice(0, pruneCount);
-
-        // Step 3: replay the remaining (unacked) inputs on top of the server
-        // position. Each replay step uses FIXED_DT — the same fixed timestep the
-        // server uses per tick — so the re-integration is numerically identical to
-        // what the server will compute when it processes those inputs. Using
-        // wall-clock dt here would re-introduce jitter because each input frame was
-        // predicted with FIXED_DT (and the server integrates with FIXED_DT too), so
-        // any other dt would compound a mismatch instead of cancelling it.
-        const me = entities.get(myId);
-        if (me && pendingInputs.length > 0) {
-          for (const inp of pendingInputs) {
-            if (inp.dx !== 0 || inp.dy !== 0) {
-              moveWithCollision(
-                me as { x: number; y: number },
-                inp.dx,
-                inp.dy,
-                FIXED_DT,
-                moveSpeed(inp.sprint),
-                localMap.collision,
-                localMap.w,
-                localMap.h,
-                localMap.tile,
-                PREDICT_RADIUS,
-              );
-            }
-          }
-        }
+    // Why this matters: the previous bug updated confirmedX/Y from the entity map
+    // every snapshot. On a FULL_REFRESH tick the entity entry still carries the
+    // last seen position (correct), but on any intermediate delta where our entity
+    // is absent we'd read stale or undefined x/y and silently skip the rebuild —
+    // the net effect was double-integration (prediction on top of a stale position
+    // that was already advanced), which compounded into the reported 20s bouncing.
+    if (myId) {
+      const myEntityInMsg = msg.entities.find((e) => e.id === myId);
+      if (myEntityInMsg && typeof myEntityInMsg.x === 'number' && typeof myEntityInMsg.y === 'number') {
+        confirmedX = myEntityInMsg.x;
+        confirmedY = myEntityInMsg.y;
       }
+      // When myId is NOT present in msg.entities: confirmedX/Y stay as-is.
+      // The rebuild in step D will produce exactly one step of forward movement
+      // (the unacked pending input) on top of the last known server position.
     }
 
+    // ── C. Prune by live ack ──────────────────────────────────────────────────
+    // The server's ack tells us the highest seq it has APPLIED. Every pending
+    // input up to and including that seq is "already reflected in confirmedX/Y"
+    // (or in the most recent present-snapshot) and must be pruned so we don't
+    // re-apply it in the rebuild. seq is 1-based, so ack==0 prunes nothing —
+    // which is correct: on join, the server sends ack 0 before it has processed
+    // any of our inputs, and we must keep every pending input for replay until
+    // a real ack arrives. typeof guard admits ack==0 explicitly.
+    if (myId && typeof msg.acks[myId] === 'number') {
+      const ackedSeq = msg.acks[myId] as number;
+      let pruneCount = 0;
+      while (pruneCount < pendingInputs.length && pendingInputs[pruneCount].seq <= ackedSeq) {
+        pruneCount++;
+      }
+      if (pruneCount > 0) pendingInputs.splice(0, pruneCount);
+    }
+
+    // ── D. Rebuild (UNCONDITIONAL) ────────────────────────────────────────────
+    // Always recompute the local player's rendered position from the confirmed
+    // baseline + all still-unacked pending inputs. This runs even when our entity
+    // was OMITTED from this snapshot (confirmedX/Y are unchanged → the rebuild
+    // re-applies the same unacked tail → same rendered position → no lurch).
+    // rebuildLocalPredicted() is idempotent and the SINGLE writer of me.x/me.y.
+    rebuildLocalPredicted();
+
+    // ── E. Tail ───────────────────────────────────────────────────────────────
     // Track the authoritative tick clock (for transient-stamp recency like
     // questBlocked) and capture the global panic/lockdown state for the HUD.
     if (typeof msg.tick === 'number') latestTick = msg.tick;
@@ -664,6 +656,68 @@ async function main(): Promise<void> {
   /** Hard cap on pending input buffer depth (~2.5s at 20Hz = 50 frames). If the
    *  server stops acking (connection issue, myId unknown) we never grow past this. */
   const MAX_PENDING_INPUTS = 50;
+
+  /**
+   * The ONLY source of truth for the local player's CONFIRMED server position.
+   * Written EXCLUSIVELY from onSnapshot, and ONLY on ticks where our entity is
+   * actually present in msg.entities. When our entity is OMITTED from a delta
+   * snapshot (unchanged position), this is left UNTOUCHED — so the confirmed
+   * baseline drifts exactly one step per omission tick instead of staling.
+   * `undefined` until the first snapshot that carries our entity (pre-join /
+   * pre-seed, in which case rebuildLocalPredicted() is a safe no-op).
+   */
+  let confirmedX: number | undefined;
+  let confirmedY: number | undefined;
+  /**
+   * Recompute the local player's PREDICTED (rendered) position from the server-
+   * confirmed baseline plus every still-unacked input, and write it into the
+   * render-cache entity `entities.get(myId)`.
+   *
+   * PURE w.r.t. (confirmedX/Y, pendingInputs): reads those two sources, writes
+   * ONLY `entities.get(myId).{x,y}`. NEVER reads `me.{x,y}` as input; NEVER
+   * mutates `confirmedX/Y` — so it cannot accumulate / double-integrate regardless
+   * of how often or in what order it is called. Idempotent.
+   *
+   * THE ONLY WRITER of `me.x` / `me.y` for the local entity. If you find any
+   * other assignment to `me.x`/`me.y` on the local entity, that is a bug — two
+   * writers reintroduce the double-integration the Variant B design eliminates.
+   *
+   * Call sites:
+   *   onSnapshot (step D) — corrects the transient server-merge every snapshot.
+   *   sendInputFrame       — advances prediction after each new input is queued.
+   */
+  function rebuildLocalPredicted(): void {
+    if (!myId) return;
+    const me = entities.get(myId);
+    if (!me) return;
+    // No anchor yet (pre-join / pre-seed / lobby before map arrives): leave the
+    // lobby-seed position untouched. rebuildLocalPredicted() is safe to call at
+    // any time; it simply does nothing until both conditions are met.
+    if (confirmedX === undefined || confirmedY === undefined || !localMap) return;
+    // Fresh copy of the IMMUTABLE baseline on every call — this is what prevents
+    // double integration. We never read me.{x,y} here; we always start from the
+    // known-good server position and re-apply the unacked tail.
+    const pos = { x: confirmedX, y: confirmedY };
+    for (const inp of pendingInputs) {
+      if (inp.dx !== 0 || inp.dy !== 0) {
+        moveWithCollision(
+          pos,
+          inp.dx,
+          inp.dy,
+          FIXED_DT, // same fixed-step as the server — NOT wall-clock dt
+          moveSpeed(inp.sprint),
+          localMap.collision,
+          localMap.w,
+          localMap.h,
+          localMap.tile,
+          PREDICT_RADIUS,
+        );
+      }
+    }
+    me.x = pos.x;
+    me.y = pos.y;
+  }
+
   // Named so the lifecycle handler (Android) can re-arm the interval on resume.
   // `inputInterval` is reassigned there on resume.
   function sendInputFrame(): void {
@@ -706,37 +760,19 @@ async function main(): Promise<void> {
       pendingInputs.splice(0, pendingInputs.length - MAX_PENDING_INPUTS);
     }
 
-    // Client-side prediction: advance OUR entity immediately so movement feels
-    // instant. We predict with the SAME collision-aware integration the server
-    // runs authoritatively (shared moveWithCollision against the regenerated map's
-    // grid, same speed + radius), so prediction stops at walls exactly where the
-    // server will and reconciliation doesn't rubber-band. Before the map arrives
-    // we simply don't predict movement (the first snapshot seeds our position).
+    // Client-side prediction: recompute the local player's rendered position from
+    // the confirmed server baseline + every still-unacked input (including the one
+    // we just pushed). This is an UNCONDITIONAL rebuild — not guarded by (dx||dy)
+    // — so even a zero-vector frame keeps the rendered position exact. The rebuild
+    // reads confirmedX/Y (not me.x/me.y) and re-applies the full unacked tail, so
+    // it cannot double-integrate regardless of how often it is called.
     //
-    // IMPORTANT: use FIXED_DT here (not wall-clock dt) so every prediction step
-    // is bit-identical to a server tick. Wall-clock jitter (the interval fires
-    // ~1-4ms early/late) would compound: over a ~100ms RTT that's ~2-8ms of
-    // drift per prediction step, and each replay step below must undo that same
-    // drift — they must agree or reconciliation introduces the very jitter we're
-    // trying to remove. Both sides (prediction and replay) use FIXED_DT, so the
-    // arithmetic always cancels cleanly.
-    if (myId && localMap && (dx !== 0 || dy !== 0)) {
-      const me = entities.get(myId);
-      if (me) {
-        moveWithCollision(
-          me as { x: number; y: number },
-          dx,
-          dy,
-          FIXED_DT,
-          moveSpeed(sprint),
-          localMap.collision,
-          localMap.w,
-          localMap.h,
-          localMap.tile,
-          PREDICT_RADIUS,
-        );
-      }
-    }
+    // Prediction and replay are the SAME function (rebuildLocalPredicted) so they
+    // always agree. Both use FIXED_DT — the same fixed step the server uses per
+    // tick — so the arithmetic is bit-identical and residual error vs. server
+    // wall-clock dt is bounded by the ≤50 unacked tail and annihilated by the next
+    // present-snapshot re-anchor of confirmedX/Y.
+    rebuildLocalPredicted();
     // Predict our own facing so the avatar turns instantly on key-press rather
     // than after a server round-trip. Same shared helper the server uses, so the
     // next snapshot reconciles without a visible snap. (Independent of movement
