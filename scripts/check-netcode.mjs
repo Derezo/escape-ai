@@ -618,9 +618,16 @@ console.log(`  WALK_STEP=${WALK_STEP} PREDICT_RADIUS=${PREDICT_RADIUS}\n`);
   console.log('  Gate 6: PASS\n');
 }
 
-// ── Gate 7: NaN/Infinity fuzz (comprehensive) ─────────────────────────────────
+// ── Gate 7: NaN/Infinity fuzz (comprehensive, INDEPENDENT authority) ──────────
+// The server position is computed INDEPENDENTLY here (its own integration of the
+// inputs it has "processed"), NOT echoed back from the client's own prediction.
+// Echoing renderedX/Y back as the oracle would make this a circular self-check
+// that can never diverge — it would prove the math doesn't emit NaN but could not
+// catch a reconciliation DIVERGENCE bug. With an independent authority the fuzz
+// exercises real present/absent reconciliation under a server that lags the client
+// by the RTT, while still asserting finiteness on every tick.
 {
-  console.log('Gate 7: NaN/Infinity comprehensive fuzz');
+  console.log('Gate 7: NaN/Infinity comprehensive fuzz (independent authority)');
   const s = makeState(100, 100);
   onSnapshot(s, {
     entities: [{ id: 'player1', x: 100, y: 100 }],
@@ -631,24 +638,50 @@ console.log(`  WALK_STEP=${WALK_STEP} PREDICT_RADIUS=${PREDICT_RADIUS}\n`);
     { dx: 0, dy: 1 }, { dx: 0, dy: -1 },
     { dx: 1, dy: 1 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 },
   ];
+  // Independent server model: the authority integrates the SAME inputs the client
+  // sent, one per tick, lagging by ~RTT ticks. Uses the real shared moveWithCollision
+  // so it stops at walls exactly as the client's replay does (parity is the point).
+  const RTT_TICKS = 2;
+  const sentInputs = []; // { dx, dy, sprint } in send order; index+1 == seq
+  const serverPos = { x: 100, y: 100 };
+  let serverProcessed = 0; // count of inputs the server has integrated
   for (let i = 0; i < 100; i++) {
     const inp = dirs[i % dirs.length];
     sendInputFrame(s, inp);
-    // Mix of present and absent snapshots
-    if (i % 3 === 0) {
-      onSnapshot(s, {
-        entities: [{ id: 'player1', x: renderedX(s), y: renderedY(s) }],
-        acks: { player1: s.seq },
-      });
-    } else {
-      onSnapshot(s, { entities: [], acks: { player1: s.seq - 1 } });
+    sentInputs.push({ dx: inp.dx, dy: inp.dy, sprint: false });
+
+    // Server processes the input that is now RTT_TICKS old (last-write-wins per
+    // tick is irrelevant here: one input per tick at matched cadence).
+    const target = Math.max(0, sentInputs.length - RTT_TICKS);
+    while (serverProcessed < target) {
+      const si = sentInputs[serverProcessed];
+      if (si.dx !== 0 || si.dy !== 0) {
+        moveWithCollision(serverPos, si.dx, si.dy, FIXED_DT, moveSpeed(si.sprint),
+          s.localMap.collision, s.localMap.w, s.localMap.h, s.localMap.tile, PREDICT_RADIUS);
+      }
+      serverProcessed++;
     }
+    const ack = serverProcessed; // seq of the last input the server applied (1-based)
+
+    // Present iff the server position actually changed this tick (the real delta
+    // rule). Otherwise omit the entity but still send the ack — the case that
+    // surfaced the original regression.
+    const moved = serverProcessed > 0 && (sentInputs[serverProcessed - 1].dx !== 0 || sentInputs[serverProcessed - 1].dy !== 0);
+    if (moved) {
+      onSnapshot(s, { entities: [{ id: 'player1', x: serverPos.x, y: serverPos.y }], acks: { player1: ack } });
+    } else {
+      onSnapshot(s, { entities: [], acks: { player1: ack } });
+    }
+
     const rx = renderedX(s);
     const ry = renderedY(s);
-    ok(isFinite(rx), `gate7: x finite at fuzz tick ${i}`);
-    ok(isFinite(ry), `gate7: y finite at fuzz tick ${i}`);
-    ok(!isNaN(rx), `gate7: x not NaN at fuzz tick ${i}`);
-    ok(!isNaN(ry), `gate7: y not NaN at fuzz tick ${i}`);
+    ok(isFinite(rx) && !isNaN(rx), `gate7: x finite at fuzz tick ${i}`);
+    ok(isFinite(ry) && !isNaN(ry), `gate7: y finite at fuzz tick ${i}`);
+    // Divergence bound: the client may lead the independent server by at most the
+    // unacked tail; it must never run away. (SPRINT bound covers any input mix.)
+    const lead = Math.abs(rx - serverPos.x) + Math.abs(ry - serverPos.y);
+    ok(lead <= s.pendingInputs.length * SPRINT_SPEED * FIXED_DT + 1e-6,
+      `gate7: client lead ${lead.toFixed(2)} within unacked-tail bound at tick ${i}`);
   }
   console.log('  Gate 7: PASS\n');
 }
@@ -728,31 +761,45 @@ console.log(`  WALK_STEP=${WALK_STEP} PREDICT_RADIUS=${PREDICT_RADIUS}\n`);
   // We look for patterns like: me.x = ... or me.y = ...
   // This is a conservative grep — we also look for pos.x / pos.y which are
   // internal to rebuildLocalPredicted and don't count as "writes to me".
-  const lines = mainSrc.split('\n');
-  const meXWrites = lines.filter((line) => {
-    // Skip comments
-    if (line.trimStart().startsWith('//') || line.trimStart().startsWith('*')) return false;
-    // Match assignment to me.x or me.y (not pos.x / pos.y)
-    return /\bme\.(x|y)\s*=/.test(line);
-  });
-
-  // rebuildLocalPredicted contains: me.x = pos.x; and me.y = pos.y;
-  // Those are the only legitimate assignments. The facing line uses me.facing = ..., not me.x/y.
-  // Check that all me.x/me.y writes are inside the rebuildLocalPredicted function.
-  // We find the function block and confirm all writes are within it.
-  const rebuildStart = mainSrc.indexOf('function rebuildLocalPredicted()');
-  const rebuildEnd = mainSrc.indexOf('\n  }', rebuildStart) + 4; // closing brace
-  ok(rebuildStart !== -1, 'gate9: rebuildLocalPredicted function exists in main.ts');
-
-  for (const writeLine of meXWrites) {
-    const lineIdx = lines.indexOf(writeLine);
-    const charOffset = mainSrc.indexOf(writeLine);
-    const insideRebuild = charOffset >= rebuildStart && charOffset <= rebuildEnd;
-    ok(insideRebuild,
-      `gate9: me.x/me.y write "${writeLine.trim()}" is inside rebuildLocalPredicted`);
+  // Locate every assignment to me.x / me.y by CHARACTER OFFSET (not by line text —
+  // two identical lines would collide under lines.indexOf). We strip line comments
+  // first so a commented "me.x =" can't trip the gate.
+  const stripComment = (line) => {
+    const i = line.indexOf('//');
+    return i === -1 ? line : line.slice(0, i);
+  };
+  const meWriteRe = /\bme\.(x|y)\s*=(?!=)/g; // assignment, not == / ===
+  const meWriteOffsets = [];
+  {
+    let lineStart = 0;
+    for (const rawLine of mainSrc.split('\n')) {
+      const code = stripComment(rawLine);
+      let m;
+      meWriteRe.lastIndex = 0;
+      while ((m = meWriteRe.exec(code)) !== null) {
+        meWriteOffsets.push({ offset: lineStart + m.index, text: rawLine.trim() });
+      }
+      lineStart += rawLine.length + 1; // +1 for the '\n'
+    }
   }
 
-  ok(meXWrites.length === 2, `gate9: exactly 2 writes to me.x/me.y (got ${meXWrites.length}): me.x=pos.x and me.y=pos.y`);
+  // Determine the rebuildLocalPredicted byte range ROBUSTLY: from its declaration to
+  // the start of the NEXT top-level `function ` declaration (or EOF). This does not
+  // depend on brace indentation, so a nested 2-space-indented block inside the body
+  // can no longer truncate the range (the prior `indexOf('\n  }')` heuristic could).
+  const rebuildStart = mainSrc.indexOf('function rebuildLocalPredicted(');
+  ok(rebuildStart !== -1, 'gate9: rebuildLocalPredicted function exists in main.ts');
+  const nextFn = mainSrc.indexOf('\n  function ', rebuildStart + 1);
+  const rebuildEnd = nextFn === -1 ? mainSrc.length : nextFn;
+
+  for (const w of meWriteOffsets) {
+    const insideRebuild = w.offset >= rebuildStart && w.offset < rebuildEnd;
+    ok(insideRebuild,
+      `gate9: me.x/me.y write "${w.text}" is inside rebuildLocalPredicted (sole writer)`);
+  }
+
+  ok(meWriteOffsets.length === 2,
+    `gate9: exactly 2 writes to me.x/me.y (got ${meWriteOffsets.length}): me.x=pos.x and me.y=pos.y`);
 
   console.log('  Gate 9: PASS\n');
 }
